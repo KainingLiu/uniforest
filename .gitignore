@@ -1,0 +1,11 @@
+/*
+!/.gitignore
+!/STM32/
+!/RaspberryPi/
+
+**/build/
+**/.idea/
+**/.claude/
+**/.vscode/
+**/__pycache__/
+*.py[cod]
