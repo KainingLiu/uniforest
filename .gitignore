@@ -1,5 +1,7 @@
 /*
 !/.gitignore
+!/AGENT.md
+!/CLAUDE.md
 !/STM32/
 !/RaspberryPi/
 
