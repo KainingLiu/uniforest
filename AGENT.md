@@ -22,3 +22,9 @@ RoboGame 2026 竞技组 Uniforest 队的电控与视觉开发工作区。
 树莓派的用户名：uniforest；密码请向队内管理员获取，不在公共仓库中保存。
 
 代码工作区在 @RaspberryPi （链接GitHub项目：https://github.com/KainingLiu/uniforest）
+
+
+## 代码配置
+
+电控代码统一使用CLion里配置的的openocd+DAPLink工具链自动烧录，无需使用命令行烧录。
+默认主程序为： /Core/Src/main.c
