@@ -260,14 +260,14 @@ void Actions_Build(void)
     }
 }
 
-/* ========================== Grap() ======================================== */
+/* ========================== Grap1() / Grap2() ============================= */
 
 /**
- * @brief  7-step simple pick-and-place grab sequence
+ * @brief  7-step simple pick-and-place grab sequence (22cm horizontal reach)
  * @note   Horz: +22-22 = 0  ✓
  *         Vert: -18+18 = 0  ✓
  */
-void Actions_Grap(void)
+void Actions_Grap1(void)
 {
     /* ---- 1. Servo init ---- */
     Servo_SetAngle(SERVO_GRIPPER,   ANGLE_GRIPPER_OPEN);
@@ -302,6 +302,77 @@ void Actions_Grap(void)
     Stepper_Enable(STEPPER_HORIZ, STEP_ENA_ON);
     Stepper_MoveOverlap(STEPPER_VERT,  18 * STEPS_PER_CM,
                         STEPPER_HORIZ, 22 * STEPS_PER_CM, 5 * STEPS_PER_CM,
+                        STEP_START_DELAY_US, STEP_TARGET_DELAY_US, STEP_ACCEL_STEPS);
+    HAL_Delay(300);
+
+    /* ---- 6. Gripper open ---- */
+    Servo_SetAngle(SERVO_HATCH_A,   67);
+    Servo_SetAngle(SERVO_HATCH_B,   113);
+    HAL_Delay(400);
+    Servo_SetAngle(SERVO_GRIPPER,   ANGLE_GRIPPER_OPEN);
+    HAL_Delay(500);
+
+    /* ---- 7. Servo init (hatch close) ---- */
+    Servo_SetAngle(SERVO_GRIPPER,   ANGLE_GRIPPER_OPEN);
+    Servo_SetAngle(SERVO_ARM_FRONT, 90);
+    Servo_SetAngle(SERVO_HATCH_A,   63);
+    Servo_SetAngle(SERVO_HATCH_B,   117);
+    HAL_Delay(100);
+
+    /* ---- 8. Wait CH6 return to centre (1400–1600us) to prevent re-trigger ---- */
+    while (1)
+    {
+        if (SBUS_IsValid())
+        {
+            uint16_t ch6 = SBUS_GetChannel(5);
+            if (ch6 > SBUS_CH6_ARM_LOW && ch6 < SBUS_CH6_ARM_HIGH)
+                break;
+        }
+        HAL_Delay(10);
+    }
+}
+
+/**
+ * @brief  7-step pick-and-place grab sequence (27cm horizontal reach)
+ * @note   Same as Grap1 but with extended 27cm horizontal travel.
+ *         Horz: +27-27 = 0  ✓
+ *         Vert: -18+18 = 0  ✓
+ */
+void Actions_Grap2(void)
+{
+    /* ---- 1. Servo init ---- */
+    Servo_SetAngle(SERVO_GRIPPER,   ANGLE_GRIPPER_OPEN);
+    Servo_SetAngle(SERVO_ARM_FRONT, 90);
+    Servo_SetAngle(SERVO_HATCH_A,   63);
+    Servo_SetAngle(SERVO_HATCH_B,   117);
+    HAL_Delay(500);
+
+    /* ---- 2. Hatch open ---- */
+    Servo_SetAngle(SERVO_HATCH_A, 130);
+    Servo_SetAngle(SERVO_HATCH_B, 50);
+    HAL_Delay(500);
+
+    /* ---- 3. fwd 27cm → after 5cm: down 18cm ---- */
+    Stepper_SetDir(STEPPER_HORIZ, STEP_DIR_FORWARD);
+    Stepper_Enable(STEPPER_HORIZ, STEP_ENA_ON);
+    Stepper_SetDir(STEPPER_VERT, STEP_DIR_REVERSE);
+    Stepper_Enable(STEPPER_VERT, STEP_ENA_ON);
+    Stepper_MoveOverlap(STEPPER_HORIZ, 27 * STEPS_PER_CM,
+                        STEPPER_VERT,  18 * STEPS_PER_CM, 5 * STEPS_PER_CM,
+                        STEP_START_DELAY_US, STEP_TARGET_DELAY_US, STEP_ACCEL_STEPS);
+    HAL_Delay(300);
+
+    /* ---- 4. Gripper close ---- */
+    Servo_SetAngle(SERVO_GRIPPER, ANGLE_GRIPPER_CLOSE);
+    HAL_Delay(500);
+
+    /* ---- 5. up 18cm → after 5cm: back 27cm ---- */
+    Stepper_SetDir(STEPPER_VERT, STEP_DIR_FORWARD);
+    Stepper_Enable(STEPPER_VERT, STEP_ENA_ON);
+    Stepper_SetDir(STEPPER_HORIZ, STEP_DIR_REVERSE);
+    Stepper_Enable(STEPPER_HORIZ, STEP_ENA_ON);
+    Stepper_MoveOverlap(STEPPER_VERT,  18 * STEPS_PER_CM,
+                        STEPPER_HORIZ, 27 * STEPS_PER_CM, 5 * STEPS_PER_CM,
                         STEP_START_DELAY_US, STEP_TARGET_DELAY_US, STEP_ACCEL_STEPS);
     HAL_Delay(300);
 

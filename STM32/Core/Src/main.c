@@ -281,7 +281,11 @@ int main(void)
                 {
                     g_ch6_armed    = 0;
                     g_ch6_trig_cnt = 0;
-                    Actions_Grap();
+                    uint16_t ch3 = SBUS_GetChannel(2);
+                    if (ch3 > 1592)  /* CH3 > 1875 us PWM → Grap2 (27cm) */
+                        Actions_Grap2();
+                    else
+                        Actions_Grap1();
                 }
             }
         }

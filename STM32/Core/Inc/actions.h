@@ -42,10 +42,17 @@ extern "C" {
 void Actions_Build(void);
 
 /**
- * @brief  7-step Grab action
+ * @brief  7-step Grab action (22cm horizontal reach)
  * @note   Blocking — may take tens of seconds.
  */
-void Actions_Grap(void);
+void Actions_Grap1(void);
+
+/**
+ * @brief  7-step Grab action (27cm horizontal reach)
+ * @note   Blocking — may take tens of seconds.
+ *         Identical to Grap1 except horizontal distance is 27cm vs 22cm.
+ */
+void Actions_Grap2(void);
 
 /**
  * @brief  Quick servo home (no stepper movement)
