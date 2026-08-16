@@ -1,0 +1,12 @@
+{
+  "windows": {
+    "exposure": -4,
+    "gain": 0,
+    "white_balance": 4500
+  },
+  "linux": {
+    "exposure": null,
+    "gain": null,
+    "white_balance": null
+  }
+}

@@ -1,33 +1,9 @@
-# Uniforest — RoboGame 2026 机器人开发
+# Uniforest - RoboGame 2026 机器人开发
 
-## 项目概述
-RoboGame 2026 竞技组 Uniforest 队的电控与视觉开发工作区。
+本文件与 [AGENTS.md](AGENTS.md) 使用相同的项目边界。完整协作约束以 `AGENTS.md` 为准。
 
-请你详细阅读规则手册 @RoboGame2026 竞技组规则手册2_1.pdf ，充分了解比赛规则，机器人设计要求等关键约束。
+- `RaspberryPi/`：持续迭代的上位机程序。
+- `Uniforest_A/`：持续迭代的下位机程序。
+- `备份/`：每日成果的历史快照，默认只读，不作为当前实现。
 
-请你仔细阅读本队的计划书 @RoboGame 2026 Uniforest队计划书.pdf ，这里详细描述了本队计划采取的技术路径。
-
-### 电控部分
-
-我们使用大疆官方RoboMaster A板作为主控模块
-
-请你在需要的时候读取开发板使用说明文件 @开发板说明.pdf 和原理图 @RoboMaster 开发板A型 原理图.pdf
-
-这里是我们设计和调试主控模块（开发板）程序的工作区 @STM32 （链接GitHub项目：https://github.com/KainingLiu/uniforest），开发板的主程序在这里编写，调试，编译，烧录。
-
-### 算法和视觉部分
-
-我们使用Raspberry Pi 5 8GB作为上位机，负责算法和视觉的实现
-
-树莓派的用户名：uniforest；密码请向队内管理员获取，不在公共仓库中保存。
-
-代码工作区在 @RaspberryPi （链接GitHub项目：https://github.com/KainingLiu/uniforest）
-
-
-## 代码配置
-
-### 电控
-统一使用CLion里配置的的openocd+DAPLink工具链自动烧录，无需使用命令行烧录。
-默认主程序为： /Core/Src/main.c
-项目核心代码为：/STM32 在**调试期间不轻易改动**。
-其余工作区（比如STM32test），用于调试、测试和学习，**允许直接系统性重构代码**。
+下位机默认入口为 `Uniforest_A/Core/Src/main.c`。烧录统一使用 CLion 配置的 OpenOCD + DAPLink 工具链，不使用命令行直接烧录。

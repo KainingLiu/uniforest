@@ -1,0 +1,4 @@
+pyserial>=3.5
+pynput>=1.7.7
+numpy>=1.21
+opencv-contrib-python>=4.8.0

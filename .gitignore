@@ -1,9 +1,14 @@
 /*
 !/.gitignore
+!/AGENTS.md
 !/AGENT.md
 !/CLAUDE.md
-!/STM32/
+!/README.md
 !/RaspberryPi/
+!/Uniforest_A/
+!/备份/
+/备份/*
+!/备份/README.md
 
 **/build/
 **/.idea/
@@ -11,3 +16,4 @@
 **/.vscode/
 **/__pycache__/
 *.py[cod]
+RaspberryPi/vision/debug/
