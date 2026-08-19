@@ -25,6 +25,7 @@ from protocol.commands import (
     CMD_SERVO_ANGLE, CMD_SERVO_HOME, CMD_SERVO_ANGLE_ALL,
     CMD_STEPPER_MOVE, CMD_STEPPER_STOP, CMD_STEPPER_PARAMS,
     CMD_STEPPER_MOVE_DUAL, CMD_STEPPER_MOVE_DUAL2, CMD_STEPPER_SET_POS,
+    CMD_STEPPER_MOVE_DUAL3,
     CMD_SET_TELEM_RATE,
     TELEM_FULL, TELEM_ACK, TELEM_PONG,
     ACK_OK, ACK_ERR_CRC,
@@ -34,6 +35,7 @@ from protocol.commands import (
     encode_servo_angle, encode_servo_angle_all,
     encode_stepper_move, encode_stepper_stop, encode_stepper_params,
     encode_stepper_move_dual, encode_stepper_move_dual2, encode_stepper_set_pos,
+    encode_stepper_move_dual3,
     encode_set_telem_rate,
 )
 
@@ -373,6 +375,23 @@ class Transport:
                             steps_ph2, dir_ph2,
                             ph2_offset,
                             start_delay, target_delay, accel_steps))
+
+    def stepper_move_dual3(
+            self, m_lead: int, steps_lead1: int, dir_lead1: int,
+            steps_lead2: int, dir_lead2: int,
+            m_other: int, steps_other: int, dir_other: int,
+            other_offset: int, lead2_offset: int,
+            start_delay: int = 1000, target_delay: int = 100,
+            accel_steps: int = 400) -> bool:
+        """Launch a cross-triggered three-segment dual-motor move."""
+        return self.send(
+            CMD_STEPPER_MOVE_DUAL3,
+            encode_stepper_move_dual3(
+                m_lead, steps_lead1, dir_lead1,
+                steps_lead2, dir_lead2,
+                m_other, steps_other, dir_other,
+                other_offset, lead2_offset,
+                start_delay, target_delay, accel_steps))
 
     def stepper_set_position(self, motor: int, pos: int) -> bool:
         """Set stepper cumulative position counter."""

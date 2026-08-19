@@ -150,7 +150,7 @@ def main():
     parser.add_argument('--port', default=Robot.SERIAL_PORT)
     parser.add_argument('--baud', type=int, default=115200)
     parser.add_argument('--speed', type=float, default=DEFAULT_MOVE_SPEED_MM_S,
-                        help='Move speed in mm/s (default: 500 = 0.5 m/s)')
+                        help='Move speed in mm/s (default: 600 = 0.6 m/s)')
     parser.add_argument('--telem-rate', type=int, default=50)
     parser.add_argument('--lateral-scale', type=float, default=None,
                         help='Override lateral compensation (calibrated default: 1.07527)')

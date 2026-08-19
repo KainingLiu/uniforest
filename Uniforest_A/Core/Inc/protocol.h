@@ -46,6 +46,7 @@ extern "C" {
 #define CMD_STEPPER_MOVE_DUAL   0x33   /* dual-motor overlap move */
 #define CMD_STEPPER_MOVE_DUAL2  0x34   /* dual-motor overlap move with dir change */
 #define CMD_STEPPER_SET_POS     0x35   /* motor + pos(4B) */
+#define CMD_STEPPER_MOVE_DUAL3  0x36   /* cross-triggered three-segment overlap */
 
 #define CMD_SET_TELEM_RATE      0x40   /* uint16 rate_hz */
 

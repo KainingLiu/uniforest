@@ -204,6 +204,24 @@ void Stepper_StartMoveOverlap2(uint8_t  m_cont,   uint32_t steps_cont,
                                uint16_t start_delay, uint16_t target_delay,
                                uint16_t accel_steps);
 
+/**
+ * @brief  Launch a cross-triggered three-segment dual-motor move
+ * @note   The lead motor runs phase 1 continuously. The other motor starts
+ *         at other_offset lead steps. Lead phase 2 starts at lead2_offset
+ *         other-motor steps, allowing a direction reversal without a second
+ *         host command.
+ */
+void Stepper_StartMoveOverlap3(uint8_t  m_lead,
+                               uint32_t steps_lead1, uint8_t dir_lead1,
+                               uint32_t steps_lead2, uint8_t dir_lead2,
+                               uint8_t  m_other,
+                               uint32_t steps_other, uint8_t dir_other,
+                               uint32_t other_offset,
+                               uint32_t lead2_offset,
+                               uint16_t start_delay,
+                               uint16_t target_delay,
+                               uint16_t accel_steps);
+
 /* ---------- Control ---------- */
 
 /**

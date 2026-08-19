@@ -10,8 +10,11 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from Strategy.competition import (
     CompetitionProgram,
     FirstTaskConfig,
+    LONG_DISTANCE_FORWARD_ACCEL_MS,
+    LONG_DISTANCE_MOVE_SPEED_MM_S,
     TAG_FOV_RETUNE_SCALE,
 )
+from Strategy.task1 import Task1Round2Config, Task1Round2Program
 
 
 def motor(rpm, current):
@@ -19,11 +22,20 @@ def motor(rpm, current):
 
 
 class FirstTaskTests(unittest.TestCase):
-    def test_initial_move_matches_competition_distance(self):
+    def test_task1_motion_parameters(self):
         cfg = FirstTaskConfig()
-        self.assertEqual(cfg.initial_distance_mm, 1200.0)
-        self.assertEqual(cfg.initial_speed_mm_s, 500.0)
-        self.assertEqual(cfg.initial_hold_ms, 0)
+        self.assertEqual(LONG_DISTANCE_MOVE_SPEED_MM_S, 600.0)
+        self.assertEqual(LONG_DISTANCE_FORWARD_ACCEL_MS, 800)
+        self.assertEqual(
+            cfg.delivery_forward_speed_mm_s, LONG_DISTANCE_MOVE_SPEED_MM_S)
+        self.assertEqual(
+            cfg.long_distance_forward_accel_ms,
+            LONG_DISTANCE_FORWARD_ACCEL_MS)
+        self.assertEqual(cfg.search_speed_mm_s, 300.0)
+        self.assertEqual(cfg.far_wall_speed_mm_s, 200.0)
+        self.assertEqual(cfg.far_wall_timeout_s, 4.0)
+        self.assertEqual(cfg.near_wall_speed_mm_s, 150.0)
+        self.assertEqual(cfg.near_wall_timeout_s, 1.0)
         self.assertTrue(cfg.wall_timeout_is_success)
         self.assertEqual((cfg.align_min_x_mm, cfg.align_max_x_mm),
                          (-20.0, 5.0))
@@ -53,7 +65,6 @@ class FirstTaskTests(unittest.TestCase):
         self.assertEqual(cfg.delivery_tag_translation_median_frames, 5)
         self.assertEqual(cfg.delivery_heading_target_cw_deg, 180.0)
         self.assertEqual(cfg.unload_reverse_mm, 300.0)
-        self.assertEqual(cfg.unload_wall_timeout_s, 4.0)
         self.assertEqual(cfg.unload_final_turn_cw_deg, 180.0)
         self.assertEqual(cfg.unload_final_heading_hold_ms, 500)
 
@@ -424,7 +435,7 @@ class FirstTaskTests(unittest.TestCase):
 
         self.assertEqual(robot.chassis.commands[-1], (0, 0, 0, 0))
         self.assertEqual(len(robot.chassis.commands), 5)
-        self.assertAlmostEqual(program._search_position_mm, 10.8)
+        self.assertAlmostEqual(program._search_position_mm, 18.0)
 
     def test_alignment_slew_prevents_startup_speed_spike(self):
         cfg = FirstTaskConfig()
@@ -471,6 +482,7 @@ class FirstTaskTests(unittest.TestCase):
                 self.actions = FakeActions()
                 self.reset_count = 0
                 self.moves = []
+                self.cube_profiles = []
 
             def move_chassis(self, direction, distance, speed, **kwargs):
                 self.moves.append((direction, distance, speed, kwargs))
@@ -478,6 +490,9 @@ class FirstTaskTests(unittest.TestCase):
 
             def reset_vision_filter(self):
                 self.reset_count += 1
+
+            def set_cube_detection_profile(self, profile_name):
+                self.cube_profiles.append(profile_name)
 
         cfg = FirstTaskConfig(wall_settle_s=0, post_grab_settle_s=0)
         robot = FakeRobot()
@@ -497,13 +512,12 @@ class FirstTaskTests(unittest.TestCase):
         program._run_first_task()
 
         self.assertEqual(robot.actions.grab_count, 3)
+        self.assertEqual(robot.cube_profiles, ['default'])
         self.assertEqual(heading_recalibrations, [True])
         self.assertEqual(press_count, [True, True, True])
         self.assertEqual(robot.reset_count, 4)
         self.assertEqual(program._cube_lateral_displacement_mm, 615.0)
-        self.assertEqual(robot.moves, [
-            ('forward', 1200.0, 500.0, {'hold_ms': 0}),
-        ])
+        self.assertEqual(robot.moves, [])
 
     def test_pre_grab_wall_press_uses_shorter_stall_timing(self):
         cfg = FirstTaskConfig(pre_grab_wall_settle_s=0)
@@ -516,7 +530,8 @@ class FirstTaskTests(unittest.TestCase):
         program._press_wall_before_grab(recalibrate_heading_zero=True)
 
         self.assertEqual(len(calls), 1)
-        self.assertEqual(calls[0]['timeout_s'], 1.5)
+        self.assertEqual(calls[0]['timeout_s'], 1.0)
+        self.assertEqual(calls[0]['speed_mm_s'], 150.0)
         self.assertEqual(calls[0]['startup_grace_s'], 0.1)
         self.assertEqual(calls[0]['confirm_s'], 0.15)
         self.assertEqual(program._heading_zero_deg, 2.0)
@@ -562,8 +577,8 @@ class FirstTaskTests(unittest.TestCase):
             ('move', 'backward', 400.0, 300.0,
              {'hold_ms': 0, 'accel_ms': 200}),
             ('turn_to_heading', 90.0, {'hold_ms': 500}),
-            ('move', 'forward', 2200.0, 500.0,
-             {'hold_ms': 0, 'accel_ms': 200}),
+            ('move', 'forward', 2200.0, 600.0,
+             {'hold_ms': 0, 'accel_ms': 800}),
             ('turn_to_heading', 180.0, {}),
             ('reset_field_localization',),
             ('tag_align', 6),
@@ -572,6 +587,63 @@ class FirstTaskTests(unittest.TestCase):
             ('move', 'backward', 300.0, 300.0,
              {'hold_ms': 0, 'accel_ms': 200}),
             ('hatch_close',),
+            ('turn_to_heading', 360.0, {'hold_ms': 500}),
+        ])
+
+    def test_round2_delivery_route_uses_shorter_base_and_lateral_moves(self):
+        events = []
+
+        class FakeActions:
+            def hatch_open(self):
+                events.append(('hatch_open',))
+
+            def hatch_close(self):
+                events.append(('hatch_close',))
+
+        class FakeRobot:
+            actions = FakeActions()
+
+            def reset_field_localization_filter(self):
+                events.append(('reset_field_localization',))
+
+            def move_chassis(self, direction, distance, speed, **kwargs):
+                events.append(('move', direction, distance, speed, kwargs))
+                return SimpleNamespace(timed_out=False, cancelled=False)
+
+        cfg = Task1Round2Config()
+        self.assertEqual(cfg.delivery_forward_base_mm, 2500.0)
+        self.assertEqual(cfg.post_tag_lateral_right_mm, 300.0)
+        self.assertEqual(cfg.pre_final_turn_lateral_left_mm, 300.0)
+
+        program = Task1Round2Program(FakeRobot(), cfg)
+        program._drive_until_wall = lambda **kwargs: events.append(
+            ('wall', kwargs['speed_mm_s'], kwargs['timeout_s']))
+        program._align_delivery_tag = lambda: events.append(
+            ('tag_align', 6))
+        program._turn_to_heading = lambda target, **kwargs: events.append(
+            ('turn_to_heading', target, kwargs))
+        program._cube_lateral_displacement_mm = 600.0
+
+        program._run_delivery_route()
+
+        self.assertEqual(events, [
+            ('move', 'backward', 400.0, 300.0,
+             {'hold_ms': 0, 'accel_ms': 200}),
+            ('turn_to_heading', 90.0, {'hold_ms': 500}),
+            ('move', 'forward', 1900.0, 600.0,
+             {'hold_ms': 0, 'accel_ms': 800}),
+            ('turn_to_heading', 180.0, {}),
+            ('reset_field_localization',),
+            ('tag_align', 6),
+            ('move', 'right', 300.0, 300.0,
+             {'hold_ms': 0, 'accel_ms': 200}),
+            ('wall', 200.0, 4.0),
+            ('hatch_open',),
+            ('move', 'backward', 300.0, 300.0,
+             {'hold_ms': 0, 'accel_ms': 200}),
+            ('hatch_close',),
+            ('move', 'left', 300.0, 300.0,
+             {'hold_ms': 0, 'accel_ms': 200}),
             ('turn_to_heading', 360.0, {'hold_ms': 500}),
         ])
 

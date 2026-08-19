@@ -58,6 +58,7 @@ class BlockInfo:
     y: float = 0.0
     z: float = 0.0
     confidence: float = 0.0
+    height_width_ratio: float = 0.0
     quad: Optional[np.ndarray] = field(default=None, repr=False)
 
 
@@ -124,6 +125,44 @@ CONFIG = {
 
     "calib_file": "camera_calib.json",
 }
+
+# Runtime profiles only override the colors that differ from the calibrated
+# default.  Task2 sees the orange cubes from a steeper angle: their front face
+# is red-orange while the lit top is around H=31, outside Task1's H<=25 range.
+DETECTION_PROFILE_OVERRIDES = {
+    "default": {},
+    "task2_orange": {
+        "Orange": {
+            "hsv_low": np.array([5, 75, 80]),
+            "hsv_high": np.array([35, 255, 255]),
+        },
+    },
+}
+
+
+def color_profiles_for(detection_profile: str):
+    """Return an isolated color-profile list for one detector instance."""
+    try:
+        overrides = DETECTION_PROFILE_OVERRIDES[detection_profile]
+    except KeyError as exc:
+        choices = ", ".join(sorted(DETECTION_PROFILE_OVERRIDES))
+        raise ValueError(
+            f"unknown cube detection profile {detection_profile!r}; "
+            f"expected one of: {choices}") from exc
+
+    profiles = []
+    for base in CONFIG["color_profiles"]:
+        profile = {
+            **base,
+            "hsv_low": base["hsv_low"].copy(),
+            "hsv_high": base["hsv_high"].copy(),
+        }
+        override = overrides.get(base["name"])
+        if override is not None:
+            profile["hsv_low"] = override["hsv_low"].copy()
+            profile["hsv_high"] = override["hsv_high"].copy()
+        profiles.append(profile)
+    return profiles
 
 CAMERA_SETTINGS_FILE = os.path.join(os.path.dirname(__file__),
                                     "camera_settings.json")
@@ -342,14 +381,16 @@ def temporal_filter(x_mm, y_mm, z_mm, confidence, state):
 # 多颜色检测
 # ============================================================
 
-def detect_all_blocks(frame, state):
+def detect_all_blocks(frame, state, color_profiles=None):
     fx, fy = state["fx"], state["fy"]
     cx, cy = state["cx"], state["cy"]
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
     all_blocks = []
-    for profile in CONFIG["color_profiles"]:
+    if color_profiles is None:
+        color_profiles = CONFIG["color_profiles"]
+    for profile in color_profiles:
         mask = cv2.inRange(hsv, profile["hsv_low"], profile["hsv_high"])
         ksize = CONFIG["morph_kernel_size"]
         kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ksize, ksize))
@@ -365,10 +406,12 @@ def detect_all_blocks(frame, state):
                 continue
             quad = refine_corners_subpix(gray, quad)
             x_mm, y_mm, z_mm, conf = compute_3d_position(quad, fx, fy, cx, cy)
+            w_px, h_px = measure_face_size(quad)
             all_blocks.append(BlockInfo(
                 color_name=profile["name"],
                 draw_color=profile["draw_color"],
                 x=x_mm, y=y_mm, z=z_mm, confidence=conf,
+                height_width_ratio=h_px / max(w_px, 1e-6),
                 quad=quad.copy(),
             ))
     # Sort by true camera-relative distance so the first candidate is the
@@ -460,6 +503,11 @@ class CubeDetector:
         self._running = False
         self._thread: Optional[threading.Thread] = None
 
+        self._profile_lock = threading.Lock()
+        self._detection_profile = "default"
+        self._color_profiles = color_profiles_for("default")
+        self._profile_generation = 0
+
         # Calibration file path
         if calibration_file is None:
             calibration_file = os.path.join(os.path.dirname(__file__),
@@ -532,6 +580,11 @@ class CubeDetector:
               f"({self._camera_source}): {actual_w}x{actual_h}")
 
         load_or_init_calibration(self._state, self._calib_path)
+        # Calibration may update the default HSV values. Refresh the instance
+        # copy before the capture thread starts.
+        with self._profile_lock:
+            self._color_profiles = color_profiles_for(
+                self._detection_profile)
         self._state["cx"] = actual_w / 2.0
         self._state["cy"] = actual_h / 2.0
 
@@ -566,6 +619,24 @@ class CubeDetector:
     def calibrated(self) -> bool:
         return self._state["calibrated"]
 
+    @property
+    def detection_profile(self) -> str:
+        with self._profile_lock:
+            return self._detection_profile
+
+    def set_detection_profile(self, profile_name: str):
+        """Switch HSV parameters without leaking observations across tasks."""
+        profiles = color_profiles_for(profile_name)
+        with self._profile_lock:
+            if profile_name == self._detection_profile:
+                return
+            self._detection_profile = profile_name
+            self._color_profiles = profiles
+            self._profile_generation += 1
+        with self._result_lock:
+            self._result = None
+        print(f"[视觉] 方块检测参数已切换: {profile_name}")
+
     def reset_filter(self):
         """重置 EMA 时序滤波器。"""
         self._state["ema_pos"] = None
@@ -578,6 +649,7 @@ class CubeDetector:
         """后台线程：采集 → 检测 → 存储结果。"""
         state = self._state
 
+        applied_profile_generation = -1
         while self._running:
             if self._cap is None:
                 break
@@ -591,7 +663,20 @@ class CubeDetector:
             state["cx"] = w / 2.0
             state["cy"] = h / 2.0
 
-            detected_blocks = detect_all_blocks(frame, state)
+            with self._profile_lock:
+                profile_generation = self._profile_generation
+                color_profiles = self._color_profiles
+            if profile_generation != applied_profile_generation:
+                state["ema_pos"] = None
+                state["history"].clear()
+                state["locked_color"] = None
+                applied_profile_generation = profile_generation
+
+            detected_blocks = detect_all_blocks(
+                frame, state, color_profiles=color_profiles)
+            with self._profile_lock:
+                if profile_generation != self._profile_generation:
+                    continue
             # Keep the nearest cube as the general-purpose lock, but expose all
             # candidates so competition strategy can select a required color.
             nearest_block = detected_blocks[0] if detected_blocks else None
@@ -635,8 +720,13 @@ class CubeDetector:
                 fps=state["fps"],
             )
 
-            with self._result_lock:
-                self._result = result
+            # Publish under the profile lock so a frame computed with the old
+            # HSV range cannot reappear after set_detection_profile() clears it.
+            with self._profile_lock:
+                if profile_generation != self._profile_generation:
+                    continue
+                with self._result_lock:
+                    self._result = result
 
             state["frame_count"] += 1
             now = time.time()
@@ -675,6 +765,10 @@ if __name__ == "__main__":
                         help="manual camera gain; backend-specific value")
     parser.add_argument("--white-balance", type=float, default=None,
                         help="manual white-balance temperature")
+    parser.add_argument(
+        "--profile", default="default",
+        choices=sorted(DETECTION_PROFILE_OVERRIDES),
+        help="task-specific cube detection parameters")
     args = parser.parse_args()
 
     res_w, res_h = map(int, args.resolution.split("x"))
@@ -687,12 +781,14 @@ if __name__ == "__main__":
         gain=args.gain,
         white_balance=args.white_balance,
     )
+    det.set_detection_profile(args.profile)
 
     if not det.start():
         sys.exit(1)
 
     print(f"\n多色方块3D定位系统")
     print(f"焦距: fx={det._state['fx']:.0f}, fy={det._state['fy']:.0f}")
+    print(f"检测参数: {det.detection_profile}")
     print(f"检测颜色: {', '.join(p['name'] for p in CONFIG['color_profiles'])}")
     print("按 Ctrl+C 退出\n")
 

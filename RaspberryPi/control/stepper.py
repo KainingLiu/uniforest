@@ -101,6 +101,27 @@ class Stepper:
             steps_ph2, dir_ph2, ph2_offset,
             start_delay, target_delay, accel_steps)
 
+    def move_dual3(
+            self, m_lead: int, steps_lead1: int, dir_lead1: int,
+            steps_lead2: int, dir_lead2: int,
+            m_other: int, steps_other: int, dir_other: int,
+            other_offset: int, lead2_offset: int,
+            start_delay: int = None, target_delay: int = None,
+            accel_steps: int = None) -> bool:
+        """Launch a cross-triggered three-segment overlap move."""
+        if start_delay is None:
+            start_delay = DEFAULT_START_DELAY
+        if target_delay is None:
+            target_delay = DEFAULT_TARGET_DELAY
+        if accel_steps is None:
+            accel_steps = DEFAULT_ACCEL_STEPS
+        return self._t.stepper_move_dual3(
+            m_lead, steps_lead1, dir_lead1,
+            steps_lead2, dir_lead2,
+            m_other, steps_other, dir_other,
+            other_offset, lead2_offset,
+            start_delay, target_delay, accel_steps)
+
     def set_position(self, motor: int, pos: int):
         """Set stepper cumulative position."""
         self._t.stepper_set_position(motor, pos)

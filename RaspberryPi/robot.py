@@ -220,6 +220,12 @@ class Robot:
         if self._vision is not None:
             self._vision.reset_filter()
 
+    def set_cube_detection_profile(self, profile_name: str):
+        """Select task-specific cube HSV parameters at runtime."""
+        if self._vision is None:
+            raise RuntimeError('cube vision subsystem unavailable')
+        self._vision.set_detection_profile(profile_name)
+
     @property
     def has_vision(self) -> bool:
         return self._vision is not None and self._vision.is_running
@@ -531,7 +537,7 @@ def debug_main():
             print("  home, hatch_open, hatch_close — Servo actions")
             print("  grap1, grap2, grap3, build  — Full action sequences")
             print("  approach                     — Vision-guided cube approach")
-            print("  move DIR MM [SPEED]          — Position move; speed defaults to 500 mm/s")
+            print("  move DIR MM [SPEED]          — Position move; speed defaults to 600 mm/s")
             print("  telem                        — Print telemetry snapshot")
             print("  vision                       — Print vision detection result")
             print("  stop                         — EMERGENCY STOP")

@@ -670,6 +670,39 @@ static void Protocol_Dispatch(const ProtoFrame_t *f)
         else status = ACK_ERR_PARAM;
         break;
 
+    /* ---- Stepper: Cross-Triggered Three-Segment Move ---- */
+    case CMD_STEPPER_MOVE_DUAL3:
+        if (f->data_len >= 31)
+        {
+            uint8_t  m_lead      = d[0];
+            uint32_t steps_lead1 = (uint32_t)parse_i32_be(d + 1);
+            uint8_t  dir_lead1   = d[5];
+            uint32_t steps_lead2 = (uint32_t)parse_i32_be(d + 6);
+            uint8_t  dir_lead2   = d[10];
+            uint8_t  m_other     = d[11];
+            uint32_t steps_other = (uint32_t)parse_i32_be(d + 12);
+            uint8_t  dir_other   = d[16];
+            uint32_t other_off   = (uint32_t)parse_i32_be(d + 17);
+            uint32_t lead2_off   = (uint32_t)parse_i32_be(d + 21);
+            uint16_t start_d     = parse_u16_be(d + 25);
+            uint16_t target_d    = parse_u16_be(d + 27);
+            uint16_t accel_s     = parse_u16_be(d + 29);
+            if (m_lead < STEPPER_COUNT && m_other < STEPPER_COUNT &&
+                m_lead != m_other && steps_lead1 > 0 &&
+                steps_lead2 > 0 && steps_other > 0 &&
+                other_off <= steps_lead1 && lead2_off <= steps_other)
+                Stepper_StartMoveOverlap3(
+                    m_lead, steps_lead1, dir_lead1,
+                    steps_lead2, dir_lead2,
+                    m_other, steps_other, dir_other,
+                    other_off, lead2_off,
+                    start_d, target_d, accel_s);
+            else
+                status = ACK_ERR_PARAM;
+        }
+        else status = ACK_ERR_PARAM;
+        break;
+
     /* ---- Stepper: Set Position ---- */
     case CMD_STEPPER_SET_POS:
         if (f->data_len >= 5)

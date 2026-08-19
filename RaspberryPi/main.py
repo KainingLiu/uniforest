@@ -16,7 +16,7 @@ def parse_args():
         description='Uniforest RoboGame competition program')
     parser.add_argument(
         '--task', choices=TASK_CHOICES, default='all',
-        help='Run the full Task1 -> Task2 sequence or one task '
+        help='Run both rounds, one round, or one round-specific task '
              '(default: all)')
     parser.add_argument('--port', default=default_port,
                         help=f'A-board serial port (default: {default_port})')

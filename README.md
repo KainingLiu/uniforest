@@ -25,9 +25,10 @@ python -m unittest discover -s tests -v
 正式比赛入口：
 
 ```bash
-python main.py                 # 依次运行 Task1 和 Task2
-python main.py --task task1   # 只运行 Task1
-python main.py --task task2   # 只运行 Task2
+python main.py                    # Task0、第一轮和第二轮完整流程
+python main.py --task round1     # 只运行第一轮 Task1/Task2
+python main.py --task round2     # 只运行第二轮 Task1/Task2
+python main.py --task task1-r2   # 只运行第二轮 Task1
 ```
 
 完整的相机角色、任务流程、标定和调试说明见 [`RaspberryPi/README.md`](RaspberryPi/README.md)。

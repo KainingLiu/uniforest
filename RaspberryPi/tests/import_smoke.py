@@ -64,6 +64,7 @@ test('vision.field_localizer', 'vision.field_localizer')
 # Competition architecture
 print('\n=== Competition ===')
 test('robot', 'robot')
+test('Strategy.task0', 'Strategy.task0')
 test('Strategy.competition', 'Strategy.competition')
 
 # Main syntax

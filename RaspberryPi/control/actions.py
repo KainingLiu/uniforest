@@ -209,6 +209,35 @@ class Actions:
                           _est_move_ms(s_ph1 + s_ph2))
         self._wait_steppers_stopped((1 << m_cont) | (1 << m_ph), estimate_ms)
 
+    def _stepper_dual3_and_wait(
+            self, m_lead: int, cm_lead1: float, dir_lead1: int,
+            cm_lead2: float, dir_lead2: int,
+            m_other: int, cm_other: float, dir_other: int,
+            other_offset_cm: float, lead2_offset_cm: float,
+            start_d: int = START_DELAY_US,
+            target_d: int = TARGET_DELAY_US,
+            accel: int = ACCEL_STEPS):
+        """Launch a cross-triggered three-segment move and wait."""
+        self._check_cancelled()
+        s_lead1 = int(cm_lead1 * STEPS_PER_CM)
+        s_lead2 = int(cm_lead2 * STEPS_PER_CM)
+        s_other = int(cm_other * STEPS_PER_CM)
+        off_other = int(other_offset_cm * STEPS_PER_CM)
+        off_lead2 = int(lead2_offset_cm * STEPS_PER_CM)
+        if not self.stepper.move_dual3(
+                m_lead, s_lead1, dir_lead1,
+                s_lead2, dir_lead2,
+                m_other, s_other, dir_other,
+                off_other, off_lead2,
+                start_d, target_d, accel):
+            raise RuntimeError(
+                "failed to send three-segment stepper move command")
+        estimate_ms = max(
+            _est_move_ms(s_lead1 + s_lead2),
+            _est_move_ms(s_other) + other_offset_cm * 60)
+        self._wait_steppers_stopped(
+            (1 << m_lead) | (1 << m_other), estimate_ms)
+
     def _arm_front_smooth_up(self):
         """Smooth arm lift (replicates Build steps 5/11/19)."""
         steps = [50, 28, 14, 6, 2, 0]
@@ -346,14 +375,14 @@ class Actions:
         self.servo.gripper_close()
         self._wait(500)
 
-        # 5. up 10cm → after 5cm: back 22cm
-        self._stepper_dual_and_wait(
-            STEPPER_VERT,  10, STEP_DIR_FORWARD,
+        # 5. rise 10cm continuously; after 5cm start retracting 22cm;
+        #    after retracting 14cm, reverse the vertical axis and descend 11cm
+        self._stepper_dual3_and_wait(
+            STEPPER_VERT, 10, STEP_DIR_FORWARD,
+                          11, STEP_DIR_REVERSE,
             STEPPER_HORIZ, 22, STEP_DIR_REVERSE,
-            m2_offset_cm=5)
-
-        # then down 11cm
-        self._stepper_move_and_wait(STEPPER_VERT, STEP_DIR_REVERSE, 11)
+            other_offset_cm=5,
+            lead2_offset_cm=14)
 
         # 6. Hatch partial-close → gripper open → rise 11cm
         self.servo.set_angle(2, 67)
@@ -408,15 +437,14 @@ class Actions:
         self.servo.gripper_open()
         self._wait(500)
 
-        # 8a. up 10cm → after 3cm: back 23cm
-        self._stepper_dual_and_wait(
-            STEPPER_VERT,  10, STEP_DIR_FORWARD,
+        # 8. Rise 10cm continuously; after 3cm start retracting 23cm;
+        #    after retracting 20cm, reverse the vertical axis and descend 2cm
+        self._stepper_dual3_and_wait(
+            STEPPER_VERT, 10, STEP_DIR_FORWARD,
+                          2, STEP_DIR_REVERSE,
             STEPPER_HORIZ, 23, STEP_DIR_REVERSE,
-            m2_offset_cm=3)
-        self._wait(300)
-
-        # 8b. down 2cm
-        self._stepper_move_and_wait(STEPPER_VERT, STEP_DIR_REVERSE, 2)
+            other_offset_cm=3,
+            lead2_offset_cm=20)
         self._wait(300)
 
         # 9. Arm front lower

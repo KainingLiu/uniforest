@@ -6,7 +6,7 @@
  *  TIM7 @ 100 kHz (10 µs tick) → Stepper_Tick() handles:
  *    - Pulse generation (PUL HIGH → delay → PUL LOW → delay)
  *    - Trapezoidal velocity profiles (accel → cruise → decel)
- *    - Linked dual-motor coordination (Overlap / Overlap2)
+ *    - Linked dual-motor coordination (Overlap / Overlap2 / Overlap3)
  *
  *  TB6600 drivers, common-cathode wiring.
  *  PUL: rising edge = 1 step. DIR: LOW=forward, HIGH=reverse.
@@ -540,6 +540,59 @@ void Stepper_StartMoveOverlap2(uint8_t  m_cont,   uint32_t steps_cont,
         ctx_ph->link_trigger = ph2_offset;
         ctx_ph->has_next     = 0;
     }
+}
+
+/**
+ * @brief  Launch a cross-triggered three-segment dual-motor move
+ */
+void Stepper_StartMoveOverlap3(uint8_t  m_lead,
+                               uint32_t steps_lead1, uint8_t dir_lead1,
+                               uint32_t steps_lead2, uint8_t dir_lead2,
+                               uint8_t  m_other,
+                               uint32_t steps_other, uint8_t dir_other,
+                               uint32_t other_offset,
+                               uint32_t lead2_offset,
+                               uint16_t start_delay,
+                               uint16_t target_delay,
+                               uint16_t accel_steps)
+{
+    if (m_lead >= STEPPER_COUNT || m_other >= STEPPER_COUNT) return;
+    if (m_lead == m_other) return;
+    if (steps_lead1 == 0 || steps_lead2 == 0 || steps_other == 0) return;
+    if (other_offset > steps_lead1 || lead2_offset > steps_other) return;
+
+    if (start_delay  == 0) start_delay  = g_default_start_delay;
+    if (target_delay == 0) target_delay = g_default_target_delay;
+    if (accel_steps  == 0) accel_steps  = g_default_accel_steps;
+
+    g_default_start_delay  = start_delay;
+    g_default_target_delay = target_delay;
+    g_default_accel_steps  = accel_steps;
+
+    /* Lead phase 1 is one uninterrupted segment. Queue phase 2 so it starts
+     * when the other motor reaches its trigger distance. */
+    Stepper_StartMove(m_lead, dir_lead1, steps_lead1,
+                      start_delay, target_delay, accel_steps);
+    StepperCtx_t *ctx_lead = &g_stepper[m_lead];
+    ctx_lead->has_next        = 1;
+    ctx_lead->next_dir        = dir_lead2;
+    ctx_lead->next_steps      = steps_lead2;
+    ctx_lead->next_trigger    = lead2_offset;
+    ctx_lead->next_link_motor = m_other;
+
+    /* The other motor waits for the lead motor's first trigger. Preserve its
+     * cumulative position while resetting only the active move state. */
+    StepperCtx_t *ctx_other = &g_stepper[m_other];
+    int32_t other_pos = ctx_other->pos;
+    memset(ctx_other, 0, sizeof(StepperCtx_t));
+    ctx_other->pos          = other_pos;
+    ctx_other->pins         = &stepper_pins[m_other];
+    ctx_other->phase        = SM_WAIT_LINK;
+    ctx_other->dir          = dir_other;
+    ctx_other->seg_steps    = steps_other;
+    ctx_other->link_motor   = m_lead;
+    ctx_other->link_trigger = other_offset;
+    ctx_other->has_next     = 0;
 }
 
 /* ======================== Control ========================================== */

@@ -9,6 +9,11 @@ from statistics import median
 import time
 from typing import TYPE_CHECKING, Optional
 
+from control.chassis import (
+    LONG_DISTANCE_FORWARD_ACCEL_MS,
+    LONG_DISTANCE_MOVE_SPEED_MM_S,
+)
+
 if TYPE_CHECKING:
     from robot import Robot
     from vision.cube_detector import BlockInfo
@@ -50,14 +55,15 @@ class _Pid:
 class CompetitionState(Enum):
     STARTUP = auto()
     READY = auto()
-    INITIAL_MOVE = auto()
     WALL_APPROACH = auto()
     ORANGE_SEARCH = auto()
     ORANGE_ALIGN = auto()
     GRAB = auto()
     DELIVERY_ROUTE = auto()
     DELIVERY_TAG_ALIGN = auto()
+    POST_TAG_LATERAL = auto()
     UNLOAD = auto()
+    PRE_FINAL_TURN_LATERAL = auto()
     FINISHED = auto()
     FAULT = auto()
 
@@ -65,16 +71,14 @@ class CompetitionState(Enum):
 @dataclass(frozen=True)
 class FirstTaskConfig:
     target_cube_count: int = 3
-    initial_distance_mm: float = 1200.0
-    initial_speed_mm_s: float = 500.0
-    initial_hold_ms: int = 0
-    wall_speed_mm_s: float = 150.0
-    wall_timeout_s: float = 4.0
+    far_wall_speed_mm_s: float = 200.0
+    far_wall_timeout_s: float = 4.0
+    near_wall_speed_mm_s: float = 150.0
+    near_wall_timeout_s: float = 1.0
     wall_timeout_is_success: bool = True
     wall_settle_s: float = 0.3
     stall_startup_grace_s: float = 0.5
     stall_confirm_s: float = 0.3
-    pre_grab_wall_timeout_s: float = 1.5
     pre_grab_stall_startup_grace_s: float = 0.1
     pre_grab_stall_confirm_s: float = 0.15
     pre_grab_wall_settle_s: float = 0.1
@@ -82,7 +86,7 @@ class FirstTaskConfig:
     stall_speed_rpm: int = 35
     stall_current_raw: int = 2500
     stall_motor_count: int = 3
-    search_speed_mm_s: float = 180.0
+    search_speed_mm_s: float = 300.0
     search_max_distance_mm: float = 1500.0
     search_control_period_s: float = 0.02
     vision_observe_s: float = 0.35
@@ -110,7 +114,7 @@ class FirstTaskConfig:
     delivery_turn_speed_deg_s: float = 90.0
     delivery_turn_heading_hold_ms: int = 500
     delivery_forward_base_mm: float = 2800.0
-    delivery_forward_speed_mm_s: float = 500.0
+    delivery_forward_speed_mm_s: float = LONG_DISTANCE_MOVE_SPEED_MM_S
     delivery_tag_id: int = 6
     delivery_tag_distance_mm: float = 425.0
     delivery_tag_distance_tolerance_mm: float = 24.0 * TAG_FOV_RETUNE_SCALE
@@ -149,13 +153,16 @@ class FirstTaskConfig:
     delivery_heading_min_yaw_deg_s: float = 8.0
     delivery_tag_linear_accel_mm_s2: float = 300.0
     delivery_heading_yaw_accel_deg_s2: float = 90.0
-    unload_wall_speed_mm_s: float = 200.0
-    unload_wall_timeout_s: float = 4.0
+    post_tag_lateral_right_mm: float = 0.0
+    post_tag_lateral_speed_mm_s: float = 300.0
     unload_reverse_mm: float = 300.0
     unload_reverse_speed_mm_s: float = 300.0
+    pre_final_turn_lateral_left_mm: float = 0.0
+    pre_final_turn_lateral_speed_mm_s: float = 300.0
     unload_final_turn_cw_deg: float = 180.0
     unload_final_heading_hold_ms: int = 500
     delivery_linear_accel_ms: int = 200
+    long_distance_forward_accel_ms: int = LONG_DISTANCE_FORWARD_ACCEL_MS
 
 
 class CompetitionProgram:
@@ -250,11 +257,13 @@ class CompetitionProgram:
                           context: str = 'Wall contact',
                           timeout_is_success: Optional[bool] = None):
         cfg = self.config
-        timeout_s = cfg.wall_timeout_s if timeout_s is None else timeout_s
+        timeout_s = (cfg.far_wall_timeout_s
+                     if timeout_s is None else timeout_s)
         startup_grace_s = (cfg.stall_startup_grace_s
                            if startup_grace_s is None else startup_grace_s)
         confirm_s = cfg.stall_confirm_s if confirm_s is None else confirm_s
-        speed_mm_s = cfg.wall_speed_mm_s if speed_mm_s is None else speed_mm_s
+        speed_mm_s = (cfg.far_wall_speed_mm_s
+                      if speed_mm_s is None else speed_mm_s)
         timeout_is_success = (
             cfg.wall_timeout_is_success if timeout_is_success is None
             else timeout_is_success)
@@ -324,7 +333,8 @@ class CompetitionProgram:
         cfg = self.config
         print(f'[{self.TASK_LABEL}] Press wall before grab')
         self._drive_until_wall(
-            timeout_s=cfg.pre_grab_wall_timeout_s,
+            timeout_s=cfg.near_wall_timeout_s,
+            speed_mm_s=cfg.near_wall_speed_mm_s,
             startup_grace_s=cfg.pre_grab_stall_startup_grace_s,
             confirm_s=cfg.pre_grab_stall_confirm_s,
             context='Pre-grab wall contact',
@@ -335,9 +345,13 @@ class CompetitionProgram:
 
     def _checked_move(self, direction: str, distance_mm: float,
                       speed_mm_s: float):
+        accel_ms = self.config.delivery_linear_accel_ms
+        if (direction.casefold() == 'forward'
+                and abs(speed_mm_s - LONG_DISTANCE_MOVE_SPEED_MM_S) < 1e-6):
+            accel_ms = self.config.long_distance_forward_accel_ms
         result = self.robot.move_chassis(
             direction, distance_mm, speed_mm_s,
-            hold_ms=0, accel_ms=self.config.delivery_linear_accel_ms)
+            hold_ms=0, accel_ms=accel_ms)
         if result.timed_out or result.cancelled:
             raise RuntimeError(
                 f'chassis move failed: {direction} {distance_mm:.0f} mm')
@@ -371,9 +385,12 @@ class CompetitionProgram:
             search_direction=1.0)
 
     def _find_cube(self, *, color_name: str, min_confidence: float,
-                   search_direction: float) -> 'BlockInfo':
+                   search_direction: float,
+                   max_distance_mm: Optional[float] = None) -> 'BlockInfo':
         cfg = self.config
-        remaining_mm = cfg.search_max_distance_mm - self._search_position_mm
+        search_limit_mm = (cfg.search_max_distance_mm
+                           if max_distance_mm is None else max_distance_mm)
+        remaining_mm = search_limit_mm - self._search_position_mm
         if remaining_mm <= 0.0:
             raise RuntimeError(
                 f'{color_name} cube not found within search range')
@@ -387,7 +404,7 @@ class CompetitionProgram:
         print(f'[{self.TASK_LABEL}] {display_color} not visible; '
               f'continuous search {direction_name} '
               f'from {self._search_position_mm:.0f}/'
-              f'{cfg.search_max_distance_mm:.0f} mm')
+              f'{search_limit_mm:.0f} mm')
         try:
             while time.monotonic() < deadline:
                 self.robot.chassis.set_speeds(rpm)
@@ -407,7 +424,7 @@ class CompetitionProgram:
         finally:
             self.robot.chassis.set_speeds([0, 0, 0, 0])
 
-        self._search_position_mm = cfg.search_max_distance_mm
+        self._search_position_mm = search_limit_mm
         raise RuntimeError(f'{color_name} cube not found within search range')
 
     @staticmethod
@@ -542,14 +559,10 @@ class CompetitionProgram:
 
     def _run_first_task(self):
         cfg = self.config
-        self.state = CompetitionState.INITIAL_MOVE
-        print('[Task1] Initial forward move')
-        result = self.robot.move_chassis(
-            'forward', cfg.initial_distance_mm, cfg.initial_speed_mm_s,
-            hold_ms=cfg.initial_hold_ms)
-        if result.timed_out or result.cancelled:
-            raise RuntimeError('initial position move did not complete')
-
+        set_profile = getattr(
+            self.robot, 'set_cube_detection_profile', None)
+        if set_profile is not None:
+            set_profile('default')
         self.state = CompetitionState.WALL_APPROACH
         print('[Task1] Slow approach until motor stall')
         self._drive_until_wall()
@@ -924,11 +937,20 @@ class CompetitionProgram:
         self.robot.reset_field_localization_filter()
         self._align_delivery_tag()
 
+        if cfg.post_tag_lateral_right_mm > 0.0:
+            self.state = CompetitionState.POST_TAG_LATERAL
+            print(f'[Task1] Move right '
+                  f'{cfg.post_tag_lateral_right_mm:.0f} mm at '
+                  f'{cfg.post_tag_lateral_speed_mm_s:.0f} mm/s after Tag6')
+            self._checked_move(
+                'right', cfg.post_tag_lateral_right_mm,
+                cfg.post_tag_lateral_speed_mm_s)
+
         self.state = CompetitionState.WALL_APPROACH
         print('[Task1] Delivery: approach unload wall')
         self._drive_until_wall(
-            timeout_s=cfg.unload_wall_timeout_s,
-            speed_mm_s=cfg.unload_wall_speed_mm_s,
+            timeout_s=cfg.far_wall_timeout_s,
+            speed_mm_s=cfg.far_wall_speed_mm_s,
             context='Unload wall contact',
         )
 
@@ -940,6 +962,15 @@ class CompetitionProgram:
             cfg.unload_reverse_speed_mm_s)
         print('[Task1] Unload: close hatches')
         self.robot.actions.hatch_close()
+        if cfg.pre_final_turn_lateral_left_mm > 0.0:
+            self.state = CompetitionState.PRE_FINAL_TURN_LATERAL
+            print(f'[Task1] Move left '
+                  f'{cfg.pre_final_turn_lateral_left_mm:.0f} mm at '
+                  f'{cfg.pre_final_turn_lateral_speed_mm_s:.0f} mm/s '
+                  'before final turn')
+            self._checked_move(
+                'left', cfg.pre_final_turn_lateral_left_mm,
+                cfg.pre_final_turn_lateral_speed_mm_s)
         self._turn_to_heading(
             cfg.delivery_heading_target_cw_deg
             + cfg.unload_final_turn_cw_deg,

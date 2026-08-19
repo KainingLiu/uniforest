@@ -32,6 +32,7 @@ CMD_STEPPER_PARAMS   = 0x32  # start_delay + target_delay + accel
 CMD_STEPPER_MOVE_DUAL= 0x33  # dual-motor overlap
 CMD_STEPPER_MOVE_DUAL2=0x34  # dual-motor overlap with dir change
 CMD_STEPPER_SET_POS  = 0x35  # motor + pos(4B)
+CMD_STEPPER_MOVE_DUAL3=0x36  # cross-triggered three-segment overlap
 
 CMD_SET_TELEM_RATE   = 0x40  # uint16 rate_hz
 
@@ -206,6 +207,22 @@ def encode_stepper_move_dual2(m_cont: int, steps_cont: int, dir_cont: int,
                        m_ph, steps_ph1, dir_ph1,
                        steps_ph2, dir_ph2, ph2_offset,
                        start_delay, target_delay, accel_steps)
+
+def encode_stepper_move_dual3(
+        m_lead: int, steps_lead1: int, dir_lead1: int,
+        steps_lead2: int, dir_lead2: int,
+        m_other: int, steps_other: int, dir_other: int,
+        other_offset: int, lead2_offset: int,
+        start_delay: int, target_delay: int,
+        accel_steps: int) -> bytes:
+    """31-byte cross-triggered three-segment overlap command."""
+    return struct.pack(
+        '>BIBIBBIBII3H',
+        m_lead, steps_lead1, dir_lead1,
+        steps_lead2, dir_lead2,
+        m_other, steps_other, dir_other,
+        other_offset, lead2_offset,
+        start_delay, target_delay, accel_steps)
 
 def encode_stepper_set_pos(motor: int, pos: int) -> bytes:
     return struct.pack('>Bi', motor, pos)
