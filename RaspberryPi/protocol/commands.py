@@ -11,6 +11,9 @@ import struct
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
+PROTO_SYNC = 0xAA
+PROTO_MAX_DATA_LEN = 80
+
 # ======================== Command IDs (Pi → STM32) ===========================
 
 CMD_PING             = 0x01
@@ -85,6 +88,7 @@ class MotorFeedback:
 @dataclass
 class TelemBatch:
     """Full telemetry batch (80 bytes on wire)."""
+    PAYLOAD_SIZE = 80
     motors: List[MotorFeedback] = field(default_factory=lambda: [MotorFeedback() for _ in range(4)])
     yaw_deg: float = 0.0
     yaw_rate_ds: float = 0.0
@@ -96,8 +100,9 @@ class TelemBatch:
     @classmethod
     def unpack(cls, data: bytes) -> 'TelemBatch':
         """Parse an 80-byte telemetry batch from wire format."""
-        if len(data) < 80:
-            raise ValueError(f'telemetry payload too short: {len(data)} < 80')
+        if len(data) < cls.PAYLOAD_SIZE:
+            raise ValueError(
+                f'telemetry payload too short: {len(data)} < {cls.PAYLOAD_SIZE}')
         t = cls()
         off = 0
         for i in range(4):

@@ -29,7 +29,7 @@ from protocol.commands import (
     CMD_SET_TELEM_RATE,
     TELEM_FULL, TELEM_ACK, TELEM_PONG,
     ACK_OK, ACK_ERR_CRC,
-    TelemBatch, AckFrame,
+    TelemBatch, AckFrame, PROTO_SYNC, PROTO_MAX_DATA_LEN,
     encode_chassis_speed, encode_chassis_torque,
     encode_chassis_pid_speed, encode_chassis_pid_pos, encode_chassis_pid_reset,
     encode_servo_angle, encode_servo_angle_all,
@@ -38,10 +38,6 @@ from protocol.commands import (
     encode_stepper_move_dual3,
     encode_set_telem_rate,
 )
-
-PROTO_SYNC = 0xAA
-PROTO_MAX_DATA_LEN = 80
-
 
 class Transport:
     """Serial transport with protocol framing."""

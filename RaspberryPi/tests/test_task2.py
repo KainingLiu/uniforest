@@ -54,7 +54,9 @@ class Task2Tests(unittest.TestCase):
         self.assertEqual(cfg.purple_search_max_distance_mm, 600.0)
         self.assertEqual((cfg.align_min_x_mm, cfg.align_max_x_mm),
                          (-5.0, 5.0))
-        self.assertEqual(cfg.align_target_x_mm, 0.0)
+        self.assertEqual(cfg.align_target_x_mm, -0.5)
+        self.assertEqual((cfg.orange_fine_min_x_mm,
+                          cfg.orange_fine_max_x_mm), (-3.1, 2.9))
         self.assertEqual(cfg.post_grab_reverse_mm, 100.0)
         self.assertEqual(cfg.post_grab_reverse_speed_mm_s, 300.0)
         self.assertEqual(cfg.post_grab_heading_target_cw_deg, 0.0)
@@ -65,11 +67,12 @@ class Task2Tests(unittest.TestCase):
         self.assertEqual(cfg.orange_target_count_without_purple, 3)
         self.assertEqual(
             (cfg.orange_align_min_x_mm, cfg.orange_align_max_x_mm),
-            (-20.0, 5.0))
-        self.assertEqual(cfg.orange_align_target_x_mm, 0.0)
+            (-20.1, 4.9))
+        self.assertEqual(cfg.orange_align_target_x_mm, -0.1)
+        self.assertEqual(cfg.orange_track_ambiguity_margin_mm, 18.0)
         self.assertEqual(cfg.post_orange_reverse_mm, 500.0)
         self.assertEqual(cfg.post_orange_reverse_speed_mm_s, 300.0)
-        self.assertEqual(cfg.post_orange_lateral_base_mm, 800.0)
+        self.assertEqual(cfg.post_orange_lateral_base_mm, 700.0)
         self.assertEqual(cfg.post_orange_lateral_speed_mm_s, 300.0)
         self.assertEqual(cfg.final_turn_target_cw_deg, 180.0)
         self.assertEqual(cfg.build_route_distance_mm, 2100.0)
@@ -96,7 +99,7 @@ class Task2Tests(unittest.TestCase):
             cfg.build_tag_fine_gain_scale,
             FirstTaskConfig().delivery_tag_fine_gain_scale)
         self.assertEqual(cfg.building_target_x_mm, -8.4)
-        self.assertEqual(cfg.building_target_z_mm, 150.0)
+        self.assertEqual(cfg.building_target_z_mm, 155.0)
         self.assertEqual(cfg.building_min_confidence, 45.0)
         self.assertEqual(
             (cfg.building_min_height_width_ratio,
@@ -116,6 +119,7 @@ class Task2Tests(unittest.TestCase):
             LONG_DISTANCE_MOVE_SPEED_MM_S)
         self.assertEqual(cfg.post_build_tag_id, 1)
         self.assertEqual(cfg.post_build_tag_distance_mm, 200.0)
+        self.assertEqual(cfg.post_build_tag_lateral_tolerance_mm, 10.0)
         self.assertEqual(cfg.post_build_tag_heading_target_cw_deg, 270.0)
         self.assertEqual(cfg.final_right_turn_target_cw_deg, 360.0)
 
@@ -193,6 +197,8 @@ class Task2Tests(unittest.TestCase):
         program._find_cube = find_cube
         program._align_cube = lambda block, **kwargs: (
             events.append(('align_cube', block.x, kwargs)) or True)
+        program._fine_align_orange = lambda block: (
+            events.append(('fine_align_orange', block.x)) or True)
         program._press_wall_before_grab = lambda **kwargs: events.append(
             ('press_wall_before_grab',
              kwargs.get('recalibrate_heading_zero', False)))
@@ -208,7 +214,7 @@ class Task2Tests(unittest.TestCase):
         program._run_partial_task()
 
         self.assertEqual(events, [
-            ('move', 'forward', 2350.0, 600.0,
+            ('move', 'forward', 2350.0, 750.0,
              {'hold_ms': 0, 'accel_ms': 800}),
             ('turn_to_heading', -90.0),
             ('reset_field_localization',),
@@ -245,14 +251,18 @@ class Task2Tests(unittest.TestCase):
                 'color_name': 'orange',
                 'min_confidence': 25.0,
                 'search_direction': 1.0,
+                'lock_x_jump_mm': 80.0,
+                'ambiguity_margin_mm': 18.0,
             }),
             ('align_cube', 0.0, {
                 'color_name': 'orange',
                 'min_confidence': 25.0,
-                'align_min_x_mm': -20.0,
-                'align_max_x_mm': 5.0,
-                'align_target_x_mm': 0.0,
+                'align_min_x_mm': -20.1,
+                'align_max_x_mm': 4.9,
+                'align_target_x_mm': -0.1,
+                'ambiguity_margin_mm': 18.0,
             }),
+            ('fine_align_orange', 0.0),
             ('press_wall_before_grab', True),
             ('grap1',),
             ('reset_vision_filter',),
@@ -260,24 +270,28 @@ class Task2Tests(unittest.TestCase):
                 'color_name': 'orange',
                 'min_confidence': 25.0,
                 'search_direction': 1.0,
+                'lock_x_jump_mm': 80.0,
+                'ambiguity_margin_mm': 18.0,
             }),
             ('align_cube', 0.0, {
                 'color_name': 'orange',
                 'min_confidence': 25.0,
-                'align_min_x_mm': -20.0,
-                'align_max_x_mm': 5.0,
-                'align_target_x_mm': 0.0,
+                'align_min_x_mm': -20.1,
+                'align_max_x_mm': 4.9,
+                'align_target_x_mm': -0.1,
+                'ambiguity_margin_mm': 18.0,
             }),
+            ('fine_align_orange', 0.0),
             ('press_wall_before_grab', True),
             ('grap1',),
             ('reset_vision_filter',),
             ('cube_profile', 'default'),
             ('move', 'backward', 500.0, 300.0,
              {'hold_ms': 0, 'accel_ms': 200}),
-            ('move', 'right', 490.0, 300.0,
+            ('move', 'right', 390.0, 300.0,
              {'hold_ms': 0, 'accel_ms': 200}),
             ('turn_to_heading', 180.0),
-            ('move', 'forward', 2100.0, 600.0,
+            ('move', 'forward', 2100.0, 750.0,
              {'hold_ms': 0, 'accel_ms': 800}),
             ('reset_field_localization',),
             ('tag_align', 6, 425.0, 180.0),
@@ -287,7 +301,7 @@ class Task2Tests(unittest.TestCase):
             ('move', 'backward', 200.0, 300.0,
              {'hold_ms': 0, 'accel_ms': 200}),
             ('turn_to_heading', 270.0),
-            ('move', 'forward', 2200.0, 600.0,
+            ('move', 'forward', 2200.0, 750.0,
              {'hold_ms': 0, 'accel_ms': 800}),
             ('reset_field_localization',),
             ('tag_align', 1, 200.0, 270.0),
@@ -311,7 +325,7 @@ class Task2Tests(unittest.TestCase):
             program.config.build_tag_distance_tolerance_mm)
         self.assertEqual(
             tag_align_options[2]['lateral_tolerance_mm'],
-            program.config.build_tag_lateral_tolerance_mm)
+            program.config.post_build_tag_lateral_tolerance_mm)
         self.assertEqual(
             tag_align_options[2]['heading_tolerance_deg'],
             program.config.build_tag_heading_tolerance_deg)
@@ -326,7 +340,7 @@ class Task2Tests(unittest.TestCase):
             x=0.0, z=150.0, height_width_ratio=0.30)
         building = SimpleNamespace(
             color_name='Orange', confidence=55.0,
-            x=-8.4, z=150.0, height_width_ratio=1.080)
+            x=-8.4, z=155.0, height_width_ratio=1.080)
         result = SimpleNamespace(
             timestamp=time.time(), all_blocks=[single_cube, building])
         program = Task2Program(SimpleNamespace(), cfg)
@@ -353,11 +367,11 @@ class Task2Tests(unittest.TestCase):
         cfg = Task2Round2Config()
         self.assertEqual(cfg.post_tag_lateral_mm, 0.0)
         self.assertFalse(cfg.left_wall_approach_enabled)
-        self.assertEqual(cfg.post_orange_lateral_base_mm, 600.0)
+        self.assertEqual(cfg.post_orange_lateral_base_mm, 500.0)
         self.assertEqual(
             Task2Program._lateral_correction_command(
                 cfg.post_orange_lateral_base_mm, 700.0),
-            ('left', 100.0),
+                ('left', 200.0),
         )
         self.assertEqual(cfg.post_tag6_lateral_right_mm, 300.0)
         self.assertTrue(cfg.finish_after_build)
@@ -417,7 +431,7 @@ class Task2Tests(unittest.TestCase):
                 timestamp=now + index,
                 all_blocks=[SimpleNamespace(
                     color_name='Orange', confidence=55.0,
-                    x=-8.4, z=150.0, height_width_ratio=1.080)])
+                    x=-8.4, z=155.0, height_width_ratio=1.080)])
             for index in range(1, 4)
         ])
 
@@ -459,8 +473,8 @@ class Task2Tests(unittest.TestCase):
 
         now = time.time()
         observations = iter([
-            (-8.4 + 20.0, 150.0 + 30.0),
-            (-8.4, 150.0),
+            (-8.4 + 20.0, 155.0 + 30.0),
+            (-8.4, 155.0),
         ])
 
         class FakeRobot:

@@ -74,7 +74,7 @@ DEFAULT_YAW_I_LIM = 1000.0
 
 # ====================== Move Parameters ======================================
 
-LONG_DISTANCE_MOVE_SPEED_MM_S = 600.0
+LONG_DISTANCE_MOVE_SPEED_MM_S = 750.0
 LONG_DISTANCE_FORWARD_ACCEL_MS = 800
 DEFAULT_MOVE_SPEED_MM_S = LONG_DISTANCE_MOVE_SPEED_MM_S
 FWD_BASE_SPEED_RPM   = 1800.0
@@ -86,7 +86,10 @@ FWD_TIMEOUT_MS       = 5000
 FWD_SETTLE_COUNTS    = 400
 FWD_SETTLE_MS        = 50
 FWD_SETTLE_SPEED_RPM = 20
-FWD_TIMEOUT_MARGIN_MS = 2000
+# Keep only a short grace period after the estimated travel time. Strategy
+# code accepts a near-complete encoder result so a final precise settle is not
+# required for competition routing.
+FWD_TIMEOUT_MARGIN_MS = 1000
 
 # Field calibration on the competition mat: a 500 mm wheel-side command moves
 # the chassis about 465 mm laterally. Command the reciprocal wheel travel.

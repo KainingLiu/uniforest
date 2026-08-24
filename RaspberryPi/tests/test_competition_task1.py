@@ -24,7 +24,7 @@ def motor(rpm, current):
 class FirstTaskTests(unittest.TestCase):
     def test_task1_motion_parameters(self):
         cfg = FirstTaskConfig()
-        self.assertEqual(LONG_DISTANCE_MOVE_SPEED_MM_S, 600.0)
+        self.assertEqual(LONG_DISTANCE_MOVE_SPEED_MM_S, 750.0)
         self.assertEqual(LONG_DISTANCE_FORWARD_ACCEL_MS, 800)
         self.assertEqual(
             cfg.delivery_forward_speed_mm_s, LONG_DISTANCE_MOVE_SPEED_MM_S)
@@ -38,21 +38,23 @@ class FirstTaskTests(unittest.TestCase):
         self.assertEqual(cfg.near_wall_timeout_s, 1.0)
         self.assertTrue(cfg.wall_timeout_is_success)
         self.assertEqual((cfg.align_min_x_mm, cfg.align_max_x_mm),
-                         (-20.0, 5.0))
-        self.assertEqual(cfg.align_target_x_mm, 0.0)
+                         (-21.0, 2.0))
+        self.assertEqual(cfg.align_target_x_mm, -1.0)
         self.assertEqual(cfg.search_max_distance_mm, 1500.0)
         self.assertEqual(cfg.target_cube_count, 3)
+        self.assertEqual(cfg.orange_search_lock_x_jump_mm, 80.0)
+        self.assertEqual(cfg.orange_search_confirm_frames, 2)
         self.assertEqual(cfg.delivery_forward_base_mm, 2800.0)
-        self.assertEqual(cfg.delivery_turn_heading_hold_ms, 500)
+        self.assertEqual(cfg.delivery_turn_heading_hold_ms, 0)
         self.assertEqual(cfg.delivery_tag_id, 6)
         self.assertEqual(cfg.delivery_tag_distance_mm, 425.0)
         self.assertAlmostEqual(
             cfg.delivery_tag_distance_tolerance_mm,
-            24.0 * TAG_FOV_RETUNE_SCALE)
+            30.0 * TAG_FOV_RETUNE_SCALE)
         self.assertAlmostEqual(
             cfg.delivery_tag_lateral_tolerance_mm,
-            20.0 * TAG_FOV_RETUNE_SCALE)
-        self.assertEqual(cfg.delivery_heading_tolerance_deg, 2.4)
+            25.0 * TAG_FOV_RETUNE_SCALE)
+        self.assertEqual(cfg.delivery_heading_tolerance_deg, 3.0)
         self.assertAlmostEqual(
             cfg.delivery_tag_distance_deadband_mm,
             5.0 * TAG_FOV_RETUNE_SCALE)
@@ -60,13 +62,13 @@ class FirstTaskTests(unittest.TestCase):
             cfg.delivery_tag_lateral_deadband_mm,
             5.0 * TAG_FOV_RETUNE_SCALE)
         self.assertEqual(cfg.delivery_heading_deadband_deg, 0.5)
-        self.assertEqual(cfg.delivery_tag_fine_align_timeout_s, 2.0)
+        self.assertEqual(cfg.delivery_tag_fine_align_timeout_s, 1.0)
         self.assertEqual(cfg.delivery_tag_fine_gain_scale, 1.5)
         self.assertEqual(cfg.delivery_tag_translation_median_frames, 5)
         self.assertEqual(cfg.delivery_heading_target_cw_deg, 180.0)
         self.assertEqual(cfg.unload_reverse_mm, 300.0)
         self.assertEqual(cfg.unload_final_turn_cw_deg, 180.0)
-        self.assertEqual(cfg.unload_final_heading_hold_ms, 500)
+        self.assertEqual(cfg.unload_final_heading_hold_ms, 0)
 
     def test_preflight_captures_startup_heading_zero(self):
         robot = SimpleNamespace(
@@ -95,11 +97,16 @@ class FirstTaskTests(unittest.TestCase):
             motor(0, 3000), motor(10, -3000), motor(20, 2600), motor(0, 100),
         ])
         only_two = SimpleNamespace(motors=[
-            motor(0, 3000), motor(10, -3000), motor(100, 3000), motor(0, 100),
+            motor(100, 3000), motor(100, 3000),
+            motor(0, 3000), motor(10, -3000),
         ])
 
-        self.assertTrue(CompetitionProgram._stall_sample(three_stalled, cfg))
-        self.assertFalse(CompetitionProgram._stall_sample(only_two, cfg))
+        self.assertTrue(CompetitionProgram._stall_sample(
+            three_stalled, cfg, direction='left'))
+        self.assertFalse(CompetitionProgram._stall_sample(
+            only_two, cfg, direction='left'))
+        self.assertTrue(CompetitionProgram._stall_sample(
+            only_two, cfg, direction='forward'))
 
     def test_orange_selection_ignores_nearer_other_color(self):
         blocks = [
@@ -138,6 +145,11 @@ class FirstTaskTests(unittest.TestCase):
             CompetitionProgram._alignment_speed(1, 0, 0, cfg),
             cfg.align_min_speed_mm_s)
         self.assertEqual(cfg.align_min_speed_mm_s, 100.0)
+        self.assertEqual(cfg.align_start_speed_mm_s, 40.0)
+        self.assertEqual(cfg.orange_fine_align_timeout_s, 1.0)
+        self.assertEqual(cfg.align_window_hold_s, 0.20)
+        self.assertEqual((cfg.orange_fine_min_x_mm,
+                          cfg.orange_fine_max_x_mm), (-3.5, 1.5))
         self.assertEqual(cfg.align_max_speed_mm_s, 250.0)
 
     def test_alignment_requires_three_fresh_frames_in_window(self):
@@ -172,6 +184,21 @@ class FirstTaskTests(unittest.TestCase):
                         all_blocks=[SimpleNamespace(
                             color_name='Orange', confidence=80,
                             x=-15, y=0, z=200)]),
+                    SimpleNamespace(
+                        timestamp=now + 3,
+                        all_blocks=[SimpleNamespace(
+                            color_name='Orange', confidence=80,
+                            x=-2, y=0, z=200)]),
+                    SimpleNamespace(
+                        timestamp=now + 4,
+                        all_blocks=[SimpleNamespace(
+                            color_name='Orange', confidence=80,
+                            x=1, y=0, z=200)]),
+                    SimpleNamespace(
+                        timestamp=now + 5,
+                        all_blocks=[SimpleNamespace(
+                            color_name='Orange', confidence=80,
+                            x=0, y=0, z=200)]),
                 ])
 
             @property
@@ -186,17 +213,17 @@ class FirstTaskTests(unittest.TestCase):
             SimpleNamespace(x=-10, confidence=80))
 
         self.assertTrue(aligned)
-        self.assertEqual(len(robot.chassis.commands), 4)
+        self.assertEqual(len(robot.chassis.commands), 8)
         self.assertTrue(all(command == (0, 0, 0, 0)
                             for command in robot.chassis.commands))
 
     def test_alignment_window_is_inclusive_and_asymmetric(self):
         cfg = FirstTaskConfig()
         self.assertTrue(cfg.align_min_x_mm <= -20 <= cfg.align_max_x_mm)
-        self.assertTrue(cfg.align_min_x_mm <= 0 <= cfg.align_max_x_mm)
-        self.assertTrue(cfg.align_min_x_mm <= 5 <= cfg.align_max_x_mm)
-        self.assertFalse(cfg.align_min_x_mm <= -21 <= cfg.align_max_x_mm)
-        self.assertFalse(cfg.align_min_x_mm <= 6 <= cfg.align_max_x_mm)
+        self.assertTrue(cfg.align_min_x_mm <= -1 <= cfg.align_max_x_mm)
+        self.assertTrue(cfg.align_min_x_mm <= 2 <= cfg.align_max_x_mm)
+        self.assertFalse(cfg.align_min_x_mm <= -22 <= cfg.align_max_x_mm)
+        self.assertFalse(cfg.align_min_x_mm <= 3 <= cfg.align_max_x_mm)
 
     def test_long_search_covers_full_1500_mm_range(self):
         class FakeClock:
@@ -384,7 +411,7 @@ class FirstTaskTests(unittest.TestCase):
                 patch('Strategy.competition.time.sleep', clock.sleep):
             program._align_delivery_tag()
 
-        self.assertGreaterEqual(clock.now, 2.0)
+        self.assertGreaterEqual(clock.now, 1.0)
         self.assertEqual(robot.chassis.commands[-1], (0, 0, 0, 0))
 
     def test_long_search_stops_as_soon_as_orange_is_seen(self):
@@ -415,6 +442,7 @@ class FirstTaskTests(unittest.TestCase):
         observations = iter([
             None, None, None,
             SimpleNamespace(timestamp=now, all_blocks=[target]),
+            SimpleNamespace(timestamp=now + 0.1, all_blocks=[target]),
         ])
 
         class FakeRobot:
@@ -434,8 +462,8 @@ class FirstTaskTests(unittest.TestCase):
             self.assertIs(program._find_orange(), target)
 
         self.assertEqual(robot.chassis.commands[-1], (0, 0, 0, 0))
-        self.assertEqual(len(robot.chassis.commands), 5)
-        self.assertAlmostEqual(program._search_position_mm, 18.0)
+        self.assertEqual(len(robot.chassis.commands), 6)
+        self.assertAlmostEqual(program._search_position_mm, 24.0)
 
     def test_alignment_slew_prevents_startup_speed_spike(self):
         cfg = FirstTaskConfig()
@@ -444,13 +472,56 @@ class FirstTaskTests(unittest.TestCase):
         second = CompetitionProgram._slew_alignment_speed(
             250.0, first, 0.05, cfg)
 
-        self.assertEqual(first, 100.0)
-        self.assertEqual(second, 115.0)
+        self.assertEqual(first, 40.0)
+        self.assertEqual(second, 55.0)
         self.assertEqual(
             CompetitionProgram._slew_alignment_speed(
                 -250.0, second, 0.05, cfg),
             0.0,
         )
+
+    def test_alignment_holds_still_on_window_edge_jitter(self):
+        class FakeChassis:
+            def __init__(self):
+                self.commands = []
+
+            def set_speeds(self, rpm):
+                self.commands.append(tuple(rpm))
+
+            @staticmethod
+            def mecanum_rpm(vx, vy, wz):
+                return [vy, vy, -vy, -vy]
+
+        class FakeRobot:
+            def __init__(self):
+                self.chassis = FakeChassis()
+                now = time.time()
+                self.results = iter([
+                    SimpleNamespace(
+                        timestamp=now + index,
+                        all_blocks=[SimpleNamespace(
+                            color_name='Orange', confidence=80,
+                            x=x, y=0, z=200)])
+                    for index, x in enumerate((-5, 6, -4, -2, 1, 0), start=1)
+                ])
+
+            @property
+            def vision_result(self):
+                return next(self.results)
+
+        cfg = FirstTaskConfig(
+            align_confirm_frames=2,
+            align_control_period_s=0,
+        )
+        robot = FakeRobot()
+        program = CompetitionProgram(robot, cfg)
+
+        aligned = program._align_orange(
+            SimpleNamespace(x=-5, y=0, z=200, confidence=80))
+
+        self.assertTrue(aligned)
+        self.assertTrue(all(command == (0, 0, 0, 0)
+                            for command in robot.chassis.commands))
 
     def test_alignment_tracks_same_orange_instead_of_nearest(self):
         cfg = FirstTaskConfig()
@@ -576,8 +647,8 @@ class FirstTaskTests(unittest.TestCase):
         self.assertEqual(events, [
             ('move', 'backward', 400.0, 300.0,
              {'hold_ms': 0, 'accel_ms': 200}),
-            ('turn_to_heading', 90.0, {'hold_ms': 500}),
-            ('move', 'forward', 2200.0, 600.0,
+            ('turn_to_heading', 90.0, {'hold_ms': 0}),
+            ('move', 'forward', 2200.0, 750.0,
              {'hold_ms': 0, 'accel_ms': 800}),
             ('turn_to_heading', 180.0, {}),
             ('reset_field_localization',),
@@ -587,7 +658,7 @@ class FirstTaskTests(unittest.TestCase):
             ('move', 'backward', 300.0, 300.0,
              {'hold_ms': 0, 'accel_ms': 200}),
             ('hatch_close',),
-            ('turn_to_heading', 360.0, {'hold_ms': 500}),
+            ('turn_to_heading', 360.0, {'hold_ms': 0}),
         ])
 
     def test_round2_delivery_route_uses_shorter_base_and_lateral_moves(self):
@@ -629,8 +700,8 @@ class FirstTaskTests(unittest.TestCase):
         self.assertEqual(events, [
             ('move', 'backward', 400.0, 300.0,
              {'hold_ms': 0, 'accel_ms': 200}),
-            ('turn_to_heading', 90.0, {'hold_ms': 500}),
-            ('move', 'forward', 1900.0, 600.0,
+            ('turn_to_heading', 90.0, {'hold_ms': 0}),
+            ('move', 'forward', 1900.0, 750.0,
              {'hold_ms': 0, 'accel_ms': 800}),
             ('turn_to_heading', 180.0, {}),
             ('reset_field_localization',),
@@ -644,7 +715,7 @@ class FirstTaskTests(unittest.TestCase):
             ('hatch_close',),
             ('move', 'left', 300.0, 300.0,
              {'hold_ms': 0, 'accel_ms': 200}),
-            ('turn_to_heading', 360.0, {'hold_ms': 500}),
+            ('turn_to_heading', 360.0, {'hold_ms': 0}),
         ])
 
     def test_turn_to_heading_corrects_against_startup_zero(self):

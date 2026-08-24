@@ -133,10 +133,30 @@ DETECTION_PROFILE_OVERRIDES = {
     "default": {},
     "task2_orange": {
         "Orange": {
-            "hsv_low": np.array([5, 75, 80]),
+            "hsv_low": np.array([4, 65, 55]),
             "hsv_high": np.array([35, 255, 255]),
         },
     },
+}
+
+# Ignore field markings and other orange objects above the Task2 pickup area.
+# Coordinates and camera calibration remain relative to the full frame.
+DETECTION_PROFILE_ROI_TOP_RATIO = {
+    "default": 0.0,
+    "task2_orange": 0.5,
+}
+
+# Task2 cubes are close together in the pickup view. Keep the gap between
+# neighboring cubes instead of bridging it with the default heavy close.
+DETECTION_PROFILE_MORPHOLOGY = {
+    "default": (CONFIG["morph_kernel_size"], CONFIG["morph_iterations"]),
+    "task2_orange": (3, 1),
+}
+
+# A merged pair produces an unusually wide front; reject it in Task2 only.
+DETECTION_PROFILE_MAX_FRONT_ASPECT = {
+    "default": CONFIG["max_front_aspect_ratio"],
+    "task2_orange": 5.2,
 }
 
 
@@ -163,6 +183,36 @@ def color_profiles_for(detection_profile: str):
             profile["hsv_high"] = override["hsv_high"].copy()
         profiles.append(profile)
     return profiles
+
+
+def roi_top_ratio_for(detection_profile: str) -> float:
+    try:
+        return DETECTION_PROFILE_ROI_TOP_RATIO[detection_profile]
+    except KeyError as exc:
+        choices = ", ".join(sorted(DETECTION_PROFILE_ROI_TOP_RATIO))
+        raise ValueError(
+            f"unknown cube detection profile {detection_profile!r}; "
+            f"expected one of: {choices}") from exc
+
+
+def morphology_for(detection_profile: str):
+    try:
+        return DETECTION_PROFILE_MORPHOLOGY[detection_profile]
+    except KeyError as exc:
+        choices = ", ".join(sorted(DETECTION_PROFILE_MORPHOLOGY))
+        raise ValueError(
+            f"unknown cube detection profile {detection_profile!r}; "
+            f"expected one of: {choices}") from exc
+
+
+def max_front_aspect_for(detection_profile: str) -> float:
+    try:
+        return DETECTION_PROFILE_MAX_FRONT_ASPECT[detection_profile]
+    except KeyError as exc:
+        choices = ", ".join(sorted(DETECTION_PROFILE_MAX_FRONT_ASPECT))
+        raise ValueError(
+            f"unknown cube detection profile {detection_profile!r}; "
+            f"expected one of: {choices}") from exc
 
 CAMERA_SETTINGS_FILE = os.path.join(os.path.dirname(__file__),
                                     "camera_settings.json")
@@ -267,9 +317,11 @@ def measure_face_size(quad):
     return w_avg, h_avg
 
 
-def find_quadrilaterals(mask, min_area=None):
+def find_quadrilaterals(mask, min_area=None, max_front_aspect_ratio=None):
     if min_area is None:
         min_area = CONFIG["min_contour_area"]
+    if max_front_aspect_ratio is None:
+        max_front_aspect_ratio = CONFIG["max_front_aspect_ratio"]
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL,
                                     cv2.CHAIN_APPROX_SIMPLE)
     if not contours:
@@ -291,7 +343,7 @@ def find_quadrilaterals(mask, min_area=None):
                 quad = order_corners(quad)
                 ar = compute_quad_aspect_ratio(quad)
                 if (CONFIG["min_front_aspect_ratio"] <= ar <=
-                        CONFIG["max_front_aspect_ratio"]):
+                        max_front_aspect_ratio):
                     results.append((area, quad))
                     accepted = True
                 break
@@ -308,7 +360,7 @@ def find_quadrilaterals(mask, min_area=None):
             if ar < 1.0:
                 ar = 1.0 / max(ar, 1e-6)
             if (fill_ratio >= CONFIG["min_rect_fill_ratio"] and
-                    ar <= CONFIG["max_front_aspect_ratio"]):
+                    ar <= max_front_aspect_ratio):
                 results.append((area * fill_ratio, quad))
     results.sort(key=lambda x: x[0], reverse=True)
     return [q for _, q in results]
@@ -381,7 +433,11 @@ def temporal_filter(x_mm, y_mm, z_mm, confidence, state):
 # 多颜色检测
 # ============================================================
 
-def detect_all_blocks(frame, state, color_profiles=None):
+def detect_all_blocks(frame, state, color_profiles=None,
+                      roi_top_ratio: float = 0.0,
+                      morph_kernel_size: int = None,
+                      morph_iterations: int = None,
+                      max_front_aspect_ratio: float = None):
     fx, fy = state["fx"], state["fy"]
     cx, cy = state["cx"], state["cy"]
     hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
@@ -390,15 +446,26 @@ def detect_all_blocks(frame, state, color_profiles=None):
     all_blocks = []
     if color_profiles is None:
         color_profiles = CONFIG["color_profiles"]
+    ksize = (CONFIG["morph_kernel_size"]
+             if morph_kernel_size is None else morph_kernel_size)
+    iterations = (CONFIG["morph_iterations"]
+                  if morph_iterations is None else morph_iterations)
+    max_aspect = (CONFIG["max_front_aspect_ratio"]
+                  if max_front_aspect_ratio is None
+                  else max_front_aspect_ratio)
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ksize, ksize))
+    roi_top_px = max(0, min(frame.shape[0],
+                            round(frame.shape[0] * roi_top_ratio)))
     for profile in color_profiles:
         mask = cv2.inRange(hsv, profile["hsv_low"], profile["hsv_high"])
-        ksize = CONFIG["morph_kernel_size"]
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (ksize, ksize))
+        if roi_top_px:
+            mask[:roi_top_px, :] = 0
         mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel,
-                                iterations=CONFIG["morph_iterations"])
+                                iterations=iterations)
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel,
-                                iterations=CONFIG["morph_iterations"])
-        quads = find_quadrilaterals(mask)
+                                iterations=iterations)
+        quads = find_quadrilaterals(
+            mask, max_front_aspect_ratio=max_aspect)
         for quad in quads:
             w_px, _ = measure_face_size(quad)
             min_w = frame.shape[1] * CONFIG["min_face_width_ratio"]
@@ -506,6 +573,9 @@ class CubeDetector:
         self._profile_lock = threading.Lock()
         self._detection_profile = "default"
         self._color_profiles = color_profiles_for("default")
+        self._roi_top_ratio = roi_top_ratio_for("default")
+        self._morph_kernel_size, self._morph_iterations = morphology_for("default")
+        self._max_front_aspect_ratio = max_front_aspect_for("default")
         self._profile_generation = 0
 
         # Calibration file path
@@ -627,11 +697,18 @@ class CubeDetector:
     def set_detection_profile(self, profile_name: str):
         """Switch HSV parameters without leaking observations across tasks."""
         profiles = color_profiles_for(profile_name)
+        roi_top_ratio = roi_top_ratio_for(profile_name)
+        morph_kernel_size, morph_iterations = morphology_for(profile_name)
+        max_front_aspect_ratio = max_front_aspect_for(profile_name)
         with self._profile_lock:
             if profile_name == self._detection_profile:
                 return
             self._detection_profile = profile_name
             self._color_profiles = profiles
+            self._roi_top_ratio = roi_top_ratio
+            self._morph_kernel_size = morph_kernel_size
+            self._morph_iterations = morph_iterations
+            self._max_front_aspect_ratio = max_front_aspect_ratio
             self._profile_generation += 1
         with self._result_lock:
             self._result = None
@@ -666,6 +743,10 @@ class CubeDetector:
             with self._profile_lock:
                 profile_generation = self._profile_generation
                 color_profiles = self._color_profiles
+                roi_top_ratio = self._roi_top_ratio
+                morph_kernel_size = self._morph_kernel_size
+                morph_iterations = self._morph_iterations
+                max_front_aspect_ratio = self._max_front_aspect_ratio
             if profile_generation != applied_profile_generation:
                 state["ema_pos"] = None
                 state["history"].clear()
@@ -673,7 +754,11 @@ class CubeDetector:
                 applied_profile_generation = profile_generation
 
             detected_blocks = detect_all_blocks(
-                frame, state, color_profiles=color_profiles)
+                frame, state, color_profiles=color_profiles,
+                roi_top_ratio=roi_top_ratio,
+                morph_kernel_size=morph_kernel_size,
+                morph_iterations=morph_iterations,
+                max_front_aspect_ratio=max_front_aspect_ratio)
             with self._profile_lock:
                 if profile_generation != self._profile_generation:
                     continue

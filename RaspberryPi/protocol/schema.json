@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "frame": {
+    "sync": 170,
+    "max_data_length": 80,
+    "length_definition": "cmd + len + seq + data + crc16",
+    "crc": "CRC16-CCITT polynomial 0x1021 over CMD..DATA, transmitted little-endian",
+    "byte_order": "big-endian fields unless explicitly stated"
+  },
+  "safety": {
+    "communication_timeout_ms": 200,
+    "timeout_action": "stop chassis motors"
+  },
+  "commands": {
+    "CMD_PING": {"id": 1, "data_length": 0},
+    "CMD_EMERGENCY_STOP": {"id": 2, "data_length": 0},
+    "CMD_CHASSIS_SPEED": {"id": 16, "data_length": 8},
+    "CMD_CHASSIS_TORQUE": {"id": 17, "data_length": 8},
+    "CMD_CHASSIS_PID_SPEED": {"id": 18, "data_length": 21},
+    "CMD_CHASSIS_PID_POS": {"id": 19, "data_length": 21},
+    "CMD_CHASSIS_PID_RESET": {"id": 20, "data_length": 1},
+    "CMD_SERVO_ANGLE": {"id": 32, "data_length": 2},
+    "CMD_SERVO_HOME": {"id": 33, "data_length": 0},
+    "CMD_SERVO_ANGLE_ALL": {"id": 34, "data_length": 4},
+    "CMD_STEPPER_MOVE": {"id": 48, "data_length": 6},
+    "CMD_STEPPER_STOP": {"id": 49, "data_length": 1},
+    "CMD_STEPPER_PARAMS": {"id": 50, "data_length": 6},
+    "CMD_STEPPER_MOVE_DUAL": {"id": 51, "data_length": 22},
+    "CMD_STEPPER_MOVE_DUAL2": {"id": 52, "data_length": 27},
+    "CMD_STEPPER_SET_POS": {"id": 53, "data_length": 5},
+    "CMD_STEPPER_MOVE_DUAL3": {"id": 54, "data_length": 31},
+    "CMD_SET_TELEM_RATE": {"id": 64, "data_length": 2}
+  },
+  "telemetry": {
+    "TELEM_FULL": {"id": 128, "data_length": 80},
+    "TELEM_ACK": {"id": 129, "data_length": 3},
+    "TELEM_PONG": {"id": 130, "data_length": 4},
+    "full_fields": [
+      {"name": "motors[0..3].angle", "type": "uint16", "count": 4},
+      {"name": "motors[0..3].speed_rpm", "type": "int16", "count": 4},
+      {"name": "motors[0..3].torque_current", "type": "int16", "count": 4},
+      {"name": "motors[0..3].temperature", "type": "uint8", "count": 4},
+      {"name": "yaw_deg", "type": "float32"},
+      {"name": "yaw_rate_ds", "type": "float32"},
+      {"name": "rc_channels", "type": "uint16", "count": 6},
+      {"name": "stepper_busy", "type": "uint8"},
+      {"name": "uptime_ms", "type": "uint32"},
+      {"name": "stepper_pos", "type": "int32", "count": 2},
+      {"name": "motors[0..3].cumulative_pos", "type": "int32", "count": 4}
+    ]
+  }
+}

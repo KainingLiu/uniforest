@@ -27,6 +27,7 @@ import threading
 import argparse
 import glob
 import os
+from dataclasses import dataclass, asdict
 from typing import Optional
 
 from protocol import Transport, TelemBatch
@@ -34,6 +35,27 @@ from control import (
     Chassis, Servo, Stepper, Actions,
     DEFAULT_MOVE_SPEED_MM_S, LinearMoveResult,
 )
+from utils.diagnostics import JsonlDiagnostics
+
+
+@dataclass(frozen=True)
+class HardwarePreflightReport:
+    """Read-only startup health snapshot; no actuator commands are issued."""
+    connected: bool
+    telemetry_received: bool
+    telemetry_age_s: Optional[float]
+    telemetry_uptime_ms: Optional[int]
+    rx_frames: int
+    tx_frames: int
+    rx_crc_errors: int
+    vision_active: bool
+    localization_active: bool
+    protocol_valid: bool
+
+    @property
+    def ok(self) -> bool:
+        return (self.connected and self.telemetry_received
+                and self.protocol_valid)
 
 # Vision is optional — only imported if enabled
 try:
@@ -80,7 +102,8 @@ class Robot:
                  enable_localization: bool = False,
                  localization_camera='tag',
                  localization_gui: bool = False,
-                 debug: bool = False):
+                 debug: bool = False,
+                 diagnostics_path: Optional[str] = None):
         if port is None:
             port = self.SERIAL_PORT
         if baud is None:
@@ -88,6 +111,7 @@ class Robot:
 
         # Transport layer
         self.transport = Transport(port, baud, debug=debug)
+        self.diagnostics = JsonlDiagnostics(diagnostics_path)
 
         # Control subsystems
         self.chassis = Chassis(self.transport)
@@ -110,6 +134,7 @@ class Robot:
 
         # Latest telemetry
         self._telem: Optional[TelemBatch] = None
+        self._telem_received_at: Optional[float] = None
         self._telem_lock = threading.Lock()
         self._pong_event = threading.Event()
 
@@ -133,6 +158,8 @@ class Robot:
         if not self.transport.connect():
             print("[Robot] Failed to connect to STM32")
             return False
+        self.diagnostics.write('connect_start', port=self.transport._port,
+                               baud=self.transport._baudrate)
 
         # Register telemetry callback
         self.transport.on_telemetry(self._on_telem)
@@ -147,12 +174,14 @@ class Robot:
             if self.transport.ping() and self._pong_event.wait(0.7):
                 print(f"[Robot] Connected to STM32 on {self.transport._port} "
                       f"@ {self.transport._baudrate}")
+                self.diagnostics.write('connect_ok')
                 return True
             time.sleep(0.2)
 
         print("[Robot] COM port opened but STM32 did not answer PING. "
               "Replug DAPLink USB after restoring robot power.")
         self.transport.disconnect()
+        self.diagnostics.write('connect_failed', reason='pong_timeout')
         return False
 
     def start(self, telem_rate: int = 50):
@@ -192,6 +221,7 @@ class Robot:
     def _on_telem(self, telem: TelemBatch):
         with self._telem_lock:
             self._telem = telem
+            self._telem_received_at = time.monotonic()
             # Forward to chassis for position tracking
             self.chassis.update_telem(telem)
 
@@ -207,6 +237,62 @@ class Robot:
     def telem(self) -> Optional[TelemBatch]:
         with self._telem_lock:
             return self._telem
+
+    def hardware_preflight(self, timeout_s: float = 2.0,
+                           max_telem_age_s: float = 0.3
+                           ) -> HardwarePreflightReport:
+        """Check communication and started sensor subsystems without motion."""
+        deadline = time.monotonic() + max(0.0, timeout_s)
+        received_at = None
+        telem = None
+        while time.monotonic() < deadline:
+            with self._telem_lock:
+                received_at = self._telem_received_at
+                telem = self._telem
+            if telem is not None and received_at is not None:
+                break
+            time.sleep(0.01)
+
+        # Capture one final snapshot when timeout_s is zero or the last loop
+        # iteration ended just before the telemetry callback ran.
+        with self._telem_lock:
+            received_at = self._telem_received_at
+            telem = self._telem
+
+        now = time.monotonic()
+        age = (None if received_at is None else max(0.0, now - received_at))
+        protocol_valid = False
+        try:
+            from protocol.schema import validate_python_constants
+            validate_python_constants()
+            protocol_valid = True
+        except Exception as exc:
+            print(f'[Preflight] protocol schema invalid: {exc}')
+
+        report = HardwarePreflightReport(
+            connected=self.transport.connected,
+            telemetry_received=telem is not None,
+            telemetry_age_s=age,
+            telemetry_uptime_ms=(None if telem is None else telem.uptime_ms),
+            rx_frames=self.transport.rx_frames,
+            tx_frames=self.transport.tx_frames,
+            rx_crc_errors=self.transport.rx_crc_errors,
+            vision_active=self.has_vision,
+            localization_active=self.has_field_localization,
+            protocol_valid=protocol_valid,
+        )
+        if report.telemetry_received and age is not None and age > max_telem_age_s:
+            print(f'[Preflight] telemetry stale: {age:.3f}s > '
+                  f'{max_telem_age_s:.3f}s')
+            report = HardwarePreflightReport(**{
+                **asdict(report), 'telemetry_received': False})
+        print('[Preflight] ' + ('PASS' if report.ok else 'FAIL') + ' ' +
+              f'telem={report.telemetry_received} age='
+              f'{("n/a" if age is None else f"{age:.3f}s")} '
+              f'frames={report.rx_frames}/{report.tx_frames} '
+              f'crc_errors={report.rx_crc_errors} '
+              f'cube={report.vision_active} tag={report.localization_active}')
+        return report
 
     @property
     def vision_result(self) -> Optional['VisionResult']:
@@ -342,6 +428,15 @@ class Robot:
               f'wheel={result.encoder_distance_mm:.1f} mm, '
               f'chassis_est={result.estimated_chassis_distance_mm:.1f} mm, '
               f'time={result.elapsed_ms:.0f} ms')
+        self.diagnostics.write(
+            'motion', direction=direction, requested_mm=distance_mm,
+            speed_mm_s=speed_mm_s, state=state,
+            encoder_mm=result.encoder_distance_mm,
+            chassis_est_mm=result.estimated_chassis_distance_mm,
+            elapsed_ms=result.elapsed_ms,
+            completion_ratio=(abs(result.estimated_chassis_distance_mm)
+                              / max(abs(distance_mm), 1.0)),
+            cancelled=result.cancelled, timed_out=result.timed_out)
         return result
 
     def approach_cube(self, target_z: float = 200.0,
@@ -446,6 +541,8 @@ def debug_main():
                        help='Baud rate (default: 115200)')
     parser.add_argument('--test-ping', action='store_true',
                        help='Test communication with PING/PONG')
+    parser.add_argument('--preflight', action='store_true',
+                       help='Run read-only hardware and sensor preflight')
     parser.add_argument('--action', type=str, default=None,
                        help='Run action: home, hatch_open, hatch_close, '
                             'grap1, grap2, grap3, build')
@@ -502,6 +599,16 @@ def debug_main():
             robot.transport.ping()
             time.sleep(1.0)
 
+        elif args.preflight:
+            report = robot.hardware_preflight()
+            if not report.ok:
+                return_code = 2
+            else:
+                return_code = 0
+            # Keep the existing CLI cleanup path while returning a useful code.
+            if return_code:
+                sys.exit(return_code)
+
         elif args.action:
             time.sleep(0.5)  # wait for first telemetry
             robot.run_action(args.action)
@@ -537,7 +644,7 @@ def debug_main():
             print("  home, hatch_open, hatch_close — Servo actions")
             print("  grap1, grap2, grap3, build  — Full action sequences")
             print("  approach                     — Vision-guided cube approach")
-            print("  move DIR MM [SPEED]          — Position move; speed defaults to 600 mm/s")
+            print("  move DIR MM [SPEED]          — Position move; speed defaults to 750 mm/s")
             print("  telem                        — Print telemetry snapshot")
             print("  vision                       — Print vision detection result")
             print("  stop                         — EMERGENCY STOP")

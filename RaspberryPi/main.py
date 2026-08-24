@@ -7,6 +7,7 @@ import sys
 from robot import Robot
 from Strategy.runner import TASK_CHOICES, run_tasks
 from vision import default_camera_selector
+from utils.diagnostics import classify_failure
 
 
 def parse_args():
@@ -32,6 +33,8 @@ def parse_args():
     parser.add_argument('--localization-gui', action='store_true')
     parser.add_argument('--vision-gui', action='store_true')
     parser.add_argument('--debug', action='store_true')
+    parser.add_argument('--diagnostics-log', default=None,
+                        help='Append JSONL diagnostics to this path')
     return parser.parse_args()
 
 
@@ -47,6 +50,7 @@ def main() -> int:
         localization_camera=args.tag_camera,
         localization_gui=args.localization_gui,
         debug=args.debug,
+        diagnostics_path=args.diagnostics_log,
     )
 
     try:
@@ -59,7 +63,11 @@ def main() -> int:
         return 130
     except Exception as exc:
         robot.transport.emergency_stop()
-        print(f'[Competition] Fatal error: {exc}')
+        category = classify_failure(exc)
+        robot.diagnostics.write('fatal', category=category,
+                                error_type=type(exc).__name__,
+                                message=str(exc))
+        print(f'[Competition] Fatal error [{category}]: {exc}')
         return 1
     finally:
         robot.stop()

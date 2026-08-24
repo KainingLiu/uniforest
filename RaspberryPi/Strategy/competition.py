@@ -5,14 +5,21 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass
 from enum import Enum, auto
-from statistics import median
 import time
+from statistics import median
 from typing import TYPE_CHECKING, Optional
 
 from control.chassis import (
     LONG_DISTANCE_FORWARD_ACCEL_MS,
     LONG_DISTANCE_MOVE_SPEED_MM_S,
 )
+from .common import minimum_command, slew_command, wrap_angle
+from .tag_alignment import median_translation, translation_jump
+from .tag_controller import PID as _Pid, TagPidSet, profiled_command
+from .cube_tracker import select_tracked_block
+from .wall_approach import velocity_for_direction
+from .wall_controller import StallConfirmation
+from .vision_targets import TASK1_ORANGE
 
 if TYPE_CHECKING:
     from robot import Robot
@@ -23,33 +30,6 @@ if TYPE_CHECKING:
 # Preserve the physical stopping points tuned with the old 60-degree tag
 # camera model after adopting the specified 125-degree horizontal FOV.
 TAG_FOV_RETUNE_SCALE = 0.300549527
-
-
-class _Pid:
-    def __init__(self, kp: float, ki: float, kd: float,
-                 integral_limit: float, output_limit: float):
-        self.kp = kp
-        self.ki = ki
-        self.kd = kd
-        self.integral_limit = integral_limit
-        self.output_limit = output_limit
-        self.integral = 0.0
-        self.previous_error = None
-
-    def reset(self):
-        self.integral = 0.0
-        self.previous_error = None
-
-    def update(self, error: float, dt: float) -> float:
-        self.integral = max(
-            -self.integral_limit,
-            min(self.integral_limit, self.integral + error * dt))
-        derivative = (0.0 if self.previous_error is None else
-                      (error - self.previous_error) / max(dt, 1e-6))
-        self.previous_error = error
-        output = (self.kp * error + self.ki * self.integral
-                  + self.kd * derivative)
-        return max(-self.output_limit, min(self.output_limit, output))
 
 
 class CompetitionState(Enum):
@@ -76,15 +56,17 @@ class FirstTaskConfig:
     near_wall_speed_mm_s: float = 150.0
     near_wall_timeout_s: float = 1.0
     wall_timeout_is_success: bool = True
-    wall_settle_s: float = 0.3
+    wall_settle_s: float = 0.0
     stall_startup_grace_s: float = 0.5
     stall_confirm_s: float = 0.3
     pre_grab_stall_startup_grace_s: float = 0.1
     pre_grab_stall_confirm_s: float = 0.15
-    pre_grab_wall_settle_s: float = 0.1
+    pre_grab_wall_settle_s: float = 0.0
     telemetry_stale_s: float = 0.3
     stall_speed_rpm: int = 35
     stall_current_raw: int = 2500
+    # Default/lateral-wall confirmation remains the original three-wheel
+    # criterion. Forward contact uses the two rear wheel indices explicitly.
     stall_motor_count: int = 3
     search_speed_mm_s: float = 300.0
     search_max_distance_mm: float = 1500.0
@@ -92,40 +74,64 @@ class FirstTaskConfig:
     vision_observe_s: float = 0.35
     vision_stale_s: float = 0.5
     orange_min_confidence: float = 25.0
-    align_min_x_mm: float = -20.0
-    align_max_x_mm: float = 5.0
-    align_target_x_mm: float = 0.0
+    # Keep the initially selected cube when several orange cubes are visible.
+    orange_search_lock_x_jump_mm: float = 80.0
+    orange_search_lock_z_jump_mm: float = 100.0
+    orange_search_lock_lost_frames: int = 3
+    orange_search_confirm_frames: int = 2
+    # Relative to the Task1 calibrated target X=-1.0 mm: [-20, +3] mm.
+    align_min_x_mm: float = TASK1_ORANGE.align_min_x_mm
+    align_max_x_mm: float = TASK1_ORANGE.align_max_x_mm
+    # Task1 calibration frame: the selected middle orange cube measured
+    # X=-1.0 mm, so use that measured center as the coarse target.
+    align_target_x_mm: float = TASK1_ORANGE.target_x_mm
     align_confirm_frames: int = 3
+    orange_fine_align_timeout_s: float = 1.0
+    # Relative to X=-1.0 mm: [-2.5, +2.5] mm.
+    orange_fine_min_x_mm: float = TASK1_ORANGE.fine_min_x_mm
+    orange_fine_max_x_mm: float = TASK1_ORANGE.fine_max_x_mm
     align_kp: float = 1.5
     align_ki: float = 0.10
     align_kd: float = 0.0
     align_integral_limit: float = 300.0
     align_min_speed_mm_s: float = 100.0
+    align_creep_min_speed_mm_s: float = 100.0
+    align_start_speed_mm_s: float = 40.0
     align_max_speed_mm_s: float = 250.0
+    align_fast_speed_mm_s: float = 420.0
+    align_slowdown_start_mm: float = 100.0
+    align_creep_start_mm: float = 30.0
     align_accel_mm_s2: float = 300.0
-    align_track_max_x_jump_mm: float = 80.0
+    align_filter_frames: int = 3
+    align_track_max_x_jump_mm: float = 45.0
+    align_track_max_z_jump_mm: float = 80.0
+    # Zero keeps the legacy nearest-candidate behavior. Task2 overrides this
+    # for its adjacent orange-cube pickup area.
+    align_track_ambiguity_margin_mm: float = 12.0
+    align_window_hysteresis_mm: float = 5.0
+    align_window_hold_s: float = 0.20
     align_control_period_s: float = 0.05
     align_lost_timeout_s: float = 0.5
     align_timeout_s: float = 10.0
-    post_grab_settle_s: float = 0.3
+    post_grab_settle_s: float = 0.0
     delivery_reverse_mm: float = 400.0
     delivery_reverse_speed_mm_s: float = 300.0
     delivery_turn_deg: float = 90.0
     delivery_turn_speed_deg_s: float = 90.0
-    delivery_turn_heading_hold_ms: int = 500
+    delivery_turn_heading_hold_ms: int = 0
     delivery_forward_base_mm: float = 2800.0
     delivery_forward_speed_mm_s: float = LONG_DISTANCE_MOVE_SPEED_MM_S
     delivery_tag_id: int = 6
     delivery_tag_distance_mm: float = 425.0
-    delivery_tag_distance_tolerance_mm: float = 24.0 * TAG_FOV_RETUNE_SCALE
-    delivery_tag_lateral_tolerance_mm: float = 20.0 * TAG_FOV_RETUNE_SCALE
+    delivery_tag_distance_tolerance_mm: float = 30.0 * TAG_FOV_RETUNE_SCALE
+    delivery_tag_lateral_tolerance_mm: float = 25.0 * TAG_FOV_RETUNE_SCALE
     delivery_tag_distance_deadband_mm: float = 5.0 * TAG_FOV_RETUNE_SCALE
     delivery_tag_lateral_deadband_mm: float = 5.0 * TAG_FOV_RETUNE_SCALE
     delivery_heading_target_cw_deg: float = 180.0
-    delivery_heading_tolerance_deg: float = 2.4
+    delivery_heading_tolerance_deg: float = 3.0
     delivery_heading_deadband_deg: float = 0.5
     delivery_tag_confirm_frames: int = 4
-    delivery_tag_fine_align_timeout_s: float = 2.0
+    delivery_tag_fine_align_timeout_s: float = 1.0
     delivery_tag_fine_gain_scale: float = 1.5
     delivery_tag_vision_stale_s: float = 0.3
     delivery_tag_lost_timeout_s: float = 1.0
@@ -148,6 +154,12 @@ class FirstTaskConfig:
     delivery_heading_integral_limit: float = 100.0
     delivery_tag_max_forward_mm_s: float = 250.0
     delivery_tag_max_lateral_mm_s: float = 200.0
+    delivery_tag_fast_forward_mm_s: float = 350.0
+    delivery_tag_fast_lateral_mm_s: float = 280.0
+    delivery_tag_slowdown_distance_mm: float = 100.0
+    delivery_tag_slowdown_lateral_mm: float = 80.0
+    delivery_tag_creep_distance_mm: float = 25.0
+    delivery_tag_creep_lateral_mm: float = 20.0
     delivery_heading_max_yaw_deg_s: float = 45.0
     delivery_tag_min_linear_mm_s: float = 50.0
     delivery_heading_min_yaw_deg_s: float = 8.0
@@ -160,7 +172,7 @@ class FirstTaskConfig:
     pre_final_turn_lateral_left_mm: float = 0.0
     pre_final_turn_lateral_speed_mm_s: float = 300.0
     unload_final_turn_cw_deg: float = 180.0
-    unload_final_heading_hold_ms: int = 500
+    unload_final_heading_hold_ms: int = 0
     delivery_linear_accel_ms: int = 200
     long_distance_forward_accel_ms: int = LONG_DISTANCE_FORWARD_ACCEL_MS
 
@@ -227,27 +239,28 @@ class CompetitionProgram:
     def _tracked_block_from_result(result, color_name: str,
                                    reference_x: float,
                                    min_confidence: float,
-                                   cfg: FirstTaskConfig):
-        if result is None or time.time() - result.timestamp > cfg.vision_stale_s:
-            return None
-        candidates = [
-            block for block in result.all_blocks
-            if block.color_name.casefold() == color_name.casefold()
-            and block.confidence >= min_confidence
-            and abs(block.x - reference_x) <= cfg.align_track_max_x_jump_mm
-        ]
-        if not candidates:
-            return None
-        return min(candidates, key=lambda block: abs(block.x - reference_x))
+                                   cfg: FirstTaskConfig,
+                                   reference_z: Optional[float] = None,
+                                   ambiguity_margin_mm: Optional[float] = None):
+        return select_tracked_block(
+            result, color_name, reference_x, min_confidence, cfg,
+            reference_z, ambiguity_margin_mm)
 
     @staticmethod
-    def _stall_sample(telem, cfg: FirstTaskConfig) -> bool:
+    def _stall_sample(telem, cfg: FirstTaskConfig,
+                      direction: str = 'forward') -> bool:
+        # A-board motor order is TL(1), TR(0), BL(2), BR(3); forward contact
+        # is confirmed by the rear pair while lateral contact keeps 3/4.
+        motors = (telem.motors[2:4] if direction.casefold() == 'forward'
+                  else telem.motors)
+        required = (2 if direction.casefold() == 'forward'
+                    else cfg.stall_motor_count)
         stalled = sum(
             abs(m.speed_rpm) <= cfg.stall_speed_rpm
             and abs(m.torque_current) >= cfg.stall_current_raw
-            for m in telem.motors
+            for m in motors
         )
-        return stalled >= cfg.stall_motor_count
+        return stalled >= required
 
     def _drive_until_wall(self, *, timeout_s: Optional[float] = None,
                           startup_grace_s: Optional[float] = None,
@@ -267,20 +280,10 @@ class CompetitionProgram:
         timeout_is_success = (
             cfg.wall_timeout_is_success if timeout_is_success is None
             else timeout_is_success)
-        speed_cm_s = speed_mm_s / 10.0
-        velocity = {
-            'forward': (speed_cm_s, 0.0),
-            'backward': (-speed_cm_s, 0.0),
-            'left': (0.0, -speed_cm_s),
-            'right': (0.0, speed_cm_s),
-        }
-        if direction not in velocity:
-            raise ValueError(
-                'wall direction must be forward, backward, left, or right')
-        vx_cm_s, vy_cm_s = velocity[direction]
+        vx_cm_s, vy_cm_s = velocity_for_direction(direction, speed_mm_s)
         rpm = self.robot.chassis.mecanum_rpm(vx_cm_s, vy_cm_s, 0.0)
         started = time.monotonic()
-        stall_since = None
+        stall_tracker = StallConfirmation()
         last_uptime = None
         last_telem_time = time.monotonic()
         try:
@@ -299,15 +302,10 @@ class CompetitionProgram:
                 last_uptime = telem.uptime_ms
                 last_telem_time = time.monotonic()
                 is_stalled = (elapsed >= startup_grace_s
-                              and self._stall_sample(telem, cfg))
-                if is_stalled:
-                    if stall_since is None:
-                        stall_since = time.monotonic()
-                    elif time.monotonic() - stall_since >= confirm_s:
-                        print(f'[{self.TASK_LABEL}] {context} confirmed')
-                        return
-                else:
-                    stall_since = None
+                              and self._stall_sample(telem, cfg, direction))
+                if stall_tracker.update(is_stalled, time.monotonic(), confirm_s):
+                    print(f'[{self.TASK_LABEL}] {context} confirmed')
+                    return
                 time.sleep(0.01)
         finally:
             self.robot.chassis.set_speeds([0, 0, 0, 0])
@@ -352,9 +350,23 @@ class CompetitionProgram:
         result = self.robot.move_chassis(
             direction, distance_mm, speed_mm_s,
             hold_ms=0, accel_ms=accel_ms)
-        if result.timed_out or result.cancelled:
+        if result.cancelled:
             raise RuntimeError(
                 f'chassis move failed: {direction} {distance_mm:.0f} mm')
+        if result.timed_out:
+            # A move can reach its commanded position just before the
+            # controller's timeout while settling. Do not abort the whole
+            # strategy when encoder progress proves that the move completed.
+            progress = (abs(result.estimated_chassis_distance_mm)
+                        / max(abs(distance_mm), 1.0))
+            if progress >= 0.90:
+                print(f'[{self.TASK_LABEL}] chassis timeout accepted: '
+                      f'{direction} {result.estimated_chassis_distance_mm:.1f}/'
+                      f'{distance_mm:.1f} mm ({progress * 100:.0f}%)')
+                return result
+            raise RuntimeError(
+                f'chassis move failed: {direction} {distance_mm:.0f} mm '
+                f'(progress {progress * 100:.0f}%)')
         return result
 
     def _capture_lateral_origin(self):
@@ -363,30 +375,17 @@ class CompetitionProgram:
     def _measure_lateral_displacement_mm(self, origin) -> float:
         return self.robot.chassis.lateral_displacement_mm(origin)
 
-    def _observe_orange(self) -> Optional['BlockInfo']:
-        cfg = self.config
-        deadline = time.monotonic() + cfg.vision_observe_s
-        best = None
-        while time.monotonic() < deadline:
-            block = self._orange_from_result(
-                self.robot.vision_result,
-                cfg.orange_min_confidence,
-                cfg.vision_stale_s,
-            )
-            if block is not None and (best is None
-                                      or block.confidence > best.confidence):
-                best = block
-            time.sleep(0.02)
-        return best
-
     def _find_orange(self) -> 'BlockInfo':
         return self._find_cube(
             color_name='orange', min_confidence=self.config.orange_min_confidence,
-            search_direction=1.0)
+            search_direction=1.0,
+            lock_x_jump_mm=self.config.orange_search_lock_x_jump_mm)
 
     def _find_cube(self, *, color_name: str, min_confidence: float,
                    search_direction: float,
-                   max_distance_mm: Optional[float] = None) -> 'BlockInfo':
+                   max_distance_mm: Optional[float] = None,
+                   lock_x_jump_mm: Optional[float] = None,
+                   ambiguity_margin_mm: Optional[float] = None) -> 'BlockInfo':
         cfg = self.config
         search_limit_mm = (cfg.search_max_distance_mm
                            if max_distance_mm is None else max_distance_mm)
@@ -401,6 +400,10 @@ class CompetitionProgram:
         deadline = started + remaining_mm / cfg.search_speed_mm_s
         direction_name = 'right' if search_direction > 0.0 else 'left'
         display_color = color_name.capitalize()
+        locked_x = None
+        locked_z = None
+        lock_confirmed = 0
+        lock_lost_frames = 0
         print(f'[{self.TASK_LABEL}] {display_color} not visible; '
               f'continuous search {direction_name} '
               f'from {self._search_position_mm:.0f}/'
@@ -408,10 +411,63 @@ class CompetitionProgram:
         try:
             while time.monotonic() < deadline:
                 self.robot.chassis.set_speeds(rpm)
-                block = self._block_from_result(
-                    self.robot.vision_result, color_name,
-                    min_confidence, cfg.vision_stale_s)
+                result = self.robot.vision_result
+                block = None
+                if result is not None and time.time() - result.timestamp <= cfg.vision_stale_s:
+                    candidates = [
+                        candidate for candidate in result.all_blocks
+                        if candidate.color_name.casefold() == color_name.casefold()
+                        and candidate.confidence >= min_confidence
+                    ]
+                    if locked_x is not None and lock_x_jump_mm is not None:
+                        locked = [
+                            candidate for candidate in candidates
+                            if abs(candidate.x - locked_x) <= lock_x_jump_mm
+                            and (locked_z is None or
+                                 abs(candidate.z - locked_z)
+                                 <= cfg.orange_search_lock_z_jump_mm)
+                        ]
+                        if locked:
+                            lock_lost_frames = 0
+                            ranked = sorted(
+                                locked,
+                                key=lambda candidate:
+                                abs(candidate.x - locked_x))
+                            margin = (cfg.align_track_ambiguity_margin_mm
+                                      if ambiguity_margin_mm is None
+                                      else ambiguity_margin_mm)
+                            if (len(ranked) > 1 and margin > 0.0
+                                    and abs(ranked[1].x - locked_x)
+                                    - abs(ranked[0].x - locked_x)
+                                    < margin):
+                                time.sleep(cfg.search_control_period_s)
+                                continue
+                            block = ranked[0]
+                        else:
+                            # Hold position through short visual dropouts;
+                            # only release the target after several frames.
+                            lock_lost_frames += 1
+                            self.robot.chassis.set_speeds([0, 0, 0, 0])
+                            if lock_lost_frames >= cfg.orange_search_lock_lost_frames:
+                                locked_x = None
+                                locked_z = None
+                                lock_confirmed = 0
+                            time.sleep(cfg.search_control_period_s)
+                            continue
+                    if block is None and candidates and locked_x is None:
+                        block = min(
+                            candidates,
+                            key=lambda candidate: candidate.x * candidate.x
+                            + candidate.y * candidate.y
+                            + candidate.z * candidate.z)
                 if block is not None:
+                    if lock_x_jump_mm is not None:
+                        locked_x = block.x
+                        locked_z = block.z
+                        lock_confirmed += 1
+                        if lock_confirmed < cfg.orange_search_confirm_frames:
+                            time.sleep(cfg.search_control_period_s)
+                            continue
                     elapsed_s = time.monotonic() - started
                     self._search_position_mm += min(
                         remaining_mm, elapsed_s * cfg.search_speed_mm_s)
@@ -429,14 +485,17 @@ class CompetitionProgram:
 
     @staticmethod
     def _alignment_speed(x_error: float, integral: float,
-                         derivative: float, cfg: FirstTaskConfig) -> float:
+                         derivative: float, cfg: FirstTaskConfig,
+                         minimum_speed_mm_s: Optional[float] = None) -> float:
         speed = (cfg.align_kp * x_error
                  + cfg.align_ki * integral
                  + cfg.align_kd * derivative)
         speed = max(-cfg.align_max_speed_mm_s,
                     min(cfg.align_max_speed_mm_s, speed))
-        if 0.0 < abs(speed) < cfg.align_min_speed_mm_s:
-            speed = cfg.align_min_speed_mm_s if speed > 0.0 else -cfg.align_min_speed_mm_s
+        minimum = (cfg.align_min_speed_mm_s if minimum_speed_mm_s is None
+                   else minimum_speed_mm_s)
+        if 0.0 < abs(speed) < minimum:
+            speed = minimum if speed > 0.0 else -minimum
         return speed
 
     @staticmethod
@@ -445,31 +504,47 @@ class CompetitionProgram:
         if desired == 0.0:
             return 0.0
         if previous == 0.0:
-            return (cfg.align_min_speed_mm_s
-                    if desired > 0.0 else -cfg.align_min_speed_mm_s)
+            start_speed = min(abs(desired), cfg.align_start_speed_mm_s)
+            return start_speed if desired > 0.0 else -start_speed
         if desired * previous < 0.0:
             return 0.0
         max_delta = cfg.align_accel_mm_s2 * dt
         delta = max(-max_delta, min(max_delta, desired - previous))
         return previous + delta
 
-    def _alignment_observation(self, reference_x: float):
-        result = self.robot.vision_result
-        block = self._tracked_orange_from_result(
-            result, reference_x, self.config)
-        timestamp = result.timestamp if result is not None else None
-        return block, timestamp
-
     def _align_orange(self, initial_block: 'BlockInfo') -> bool:
+        if not self._align_cube(
+            initial_block, color_name='orange',
+            min_confidence=self.config.orange_min_confidence):
+            return False
+        return self._fine_align_orange(initial_block)
+
+    def _fine_align_orange(self, initial_block: 'BlockInfo') -> bool:
+        """Perform a short, tighter correction before gripping an orange cube."""
+        cfg = self.config
+        # Task2 has a separate calibrated orange target; Task1 uses its
+        # general calibrated target because it has no orange override.
+        orange_target_x = getattr(cfg, 'orange_align_target_x_mm',
+                                  cfg.align_target_x_mm)
         return self._align_cube(
             initial_block, color_name='orange',
-            min_confidence=self.config.orange_min_confidence)
+            min_confidence=cfg.orange_min_confidence,
+            align_min_x_mm=cfg.orange_fine_min_x_mm,
+            align_max_x_mm=cfg.orange_fine_max_x_mm,
+            align_target_x_mm=orange_target_x,
+            timeout_s=cfg.orange_fine_align_timeout_s,
+            timeout_is_success=True,
+            initial_reference_x=initial_block.x)
 
     def _align_cube(self, initial_block: 'BlockInfo', *, color_name: str,
                     min_confidence: float,
                     align_min_x_mm: Optional[float] = None,
                     align_max_x_mm: Optional[float] = None,
-                    align_target_x_mm: Optional[float] = None) -> bool:
+                    align_target_x_mm: Optional[float] = None,
+                    timeout_s: Optional[float] = None,
+                    timeout_is_success: bool = False,
+                    initial_reference_x: Optional[float] = None,
+                    ambiguity_margin_mm: Optional[float] = None) -> bool:
         """Continuously center a colored cube; return False after target loss."""
         cfg = self.config
         align_min_x_mm = (cfg.align_min_x_mm if align_min_x_mm is None
@@ -487,14 +562,22 @@ class CompetitionProgram:
         started = time.monotonic()
         last_update = started
         last_seen = started
-        reference_x = initial_block.x
+        reference_x = (initial_block.x if initial_reference_x is None
+                       else initial_reference_x)
+        reference_z = getattr(initial_block, 'z', None)
         commanded_speed = 0.0
+        alignment_window_latched = False
+        alignment_edge_since = None
+        x_samples = deque(maxlen=max(1, cfg.align_filter_frames))
         try:
-            while time.monotonic() - started < cfg.align_timeout_s:
+            deadline = started + (cfg.align_timeout_s
+                                  if timeout_s is None else timeout_s)
+            while time.monotonic() - started < (deadline - started):
                 now = time.monotonic()
                 result = self.robot.vision_result
                 block = self._tracked_block_from_result(
-                    result, color_name, reference_x, min_confidence, cfg)
+                    result, color_name, reference_x, min_confidence, cfg,
+                    reference_z, ambiguity_margin_mm)
                 frame_timestamp = result.timestamp if result is not None else None
 
                 if (block is not None
@@ -518,9 +601,20 @@ class CompetitionProgram:
                     continue
 
                 last_seen = now
-                reference_x = block.x
-                x_error = block.x - align_target_x_mm
+                x_samples.append(block.x)
+                filtered_x = median(x_samples)
+                reference_x = filtered_x
+                reference_z = block.z
+                x_error = filtered_x - align_target_x_mm
+                creep_min_speed = (cfg.align_creep_min_speed_mm_s
+                                   if abs(x_error) <= cfg.align_creep_start_mm
+                                   else cfg.align_min_speed_mm_s)
+                # Keep the original raw-frame acceptance window; use the
+                # median only for the control error so filtering cannot delay
+                # a valid confirmation at an asymmetric edge.
                 if align_min_x_mm <= block.x <= align_max_x_mm:
+                    alignment_window_latched = True
+                    alignment_edge_since = None
                     self.robot.chassis.set_speeds([0, 0, 0, 0])
                     commanded_speed = 0.0
                     integral = 0.0
@@ -530,7 +624,52 @@ class CompetitionProgram:
                           f'{cfg.align_confirm_frames}: x={block.x:+.0f} mm')
                     if confirmed >= cfg.align_confirm_frames:
                         return True
+                elif (alignment_window_latched
+                      and align_min_x_mm - cfg.align_window_hysteresis_mm
+                      <= block.x
+                      <= align_max_x_mm + cfg.align_window_hysteresis_mm):
+                    # Hold still through small edge jitter after entering the
+                    # valid window. A subsequent valid frame can continue the
+                    # confirmation sequence without a lateral speed kick.
+                    if alignment_edge_since is None:
+                        alignment_edge_since = now
+                    if now - alignment_edge_since < cfg.align_window_hold_s:
+                        self.robot.chassis.set_speeds([0, 0, 0, 0])
+                        commanded_speed = 0.0
+                        integral = 0.0
+                        previous_error = None
+                        print(f'[{self.TASK_LABEL}] Alignment edge hold: '
+                          f'x={filtered_x:+.0f} mm')
+                    else:
+                        alignment_window_latched = False
+                        alignment_edge_since = None
+                        confirmed = 0
+                        dt = max(0.001, min(0.2, now - last_update))
+                        integral = max(
+                            -cfg.align_integral_limit,
+                            min(cfg.align_integral_limit,
+                                integral + x_error * dt),
+                        )
+                        desired_speed = self._alignment_speed(
+                            x_error, integral, 0.0, cfg, creep_min_speed)
+                        desired_speed = profiled_command(
+                            desired_speed, x_error,
+                            slowdown_start=cfg.align_slowdown_start_mm,
+                            creep_start=cfg.align_creep_start_mm,
+                            fast_speed=cfg.align_fast_speed_mm_s,
+                            max_speed=cfg.align_fast_speed_mm_s,
+                            min_speed=creep_min_speed)
+                        commanded_speed = self._slew_alignment_speed(
+                            desired_speed, commanded_speed, dt, cfg)
+                        rpm = self.robot.chassis.mecanum_rpm(
+                            0.0, commanded_speed / 10.0, 0.0)
+                        self.robot.chassis.set_speeds(rpm)
+                        print(f'[{self.TASK_LABEL}] Visual PID recovery: '
+                              f'x={filtered_x:+.0f} mm, '
+                              f'vy={commanded_speed:+.0f} mm/s')
                 else:
+                    alignment_window_latched = False
+                    alignment_edge_since = None
                     confirmed = 0
                     dt = max(0.001, min(0.2, now - last_update))
                     integral = max(
@@ -541,20 +680,31 @@ class CompetitionProgram:
                     derivative = (0.0 if previous_error is None else
                                   (x_error - previous_error) / dt)
                     desired_speed = self._alignment_speed(
-                        x_error, integral, derivative, cfg)
+                        x_error, integral, derivative, cfg, creep_min_speed)
+                    desired_speed = profiled_command(
+                        desired_speed, x_error,
+                        slowdown_start=cfg.align_slowdown_start_mm,
+                        creep_start=cfg.align_creep_start_mm,
+                        fast_speed=cfg.align_fast_speed_mm_s,
+                        max_speed=cfg.align_fast_speed_mm_s,
+                        min_speed=creep_min_speed)
                     commanded_speed = self._slew_alignment_speed(
                         desired_speed, commanded_speed, dt, cfg)
                     rpm = self.robot.chassis.mecanum_rpm(
                         0.0, commanded_speed / 10.0, 0.0)
                     self.robot.chassis.set_speeds(rpm)
                     print(f'[{self.TASK_LABEL}] Visual PID: '
-                          f'x={block.x:+.0f} mm, '
+                          f'x={filtered_x:+.0f} mm, '
                           f'vy={commanded_speed:+.0f} mm/s')
                     previous_error = x_error
                 last_update = now
                 time.sleep(cfg.align_control_period_s)
         finally:
             self.robot.chassis.set_speeds([0, 0, 0, 0])
+        if timeout_is_success:
+            print(f'[{self.TASK_LABEL}] {display_color} fine alignment '
+                  f'time reached; accepting position')
+            return True
         raise RuntimeError(f'{color_name} visual alignment timed out')
 
     def _run_first_task(self):
@@ -601,7 +751,7 @@ class CompetitionProgram:
 
     @staticmethod
     def _wrap_angle(angle_deg: float) -> float:
-        return (angle_deg + 180.0) % 360.0 - 180.0
+        return wrap_angle(angle_deg)
 
     def _heading_error(self, target_cw_deg: float) -> float:
         """Return gyro heading error, positive in the chassis CCW convention."""
@@ -632,16 +782,12 @@ class CompetitionProgram:
 
     @staticmethod
     def _minimum_command(value: float, minimum: float) -> float:
-        if value == 0.0 or abs(value) >= minimum:
-            return value
-        return minimum if value > 0.0 else -minimum
+        return minimum_command(value, minimum)
 
     @staticmethod
     def _slew_command(target: float, current: float,
                       max_rate: float, dt: float) -> float:
-        max_delta = max_rate * dt
-        delta = max(-max_delta, min(max_delta, target - current))
-        return current + delta
+        return slew_command(target, current, max_rate, dt)
 
     @staticmethod
     def _delivery_tag_from_pose(pose, tag_id: int, max_age_s: float):
@@ -699,7 +845,7 @@ class CompetitionProgram:
             cfg.delivery_heading_kd,
             cfg.delivery_heading_integral_limit,
             cfg.delivery_heading_max_yaw_deg_s)
-        pids = (distance_pid, lateral_pid, heading_pid)
+        pids = TagPidSet(distance_pid, lateral_pid, heading_pid)
         started = time.monotonic()
         first_valid_frame_after = time.time()
         last_seen = started
@@ -739,8 +885,7 @@ class CompetitionProgram:
                     fine_started = None
                     translation_samples.clear()
                     vx = vy = wz = 0.0
-                    for pid in pids:
-                        pid.reset()
+                    pids.reset()
                     self.robot.chassis.set_speeds([0, 0, 0, 0])
                     if now - last_seen >= cfg.delivery_tag_lost_timeout_s:
                         raise RuntimeError(
@@ -753,17 +898,16 @@ class CompetitionProgram:
                 raw_distance_mm = observation.distance_m * 1000.0
                 raw_lateral_mm = observation.lateral_m * 1000.0
                 if last_translation is not None:
-                    distance_jump = abs(
-                        raw_distance_mm - last_translation[0])
-                    lateral_jump = abs(
-                        raw_lateral_mm - last_translation[1])
-                    if (distance_jump > cfg.delivery_tag_max_distance_jump_mm
-                            or lateral_jump
-                            > cfg.delivery_tag_max_lateral_jump_mm):
+                    jump = translation_jump(
+                        last_translation,
+                        (raw_distance_mm, raw_lateral_mm),
+                        cfg.delivery_tag_max_distance_jump_mm,
+                        cfg.delivery_tag_max_lateral_jump_mm)
+                    if jump is not None:
+                        distance_jump, lateral_jump = jump
                         confirmed = 0
                         vx = vy = wz = 0.0
-                        for pid in pids:
-                            pid.reset()
+                        pids.reset()
                         self.robot.chassis.set_speeds([0, 0, 0, 0])
                         current = (raw_distance_mm, raw_lateral_mm)
                         if (relock_candidate is not None
@@ -793,10 +937,8 @@ class CompetitionProgram:
                 relock_count = 0
                 translation_samples.append(
                     (raw_distance_mm, raw_lateral_mm))
-                distance_mm = median(
-                    item[0] for item in translation_samples)
-                lateral_mm = median(
-                    item[1] for item in translation_samples)
+                distance_mm, lateral_mm = median_translation(
+                    translation_samples)
                 heading_error_deg = self._heading_error(
                     heading_target_cw_deg)
                 distance_error = distance_mm - target_distance_mm
@@ -853,6 +995,13 @@ class CompetitionProgram:
                             desired_vx, cfg.delivery_tag_min_linear_mm_s)
                     else:
                         desired_vx *= fine_gain_scale
+                    desired_vx = profiled_command(
+                        desired_vx, distance_error,
+                        slowdown_start=cfg.delivery_tag_slowdown_distance_mm,
+                        creep_start=cfg.delivery_tag_creep_distance_mm,
+                        fast_speed=cfg.delivery_tag_fast_forward_mm_s,
+                        max_speed=cfg.delivery_tag_fast_forward_mm_s,
+                        min_speed=cfg.delivery_tag_min_linear_mm_s)
                 if (abs(lateral_mm)
                         <= cfg.delivery_tag_lateral_deadband_mm):
                     lateral_pid.reset()
@@ -864,6 +1013,13 @@ class CompetitionProgram:
                             desired_vy, cfg.delivery_tag_min_linear_mm_s)
                     else:
                         desired_vy *= fine_gain_scale
+                    desired_vy = profiled_command(
+                        desired_vy, lateral_mm,
+                        slowdown_start=cfg.delivery_tag_slowdown_lateral_mm,
+                        creep_start=cfg.delivery_tag_creep_lateral_mm,
+                        fast_speed=cfg.delivery_tag_fast_lateral_mm_s,
+                        max_speed=cfg.delivery_tag_fast_lateral_mm_s,
+                        min_speed=cfg.delivery_tag_min_linear_mm_s)
                 if (abs(heading_error_deg)
                         <= cfg.delivery_heading_deadband_deg):
                     heading_pid.reset()

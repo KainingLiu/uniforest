@@ -28,7 +28,7 @@ class Task0Tests(unittest.TestCase):
         self.assertEqual(program.run(), 0)
         self.assertEqual(program.state, Task0State.FINISHED)
         self.assertEqual(moves, [
-            ('forward', 1200.0, 600.0,
+            ('forward', 1200.0, 750.0,
              {'hold_ms': 0, 'accel_ms': 800}),
         ])
         self.assertEqual(emergency_stops, [])

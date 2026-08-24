@@ -16,26 +16,58 @@
 - `tests/`：自动化测试和导入检查。
 - `requirements.txt`：Python 依赖。
 
+协议契约集中记录在 `protocol/schema.json`，由 `protocol/schema.py` 校验 Python
+常量；修改命令编号、载荷长度、遥测布局或安全超时前，先更新 schema，再同步
+`Uniforest_A/Core/Inc/protocol.h`、`Core/Src/protocol.c` 和协议测试。
+
 依赖方向固定为：`main.py` → `Strategy/` → `robot.py` → `control/`、`protocol/`、`vision/`。比赛代码不得导入 `tools/` 或 `tests/`，硬件模块也不得反向依赖比赛策略。
 
 ## 开发约定
 
 当前实现只以本目录和 `../Uniforest_A/` 为准。工作区根目录的 `../备份/` 保存每日成果快照，默认只读，不应在其中继续开发。
 
-树莓派用户名为 `uniforest`；密码向队内管理员获取，不写入代码、配置、日志或项目文档。修改通信协议时，必须同步核对 `../Uniforest_A/` 中的下位机实现，并更新双方文档与测试。
+树莓派开发连接信息：主机 `192.168.137.50`，用户名 `uniforest`。密码由队内管理员线下提供，不写入代码、配置、日志或项目文档。日常开发优先使用 VSCode Remote-SSH；修改通信协议时，必须同步核对 `../Uniforest_A/` 中的下位机实现，并更新双方文档与测试。
 
 ## 底盘位置环
 
 比赛长距离移动速度由 `control/chassis.py` 中的公共参数
 `LONG_DISTANCE_MOVE_SPEED_MM_S` 统一管理。Task1 起步与投放前进、Task2
 起步、Build 前进以及 Build 后前进都引用该参数，当前为
-`600 mm/s`。
+`750 mm/s`（0.75 m/s）。
 
 直线位置环由上、下位机协同完成：A 板以 1 kHz 运行四轮速度环并上报多圈累计编码器位置；树莓派以遥测频率运行位置外环、S 曲线速度规划和 IMU 航向保持。`control/chassis.py` 中的 `move_forward()`、`move_right()` 支持正负距离，并返回 `LinearMoveResult` 供调试记录。
 
-直线动作的结束条件同时检查位置误差和四轮转速。进入目标区后关闭速度前馈，只保留位置 PID 锁定；位置或轮速再次超限会重新开始稳定计时。连续稳定 700 ms 后才切换为零速闭环并返回。
+直线动作的结束条件同时检查位置误差和四轮转速。进入目标区后关闭速度前馈，只保留位置 PID 锁定；位置或轮速再次超限会重新开始稳定计时。连续稳定 700 ms 后才切换为零速闭环并返回。策略层的路线定距动作使用 `hold_ms=0`，由位置环自身完成停止确认。
 
-正式主程序与临时测试共用 `control/chassis.py` 中的同一套位置环参数。默认距离移动速度为 600 mm/s（0.6 m/s）。交互模式可使用 `move forward|backward|left|right MM [MM/S]`，例如 `move right 1000`。
+正式主程序与临时测试共用 `control/chassis.py` 中的同一套位置环参数。当前长距离移动公共速度为 750 mm/s（0.75 m/s），由 `LONG_DISTANCE_MOVE_SPEED_MM_S` 统一管理。交互模式可使用 `move forward|backward|left|right MM [MM/S]`，例如 `move right 1000`。
+
+### 方块视觉快速调参
+
+三种方块的目标 X、粗对准允许范围和末端微调范围统一维护在
+`Strategy/vision_targets.py`，现场标定后只修改该文件即可：
+
+| profile | 目标 X | 粗对准范围 | 末端微调范围 |
+| --- | ---: | ---: | ---: |
+| Task1 橙色 | -1.0 mm | [-21.0, 2.0] mm | [-3.5, 1.5] mm |
+| Task2 紫色 | -0.5 mm | [-5.0, 5.0] mm | [-3.5, 1.5] mm |
+| Task2 橙色 | -0.1 mm | [-20.1, 4.9] mm | [-3.1, 2.9] mm |
+
+视觉只读标定命令（不会驱动底盘或机械爪）：
+
+```bash
+cd /home/uniforest/Uniforest/RaspberryPi
+timeout 8s .venv/bin/python vision/cube_detector.py \
+  --camera cube --no-gui --profile task2_orange
+```
+
+机械动作单项测试入口仍为 `action_test.py`；执行前确认机器人上电且机械爪周围无障碍：
+
+```bash
+.venv/bin/python action_test.py grap1 --port /dev/serial/by-id/<cmsis-dap-id>
+.venv/bin/python action_test.py grap2 --port /dev/serial/by-id/<cmsis-dap-id>
+.venv/bin/python action_test.py grap3 --port /dev/serial/by-id/<cmsis-dap-id>
+.venv/bin/python action_test.py build --port /dev/serial/by-id/<cmsis-dap-id>
+```
 
 麦克纳姆轮横移可能因滚子变形、轮压、地面摩擦和重心偏置产生编码器无法观测的滑移。根据比赛地胶上 500 mm 指令实测约 465 mm，默认横移系数标定为 `500/465 = 1.07527`。若场地或负载变化，可调用 `chassis.set_lateral_distance_scale(scale)` 重新标定：
 
@@ -57,6 +89,18 @@ python -m pip install -r requirements.txt
 python -m unittest discover -s tests -v
 ```
 
+Windows 调试环境使用项目本地虚拟环境：
+
+```powershell
+cd RaspberryPi
+py -3 -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt -r vision\requirements.txt
+.\.venv\Scripts\python.exe tests\import_smoke.py
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+```
+
+树莓派 Linux 环境使用同样的依赖清单；若系统 Python 已提供 NumPy/OpenCV，也可以按 README 开头的 `--system-site-packages` 方式创建虚拟环境。`pyserial`、`opencv-contrib-python` 和 `pynput` 必须在实际运行比赛程序的解释器中可导入。
+
 树莓派正式比赛程序默认优先使用 CMSIS-DAP 的 `/dev/serial/by-id/...`
 稳定串口路径。摄像头按 USB 硬件序列号映射角色，不使用 `/dev/videoN`
 的插入顺序：`cube` 是 LRCP USB3.0 方块相机，`tag` 是 icSpring
@@ -69,6 +113,26 @@ python -m unittest discover -s tests -v
 source .venv/bin/activate
 python main.py
 ```
+
+只做实机连接和传感器预检、不执行底盘、舵机或步进动作：
+
+```bash
+python robot.py --preflight --vision --localization
+```
+
+预检会检查 PING/遥测新鲜度、协议 schema、串口帧和 CRC 统计，以及已启用的
+cube/tag 子系统；返回码为 `0` 才允许进入比赛入口。预检失败不会自动重试任务。
+
+比赛运行时如需保存动作和故障诊断，可显式指定 JSONL 日志：
+
+```bash
+python main.py --task all --diagnostics-log /tmp/uniforest-run.jsonl
+```
+
+日志记录串口连接、每次底盘定距动作的请求/实际距离/耗时/完成比例，以及顶层
+异常分类。异常分类包括 `hardware_fault`、`perception_fault`、
+`motion_degraded` 和 `strategy_fault`；同时记录每个 Task0/Task1/Task2 的开始、
+完成或返回码失败事件。默认不写日志文件。
 
 `main.py` 默认在同一次硬件连接中依次运行 Task0、第一轮 Task1/Task2、第二轮
 Task1/Task2。Task0 仅在完整流程中执行，以 600 mm/s 前进 1200 mm；任何轮次
@@ -195,13 +259,17 @@ Task1，单独运行 Task1 时不会执行。`Strategy/competition.py` 的 Task1
 
 比赛预检完成、底盘尚未运动时，将陀螺仪航向记录为 `0°` 基准，并在后续 `0°` 向前顶墙后更新该基准。三个方块抓取阶段开始前记录四轮多圈编码器，抓取完成后通过麦轮横移投影得到包含搜索、视觉 PID 和贴墙漂移在内的实测净横移。随后执行投放路线：以 300 mm/s 后退 400 mm，通过陀螺仪 PID 对准当前零点右转 `90°` 的绝对航向，到位后闭环维持航向 500 ms，再以 600 mm/s 前进 `Task1 标定基准 - 编码器实测净右移距离`；当前标定基准为 2800 mm。前进完成后直接通过陀螺仪 PID 对准当前零点右转 `180°` 的绝对航向，随后识别 6 号 AprilTag。标签视觉 PID 按 125° 水平视场角模型调整垂直距离至 425 mm 并将横向位置调整至零，旋转轴仅由陀螺仪保持右转 `180°` 的绝对航向。标签相机固定使用短曝光和适中增益以降低运动模糊；对准只接受启动后的新视觉帧，距离或横向位姿发生超过约 75 mm 的不可能跳变时立即停车，连续 3 个彼此一致的新位姿可安全重建基准。PID 使用最近 5 个有效帧的距离和横向中值，抑制单帧 PnP 抖动。首次进入距离 425±7.2 mm、横向偏差约 ±6.0 mm、陀螺仪航向偏差 ±2.4° 的允许范围后，PID 将细调输出放大 1.5 倍并最多继续精调 2 秒，向约 1.5 mm、1.5 mm、0.5° 的小死区收敛；短暂越界不会重置精调计时，满 2 秒后在下一帧回到允许范围时完成。在小死区连续确认 4 个新帧则立即完成。之后以 200 mm/s 前进至堵转确认墙面，打开双舱门，以 300 mm/s 后退 300 mm，关闭双舱门，再通过陀螺仪闭环右转 `180°`，回到当前零点的绝对航向；转向过程中连续累计相邻陀螺仪帧的角度变化，避免跨越 `±180°` 时产生整圈假误差，到位后保持航向 500 ms，再明确停止底盘。标签丢失时立即停车并重置精调，超过 1 秒或总对准超过 12 秒则进入故障急停。
 
-投放路线启用快速衔接：直线动作使用 200 ms 起步斜坡，到位后保留约 50 ms 稳定确认但取消额外 700 ms 保持；转向保留一个控制周期（约 20 ms）的 IMU 到位确认并取消额外 500 ms 保持。舱门舵机的实际开关时间仍保留。
+投放路线启用快速衔接：直线动作使用 200 ms 起步斜坡，到位后保留约 50 ms 稳定确认但取消额外保持；转向保留一个控制周期（约 20 ms）的 IMU 到位确认并取消额外保持。顶墙确认和抓取后的额外等待当前为 0 秒，舱门舵机的实际开关时间仍保留。
+
+上段投放流程中的“保持 500 ms”属于历史描述，当前代码以
+`delivery_turn_heading_hold_ms=0` 和 `unload_final_heading_hold_ms=0` 为准；不要
+据此恢复额外转向等待。
 
 第二轮 Task1 将前进补偿基准由第一轮的 2800 mm 改为 2500 mm。Tag6 对准后
 以 300 mm/s 向右平移 300 mm；卸载完成后、最终右转 180° 前，以 300 mm/s
 向左平移 300 mm。第一轮这两段横移均关闭。
 
-堵转阈值、搜索步长、最大搜索距离、视觉置信度、重捕获范围、对准容差和各阶段超时集中定义在 `FirstTaskConfig`。实车调试只调整该配置，不在任务流程中散落参数。顶墙统一维护两套参数：抓取前近距离顶墙使用 `near_wall_speed_mm_s=150`、`near_wall_timeout_s=1`；Task1 常规顶墙、卸载顶墙以及 Task2 路线顶墙均使用 `far_wall_speed_mm_s=200`、`far_wall_timeout_s=4`。所有顶墙动作达到时间上限后都会先停止底盘，再默认按顶墙成功继续流程；遥测丢失或通信异常仍会故障急停。将 `wall_timeout_is_success` 设为 `False` 可恢复严格的超时报错模式。
+堵转阈值、搜索步长、最大搜索距离、视觉置信度、目标锁定跳变、对准容差和各阶段超时集中定义在 `FirstTaskConfig`。实车调试只调整该配置，不在任务流程中散落参数。定距动作超时但编码器进度达到至少 90% 时，策略层接受该结果并继续；被取消、遥测丢失或进度不足仍立即报错。顶墙统一维护两套参数：抓取前近距离顶墙使用 `near_wall_speed_mm_s=150`、`near_wall_timeout_s=1`；Task1 常规顶墙、卸载顶墙以及 Task2 路线顶墙均使用 `far_wall_speed_mm_s=200`、`far_wall_timeout_s=4`。所有顶墙动作达到时间上限后都会先停止底盘，再默认按顶墙成功继续流程；遥测丢失或通信异常仍会故障急停。将 `wall_timeout_is_success` 设为 `False` 可恢复严格的超时报错模式。
 
 ## 比赛任务 2
 
@@ -219,6 +287,7 @@ Task2 默认同时按稳定角色 `cube` 启动方块相机、按稳定角色 `t
 进入 `[-5, 5] mm` 允许范围后再次短压墙，执行 Grap2 抓取一个紫色方块。
 紫色搜索的累计向左距离上限为 600 mm；到达上限仍未发现目标时，
 停止搜索并跳过 Grap2，但仍使用编码器实测的搜索横移量完成后续距离补偿。
+Task2 相邻橙色方块跟踪增加 18 mm 候选歧义间隔；无法明确区分相邻目标时保持停车，不盲目切换目标。
 正常抓到紫色方块时后续抓取 2 个橙色方块；放弃紫色方块时改为抓取 3 个。
 紫色抓取或放弃搜索后，以 300 mm/s 后退 100 mm，通过陀螺仪闭环右转 90° 回到启动零点的绝对
 航向，再以 400 mm/s 前进 `400 mm - 编码器实测净横移`（向左为负，因此等效

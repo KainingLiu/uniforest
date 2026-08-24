@@ -14,7 +14,7 @@ from protocol.commands import (
 
 # ===================== Semantic Angle Aliases =================================
 
-ANGLE_GRIPPER_OPEN   = 83
+ANGLE_GRIPPER_OPEN   = 85
 ANGLE_GRIPPER_CLOSE  = 102
 ANGLE_ARM_FRONT_DOWN = 90
 ANGLE_ARM_FRONT_UP   = 0
@@ -23,7 +23,7 @@ ANGLE_HATCH_A_OPEN   = 130
 ANGLE_HATCH_B_CLOSED = 117
 ANGLE_HATCH_B_OPEN   = 50
 
-SERVO_HOME_ANGLES = [83, 90, 63, 117]  # gripper, arm, hatch_a, hatch_b
+SERVO_HOME_ANGLES = [85, 90, 63, 117]  # gripper, arm, hatch_a, hatch_b
 
 
 class Servo:

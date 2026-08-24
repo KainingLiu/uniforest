@@ -16,6 +16,7 @@ from .competition import (
     LONG_DISTANCE_MOVE_SPEED_MM_S,
     TAG_FOV_RETUNE_SCALE,
 )
+from .vision_targets import TASK2_ORANGE, TASK2_PURPLE
 
 if TYPE_CHECKING:
     from robot import Robot
@@ -75,9 +76,14 @@ class Task2Config(FirstTaskConfig):
     wall_premove_speed_mm_s: float = 300.0
     purple_min_confidence: float = 25.0
     purple_search_max_distance_mm: float = 600.0
-    align_min_x_mm: float = -5.0
-    align_max_x_mm: float = 5.0
-    align_target_x_mm: float = 0.0
+    align_min_x_mm: float = TASK2_PURPLE.align_min_x_mm
+    align_max_x_mm: float = TASK2_PURPLE.align_max_x_mm
+    # Task2 purple-cube calibration: stable centered sample measured X=-0.5 mm.
+    align_target_x_mm: float = TASK2_PURPLE.target_x_mm
+    # Task2 orange-cube calibration: choose the candidate nearest camera
+    # center, measured at X=-0.1 mm. Preserve the previous relative window.
+    orange_fine_min_x_mm: float = TASK2_ORANGE.fine_min_x_mm
+    orange_fine_max_x_mm: float = TASK2_ORANGE.fine_max_x_mm
     post_grab_reverse_mm: float = 100.0
     post_grab_reverse_speed_mm_s: float = 300.0
     post_grab_heading_target_cw_deg: float = 0.0
@@ -86,12 +92,13 @@ class Task2Config(FirstTaskConfig):
     left_wall_approach_enabled: bool = True
     orange_target_count: int = 2
     orange_target_count_without_purple: int = 3
-    orange_align_min_x_mm: float = -20.0
-    orange_align_max_x_mm: float = 5.0
-    orange_align_target_x_mm: float = 0.0
+    orange_align_min_x_mm: float = TASK2_ORANGE.align_min_x_mm
+    orange_align_max_x_mm: float = TASK2_ORANGE.align_max_x_mm
+    orange_align_target_x_mm: float = TASK2_ORANGE.target_x_mm
+    orange_track_ambiguity_margin_mm: float = 18.0
     post_orange_reverse_mm: float = 500.0
     post_orange_reverse_speed_mm_s: float = 300.0
-    post_orange_lateral_base_mm: float = 800.0
+    post_orange_lateral_base_mm: float = 700.0
     post_orange_lateral_speed_mm_s: float = 300.0
     final_turn_target_cw_deg: float = 180.0
     build_route_distance_mm: float = 2100.0
@@ -107,10 +114,18 @@ class Task2Config(FirstTaskConfig):
         FirstTaskConfig().delivery_heading_tolerance_deg)
     build_tag_fine_gain_scale: float = (
         FirstTaskConfig().delivery_tag_fine_gain_scale)
+    # Tag6 is approached after a long straight run. Slow the far-field
+    # profile and enter deceleration earlier without changing final tolerances.
+    delivery_tag_fast_forward_mm_s: float = 260.0
+    delivery_tag_fast_lateral_mm_s: float = 200.0
+    delivery_tag_slowdown_distance_mm: float = 140.0
+    delivery_tag_slowdown_lateral_mm: float = 100.0
+    delivery_tag_creep_distance_mm: float = 35.0
+    delivery_tag_creep_lateral_mm: float = 25.0
     post_tag6_lateral_right_mm: float = 0.0
     post_tag6_lateral_speed_mm_s: float = 300.0
     building_target_x_mm: float = -8.4
-    building_target_z_mm: float = 150.0
+    building_target_z_mm: float = 155.0
     building_min_confidence: float = 45.0
     building_min_height_width_ratio: float = 0.45
     building_max_height_width_ratio: float = 1.30
@@ -151,6 +166,9 @@ class Task2Config(FirstTaskConfig):
     post_build_route_speed_mm_s: float = LONG_DISTANCE_MOVE_SPEED_MM_S
     post_build_tag_id: int = 1
     post_build_tag_distance_mm: float = 200.0
+    # At 200 mm the tag-camera lateral noise is larger than the Tag6 region;
+    # accept a stable +/-10 mm result instead of driving on a 7-8 mm jitter.
+    post_build_tag_lateral_tolerance_mm: float = 10.0
     post_build_tag_heading_target_cw_deg: float = 270.0
     final_right_turn_target_cw_deg: float = 360.0
     finish_after_build: bool = False
@@ -160,7 +178,7 @@ class Task2Config(FirstTaskConfig):
 class Task2Round2Config(Task2Config):
     post_tag_lateral_mm: float = 0.0
     left_wall_approach_enabled: bool = False
-    post_orange_lateral_base_mm: float = 600.0
+    post_orange_lateral_base_mm: float = 500.0
     post_tag6_lateral_right_mm: float = 300.0
     finish_after_build: bool = True
 
@@ -490,7 +508,7 @@ class Task2Program(CompetitionProgram):
             heading_target_cw_deg=(
                 cfg.post_build_tag_heading_target_cw_deg),
             distance_tolerance_mm=cfg.build_tag_distance_tolerance_mm,
-            lateral_tolerance_mm=cfg.build_tag_lateral_tolerance_mm,
+            lateral_tolerance_mm=cfg.post_build_tag_lateral_tolerance_mm,
             heading_tolerance_deg=cfg.build_tag_heading_tolerance_deg,
             fine_gain_scale=cfg.build_tag_fine_gain_scale,
         )
@@ -624,6 +642,8 @@ class Task2Program(CompetitionProgram):
                         color_name='orange',
                         min_confidence=cfg.orange_min_confidence,
                         search_direction=1.0,
+                        lock_x_jump_mm=cfg.orange_search_lock_x_jump_mm,
+                        ambiguity_margin_mm=cfg.orange_track_ambiguity_margin_mm,
                     )
                     self.state = Task2State.ORANGE_ALIGN
                     if self._align_cube(
@@ -631,8 +651,10 @@ class Task2Program(CompetitionProgram):
                             min_confidence=cfg.orange_min_confidence,
                             align_min_x_mm=cfg.orange_align_min_x_mm,
                             align_max_x_mm=cfg.orange_align_max_x_mm,
-                            align_target_x_mm=cfg.orange_align_target_x_mm):
-                        break
+                            align_target_x_mm=cfg.orange_align_target_x_mm,
+                            ambiguity_margin_mm=cfg.orange_track_ambiguity_margin_mm):
+                        if self._fine_align_orange(block):
+                            break
 
                 self.state = Task2State.WALL_APPROACH
                 self._press_wall_before_grab(recalibrate_heading_zero=True)

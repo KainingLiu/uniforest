@@ -3,6 +3,7 @@
 from .task0 import Task0Program
 from .task1 import Task1Program, Task1Round2Program
 from .task2 import Task2Program, Task2Round2Program
+from .results import TaskResult
 
 
 TASK_CHOICES = (
@@ -50,11 +51,27 @@ def run_tasks(robot, selection='all', *,
 
     for label, factory in sequence:
         print(f'[Competition] Starting {label}')
-        result = factory(robot).run()
-        if result != 0:
-            print(f'[Competition] {label} failed with code {result}')
+        diagnostics = getattr(robot, 'diagnostics', None)
+        if diagnostics is not None:
+            diagnostics.write('task_start', task=label,
+                              selection=selection)
+        raw_result = factory(robot).run()
+        outcome = (raw_result if isinstance(raw_result, TaskResult)
+                   else TaskResult.from_code(int(raw_result), task=label))
+        result = outcome.code
+        if not outcome.ok:
+            print(f'[Competition] {label} failed with code {result} '
+                  f'({outcome.status.value})')
+            if diagnostics is not None:
+                diagnostics.write(
+                    'task_failed', task=label, code=result,
+                    status=outcome.status.value,
+                    message=outcome.message)
             return result
         print(f'[Competition] {label} complete')
+        if diagnostics is not None:
+            diagnostics.write('task_complete', task=label,
+                              status=outcome.status.value)
     return 0
 
 

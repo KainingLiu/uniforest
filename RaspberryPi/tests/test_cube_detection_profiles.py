@@ -6,7 +6,15 @@ import numpy as np
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from vision.cube_detector import CubeDetector, color_profiles_for
+from vision.cube_detector import (
+    CONFIG,
+    CubeDetector,
+    color_profiles_for,
+    detect_all_blocks,
+    morphology_for,
+    max_front_aspect_for,
+    roi_top_ratio_for,
+)
 
 
 def profile_named(profiles, name):
@@ -20,11 +28,37 @@ class CubeDetectionProfileTests(unittest.TestCase):
 
         np.testing.assert_array_equal(default['hsv_low'], [2, 80, 45])
         np.testing.assert_array_equal(default['hsv_high'], [25, 255, 255])
-        np.testing.assert_array_equal(task2['hsv_low'], [5, 75, 80])
+        np.testing.assert_array_equal(task2['hsv_low'], [4, 65, 55])
         np.testing.assert_array_equal(task2['hsv_high'], [35, 255, 255])
 
         task2['hsv_low'][0] = 99
         self.assertEqual(default['hsv_low'][0], 2)
+
+        self.assertEqual(roi_top_ratio_for('default'), 0.0)
+        self.assertEqual(roi_top_ratio_for('task2_orange'), 0.5)
+        self.assertEqual(morphology_for('default'), (5, 2))
+        self.assertEqual(morphology_for('task2_orange'), (3, 1))
+        self.assertEqual(max_front_aspect_for('task2_orange'), 5.2)
+
+    def test_task2_roi_excludes_upper_half_only(self):
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        orange_bgr = (0, 140, 255)
+        frame[100:200, 250:390] = orange_bgr
+        frame[300:400, 250:390] = orange_bgr
+        state = {
+            'fx': 332.0, 'fy': 207.0,
+            'cx': 320.0, 'cy': 240.0,
+        }
+
+        blocks = detect_all_blocks(
+            frame, state,
+            color_profiles=color_profiles_for('task2_orange'),
+            roi_top_ratio=roi_top_ratio_for('task2_orange'))
+
+        orange_blocks = [block for block in blocks
+                         if block.color_name == 'Orange']
+        self.assertEqual(len(orange_blocks), 1)
+        self.assertGreater(orange_blocks[0].quad[:, 1].mean(), 240.0)
 
     def test_switching_profile_clears_stale_result(self):
         detector = CubeDetector(camera_id=0)
@@ -33,6 +67,7 @@ class CubeDetectionProfileTests(unittest.TestCase):
         detector.set_detection_profile('task2_orange')
 
         self.assertEqual(detector.detection_profile, 'task2_orange')
+        self.assertEqual(detector._roi_top_ratio, 0.5)
         self.assertIsNone(detector.result)
 
     def test_unknown_profile_is_rejected(self):

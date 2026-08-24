@@ -20,7 +20,11 @@ if 'serial' not in sys.modules:
     serial_stub.STOPBITS_ONE = 1
     sys.modules['serial'] = serial_stub
 
-from control.chassis import Chassis, COUNTS_PER_CM, LATERAL_DISTANCE_SCALE
+from control.chassis import (
+    Chassis,
+    COUNTS_PER_CM,
+    LATERAL_DISTANCE_SCALE,
+)
 from protocol.commands import TelemBatch
 from tools.chassis_distance_test import PositionKeyTest
 

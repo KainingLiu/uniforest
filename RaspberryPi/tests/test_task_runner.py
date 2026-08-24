@@ -154,6 +154,23 @@ class TaskRunnerTests(unittest.TestCase):
             ('run', 'task0'),
         ])
 
+    def test_runner_records_task_boundaries_when_diagnostics_available(self):
+        events = []
+
+        class Diagnostics:
+            def write(self, event, **fields):
+                events.append((event, fields))
+
+        robot = type('Robot', (), {'diagnostics': Diagnostics()})()
+        result = run_tasks(
+            robot, 'task1-r1',
+            task1_factory=self._factory('task1-r1', []))
+
+        self.assertEqual(result, 0)
+        self.assertEqual([event[0] for event in events],
+                         ['task_start', 'task_complete'])
+        self.assertEqual(events[0][1]['task'], 'Task1-R1')
+
 
 if __name__ == '__main__':
     unittest.main()
