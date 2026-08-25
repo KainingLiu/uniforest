@@ -16,6 +16,6 @@ class CubeVisionTarget:
     fine_max_x_mm: float
 
 
-TASK1_ORANGE = CubeVisionTarget(-1.0, -21.0, 2.0, -3.5, 1.5)
-TASK2_PURPLE = CubeVisionTarget(-0.5, -5.0, 5.0, -3.5, 1.5)
-TASK2_ORANGE = CubeVisionTarget(-0.1, -20.1, 4.9, -3.1, 2.9)
+TASK1_ORANGE = CubeVisionTarget(0.0, -20.0, 5.0, -3.0, 3.0)
+TASK2_PURPLE = CubeVisionTarget(0.0, -5.0, 5.0, -3.0, 3.0)
+TASK2_ORANGE = CubeVisionTarget(0.0, -20.0, 5.0, -3.0, 3.0)

@@ -54,9 +54,9 @@ class Task2Tests(unittest.TestCase):
         self.assertEqual(cfg.purple_search_max_distance_mm, 600.0)
         self.assertEqual((cfg.align_min_x_mm, cfg.align_max_x_mm),
                          (-5.0, 5.0))
-        self.assertEqual(cfg.align_target_x_mm, -0.5)
+        self.assertEqual(cfg.align_target_x_mm, 0.0)
         self.assertEqual((cfg.orange_fine_min_x_mm,
-                          cfg.orange_fine_max_x_mm), (-3.1, 2.9))
+                          cfg.orange_fine_max_x_mm), (-3.0, 3.0))
         self.assertEqual(cfg.post_grab_reverse_mm, 100.0)
         self.assertEqual(cfg.post_grab_reverse_speed_mm_s, 300.0)
         self.assertEqual(cfg.post_grab_heading_target_cw_deg, 0.0)
@@ -67,8 +67,8 @@ class Task2Tests(unittest.TestCase):
         self.assertEqual(cfg.orange_target_count_without_purple, 3)
         self.assertEqual(
             (cfg.orange_align_min_x_mm, cfg.orange_align_max_x_mm),
-            (-20.1, 4.9))
-        self.assertEqual(cfg.orange_align_target_x_mm, -0.1)
+            (-20.0, 5.0))
+        self.assertEqual(cfg.orange_align_target_x_mm, 0.0)
         self.assertEqual(cfg.orange_track_ambiguity_margin_mm, 18.0)
         self.assertEqual(cfg.post_orange_reverse_mm, 500.0)
         self.assertEqual(cfg.post_orange_reverse_speed_mm_s, 300.0)
@@ -100,13 +100,13 @@ class Task2Tests(unittest.TestCase):
             FirstTaskConfig().delivery_tag_fine_gain_scale)
         self.assertEqual(cfg.building_target_x_mm, -8.4)
         self.assertEqual(cfg.building_target_z_mm, 155.0)
-        self.assertEqual(cfg.building_min_confidence, 45.0)
+        self.assertEqual(cfg.building_min_confidence, 35.0)
         self.assertEqual(
             (cfg.building_min_height_width_ratio,
              cfg.building_max_height_width_ratio),
-            (0.45, 1.30))
-        self.assertEqual(cfg.building_confirm_frames, 5)
-        self.assertEqual(cfg.building_lost_timeout_s, 2.0)
+             (0.35, 1.50))
+        self.assertEqual(cfg.building_confirm_frames, 3)
+        self.assertEqual(cfg.building_lost_timeout_s, 3.0)
         self.assertEqual(cfg.building_forward_kp, 1.5)
         self.assertEqual(cfg.building_lateral_kp, 1.8)
         self.assertEqual(cfg.building_min_linear_mm_s, 100.0)
@@ -257,9 +257,9 @@ class Task2Tests(unittest.TestCase):
             ('align_cube', 0.0, {
                 'color_name': 'orange',
                 'min_confidence': 25.0,
-                'align_min_x_mm': -20.1,
-                'align_max_x_mm': 4.9,
-                'align_target_x_mm': -0.1,
+                'align_min_x_mm': -20.0,
+                'align_max_x_mm': 5.0,
+                'align_target_x_mm': 0.0,
                 'ambiguity_margin_mm': 18.0,
             }),
             ('fine_align_orange', 0.0),
@@ -276,9 +276,9 @@ class Task2Tests(unittest.TestCase):
             ('align_cube', 0.0, {
                 'color_name': 'orange',
                 'min_confidence': 25.0,
-                'align_min_x_mm': -20.1,
-                'align_max_x_mm': 4.9,
-                'align_target_x_mm': -0.1,
+                'align_min_x_mm': -20.0,
+                'align_max_x_mm': 5.0,
+                'align_target_x_mm': 0.0,
                 'ambiguity_margin_mm': 18.0,
             }),
             ('fine_align_orange', 0.0),

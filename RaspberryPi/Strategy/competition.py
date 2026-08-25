@@ -16,7 +16,7 @@ from control.chassis import (
 from .common import minimum_command, slew_command, wrap_angle
 from .tag_alignment import median_translation, translation_jump
 from .tag_controller import PID as _Pid, TagPidSet, profiled_command
-from .cube_tracker import select_tracked_block
+from .cube_tracker import CubeTargetTracker, select_tracked_block
 from .wall_approach import velocity_for_direction
 from .wall_controller import StallConfirmation
 from .vision_targets import TASK1_ORANGE
@@ -87,6 +87,7 @@ class FirstTaskConfig:
     align_target_x_mm: float = TASK1_ORANGE.target_x_mm
     align_confirm_frames: int = 3
     orange_fine_align_timeout_s: float = 1.0
+    orange_fine_timeout_retry_count: int = 2
     # Relative to X=-1.0 mm: [-2.5, +2.5] mm.
     orange_fine_min_x_mm: float = TASK1_ORANGE.fine_min_x_mm
     orange_fine_max_x_mm: float = TASK1_ORANGE.fine_max_x_mm
@@ -182,6 +183,7 @@ class CompetitionProgram:
 
     TELEMETRY_WAIT_S = 2.0
     TASK_LABEL = 'Task1'
+    CUBE_VISION_PIPELINE_VERSION = 'task1-cube-lock-v3'
 
     def __init__(self, robot: Robot,
                  config: FirstTaskConfig = FirstTaskConfig()):
@@ -191,6 +193,11 @@ class CompetitionProgram:
         self._search_position_mm = 0.0
         self._cube_lateral_displacement_mm: Optional[float] = None
         self._heading_zero_deg: Optional[float] = None
+        # The fine-align stage must inherit the target observed at the end of
+        # coarse alignment, rather than the stale search acquisition sample.
+        self._last_alignment_block = None
+        self._last_alignment_timed_out = False
+        self._alignment_valid_frames = 0
 
     def _preflight(self):
         deadline = time.monotonic() + self.TELEMETRY_WAIT_S
@@ -400,10 +407,17 @@ class CompetitionProgram:
         deadline = started + remaining_mm / cfg.search_speed_mm_s
         direction_name = 'right' if search_direction > 0.0 else 'left'
         display_color = color_name.capitalize()
-        locked_x = None
-        locked_z = None
-        lock_confirmed = 0
-        lock_lost_frames = 0
+        tracker = CubeTargetTracker(
+            max_x_jump_mm=(cfg.orange_search_lock_x_jump_mm
+                           if lock_x_jump_mm is None else lock_x_jump_mm),
+            max_z_jump_mm=cfg.orange_search_lock_z_jump_mm,
+            confirm_frames=cfg.orange_search_confirm_frames,
+            lost_frames=cfg.orange_search_lock_lost_frames,
+            smoothing_frames=cfg.align_filter_frames,
+            ambiguity_margin_mm=(cfg.align_track_ambiguity_margin_mm
+                                 if ambiguity_margin_mm is None
+                                 else ambiguity_margin_mm),
+        )
         print(f'[{self.TASK_LABEL}] {display_color} not visible; '
               f'continuous search {direction_name} '
               f'from {self._search_position_mm:.0f}/'
@@ -412,62 +426,11 @@ class CompetitionProgram:
             while time.monotonic() < deadline:
                 self.robot.chassis.set_speeds(rpm)
                 result = self.robot.vision_result
-                block = None
-                if result is not None and time.time() - result.timestamp <= cfg.vision_stale_s:
-                    candidates = [
-                        candidate for candidate in result.all_blocks
-                        if candidate.color_name.casefold() == color_name.casefold()
-                        and candidate.confidence >= min_confidence
-                    ]
-                    if locked_x is not None and lock_x_jump_mm is not None:
-                        locked = [
-                            candidate for candidate in candidates
-                            if abs(candidate.x - locked_x) <= lock_x_jump_mm
-                            and (locked_z is None or
-                                 abs(candidate.z - locked_z)
-                                 <= cfg.orange_search_lock_z_jump_mm)
-                        ]
-                        if locked:
-                            lock_lost_frames = 0
-                            ranked = sorted(
-                                locked,
-                                key=lambda candidate:
-                                abs(candidate.x - locked_x))
-                            margin = (cfg.align_track_ambiguity_margin_mm
-                                      if ambiguity_margin_mm is None
-                                      else ambiguity_margin_mm)
-                            if (len(ranked) > 1 and margin > 0.0
-                                    and abs(ranked[1].x - locked_x)
-                                    - abs(ranked[0].x - locked_x)
-                                    < margin):
-                                time.sleep(cfg.search_control_period_s)
-                                continue
-                            block = ranked[0]
-                        else:
-                            # Hold position through short visual dropouts;
-                            # only release the target after several frames.
-                            lock_lost_frames += 1
-                            self.robot.chassis.set_speeds([0, 0, 0, 0])
-                            if lock_lost_frames >= cfg.orange_search_lock_lost_frames:
-                                locked_x = None
-                                locked_z = None
-                                lock_confirmed = 0
-                            time.sleep(cfg.search_control_period_s)
-                            continue
-                    if block is None and candidates and locked_x is None:
-                        block = min(
-                            candidates,
-                            key=lambda candidate: candidate.x * candidate.x
-                            + candidate.y * candidate.y
-                            + candidate.z * candidate.z)
+                block = tracker.update(
+                    result, color_name=color_name,
+                    min_confidence=min_confidence,
+                    max_age_s=cfg.vision_stale_s)
                 if block is not None:
-                    if lock_x_jump_mm is not None:
-                        locked_x = block.x
-                        locked_z = block.z
-                        lock_confirmed += 1
-                        if lock_confirmed < cfg.orange_search_confirm_frames:
-                            time.sleep(cfg.search_control_period_s)
-                            continue
                     elapsed_s = time.monotonic() - started
                     self._search_position_mm += min(
                         remaining_mm, elapsed_s * cfg.search_speed_mm_s)
@@ -522,31 +485,60 @@ class CompetitionProgram:
     def _fine_align_orange(self, initial_block: 'BlockInfo') -> bool:
         """Perform a short, tighter correction before gripping an orange cube."""
         cfg = self.config
+        seed_block = (self._last_alignment_block
+                      if self._last_alignment_block is not None
+                      else initial_block)
         # Task2 has a separate calibrated orange target; Task1 uses its
         # general calibrated target because it has no orange override.
         orange_target_x = getattr(cfg, 'orange_align_target_x_mm',
                                   cfg.align_target_x_mm)
-        return self._align_cube(
-            initial_block, color_name='orange',
+        aligned = self._align_cube(
+            seed_block, color_name='orange',
             min_confidence=cfg.orange_min_confidence,
             align_min_x_mm=cfg.orange_fine_min_x_mm,
             align_max_x_mm=cfg.orange_fine_max_x_mm,
             align_target_x_mm=orange_target_x,
             timeout_s=cfg.orange_fine_align_timeout_s,
-            timeout_is_success=True,
-            initial_reference_x=initial_block.x)
+            # A fine-align timeout is a perception failure.  Never continue
+            # to the gripper after the target has disappeared or jumped.
+            timeout_is_success=False,
+            timeout_returns_false=True,
+            initial_reference_x=seed_block.x)
+        if aligned:
+            return True
+
+        coarse_min = getattr(cfg, 'orange_align_min_x_mm',
+                             cfg.align_min_x_mm)
+        coarse_max = getattr(cfg, 'orange_align_max_x_mm',
+                             cfg.align_max_x_mm)
+        last_block = self._last_alignment_block
+        if (self._last_alignment_timed_out
+                and self._alignment_valid_frames > 0
+                and last_block is not None
+                and coarse_min <= last_block.x <= coarse_max):
+            print(f'[{self.TASK_LABEL}] Fine alignment timed out; '
+                  f'coarse position x={last_block.x:+.0f} mm is acceptable')
+            return True
+        return False
 
     def _align_cube(self, initial_block: 'BlockInfo', *, color_name: str,
                     min_confidence: float,
                     align_min_x_mm: Optional[float] = None,
                     align_max_x_mm: Optional[float] = None,
                     align_target_x_mm: Optional[float] = None,
-                    timeout_s: Optional[float] = None,
-                    timeout_is_success: bool = False,
-                    initial_reference_x: Optional[float] = None,
+                     timeout_s: Optional[float] = None,
+                     timeout_is_success: bool = False,
+                     timeout_returns_false: bool = False,
+                     initial_reference_x: Optional[float] = None,
                     ambiguity_margin_mm: Optional[float] = None) -> bool:
         """Continuously center a colored cube; return False after target loss."""
         cfg = self.config
+        self._last_alignment_timed_out = False
+        self._alignment_valid_frames = 0
+        if initial_reference_x is None:
+            # Start a fresh target session for coarse acquisition.  The fine
+            # stage deliberately keeps the block recorded by this session.
+            self._last_alignment_block = None
         align_min_x_mm = (cfg.align_min_x_mm if align_min_x_mm is None
                           else align_min_x_mm)
         align_max_x_mm = (cfg.align_max_x_mm if align_max_x_mm is None
@@ -565,6 +557,16 @@ class CompetitionProgram:
         reference_x = (initial_block.x if initial_reference_x is None
                        else initial_reference_x)
         reference_z = getattr(initial_block, 'z', None)
+        tracker = CubeTargetTracker(
+            max_x_jump_mm=cfg.align_track_max_x_jump_mm,
+            max_z_jump_mm=cfg.align_track_max_z_jump_mm,
+            confirm_frames=1,
+            lost_frames=cfg.orange_search_lock_lost_frames,
+            smoothing_frames=cfg.align_filter_frames,
+            ambiguity_margin_mm=(cfg.align_track_ambiguity_margin_mm
+                                 if ambiguity_margin_mm is None
+                                 else ambiguity_margin_mm),
+        )
         commanded_speed = 0.0
         alignment_window_latched = False
         alignment_edge_since = None
@@ -575,16 +577,19 @@ class CompetitionProgram:
             while time.monotonic() - started < (deadline - started):
                 now = time.monotonic()
                 result = self.robot.vision_result
-                block = self._tracked_block_from_result(
-                    result, color_name, reference_x, min_confidence, cfg,
-                    reference_z, ambiguity_margin_mm)
                 frame_timestamp = result.timestamp if result is not None else None
-
-                if (block is not None
-                        and frame_timestamp is not None
+                # The camera thread publishes a snapshot faster than this
+                # control loop consumes it.  Reusing the same frame must not
+                # count as a visual miss or reset alignment confirmation.
+                if (frame_timestamp is not None
                         and frame_timestamp == last_frame_timestamp):
                     time.sleep(cfg.align_control_period_s)
                     continue
+                block = tracker.update(
+                    result, color_name=color_name,
+                    min_confidence=min_confidence,
+                    max_age_s=cfg.vision_stale_s,
+                    reference_x=reference_x, reference_z=reference_z)
                 if frame_timestamp is not None:
                     last_frame_timestamp = frame_timestamp
 
@@ -601,6 +606,8 @@ class CompetitionProgram:
                     continue
 
                 last_seen = now
+                self._last_alignment_block = block
+                self._alignment_valid_frames += 1
                 x_samples.append(block.x)
                 filtered_x = median(x_samples)
                 reference_x = filtered_x
@@ -609,10 +616,9 @@ class CompetitionProgram:
                 creep_min_speed = (cfg.align_creep_min_speed_mm_s
                                    if abs(x_error) <= cfg.align_creep_start_mm
                                    else cfg.align_min_speed_mm_s)
-                # Keep the original raw-frame acceptance window; use the
-                # median only for the control error so filtering cannot delay
-                # a valid confirmation at an asymmetric edge.
-                if align_min_x_mm <= block.x <= align_max_x_mm:
+                # Use the filtered target for both control and acceptance.  A
+                # single raw outlier must not authorize a gripper action.
+                if align_min_x_mm <= filtered_x <= align_max_x_mm:
                     alignment_window_latched = True
                     alignment_edge_since = None
                     self.robot.chassis.set_speeds([0, 0, 0, 0])
@@ -620,13 +626,14 @@ class CompetitionProgram:
                     integral = 0.0
                     previous_error = None
                     confirmed += 1
+                    self._last_alignment_block = block
                     print(f'[{self.TASK_LABEL}] Alignment sample {confirmed}/'
                           f'{cfg.align_confirm_frames}: x={block.x:+.0f} mm')
                     if confirmed >= cfg.align_confirm_frames:
                         return True
                 elif (alignment_window_latched
                       and align_min_x_mm - cfg.align_window_hysteresis_mm
-                      <= block.x
+                      <= filtered_x
                       <= align_max_x_mm + cfg.align_window_hysteresis_mm):
                     # Hold still through small edge jitter after entering the
                     # valid window. A subsequent valid frame can continue the
@@ -701,6 +708,11 @@ class CompetitionProgram:
                 time.sleep(cfg.align_control_period_s)
         finally:
             self.robot.chassis.set_speeds([0, 0, 0, 0])
+        if timeout_returns_false:
+            self._last_alignment_timed_out = True
+            print(f'[{self.TASK_LABEL}] {display_color} alignment timed out; '
+                  'resume search')
+            return False
         if timeout_is_success:
             print(f'[{self.TASK_LABEL}] {display_color} fine alignment '
                   f'time reached; accepting position')
@@ -713,6 +725,8 @@ class CompetitionProgram:
             self.robot, 'set_cube_detection_profile', None)
         if set_profile is not None:
             set_profile('default')
+        print(f'[{self.TASK_LABEL}] Cube vision pipeline '
+              f'{self.CUBE_VISION_PIPELINE_VERSION}')
         self.state = CompetitionState.WALL_APPROACH
         print('[Task1] Slow approach until motor stall')
         self._drive_until_wall()

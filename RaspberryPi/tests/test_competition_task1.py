@@ -38,8 +38,8 @@ class FirstTaskTests(unittest.TestCase):
         self.assertEqual(cfg.near_wall_timeout_s, 1.0)
         self.assertTrue(cfg.wall_timeout_is_success)
         self.assertEqual((cfg.align_min_x_mm, cfg.align_max_x_mm),
-                         (-21.0, 2.0))
-        self.assertEqual(cfg.align_target_x_mm, -1.0)
+                         (-20.0, 5.0))
+        self.assertEqual(cfg.align_target_x_mm, 0.0)
         self.assertEqual(cfg.search_max_distance_mm, 1500.0)
         self.assertEqual(cfg.target_cube_count, 3)
         self.assertEqual(cfg.orange_search_lock_x_jump_mm, 80.0)
@@ -149,7 +149,7 @@ class FirstTaskTests(unittest.TestCase):
         self.assertEqual(cfg.orange_fine_align_timeout_s, 1.0)
         self.assertEqual(cfg.align_window_hold_s, 0.20)
         self.assertEqual((cfg.orange_fine_min_x_mm,
-                          cfg.orange_fine_max_x_mm), (-3.5, 1.5))
+                          cfg.orange_fine_max_x_mm), (-3.0, 3.0))
         self.assertEqual(cfg.align_max_speed_mm_s, 250.0)
 
     def test_alignment_requires_three_fresh_frames_in_window(self):
@@ -223,7 +223,7 @@ class FirstTaskTests(unittest.TestCase):
         self.assertTrue(cfg.align_min_x_mm <= -1 <= cfg.align_max_x_mm)
         self.assertTrue(cfg.align_min_x_mm <= 2 <= cfg.align_max_x_mm)
         self.assertFalse(cfg.align_min_x_mm <= -22 <= cfg.align_max_x_mm)
-        self.assertFalse(cfg.align_min_x_mm <= 3 <= cfg.align_max_x_mm)
+        self.assertTrue(cfg.align_min_x_mm <= 3 <= cfg.align_max_x_mm)
 
     def test_long_search_covers_full_1500_mm_range(self):
         class FakeClock:
@@ -522,6 +522,46 @@ class FirstTaskTests(unittest.TestCase):
         self.assertTrue(aligned)
         self.assertTrue(all(command == (0, 0, 0, 0)
                             for command in robot.chassis.commands))
+
+    def test_fine_alignment_rejects_jump_after_coarse_alignment(self):
+        class FakeChassis:
+            def __init__(self):
+                self.commands = []
+
+            def set_speeds(self, rpm):
+                self.commands.append(tuple(rpm))
+
+            @staticmethod
+            def mecanum_rpm(vx, vy, wz):
+                return [vy, vy, -vy, -vy]
+
+        now = time.time()
+        xs = (173, 130, 85, 40, 2, 1, 2, 181)
+
+        class FakeRobot:
+            def __init__(self):
+                self.chassis = FakeChassis()
+                self.results = iter([
+                    SimpleNamespace(
+                        timestamp=now + index,
+                        all_blocks=[SimpleNamespace(
+                            color_name='Orange', confidence=80,
+                            x=x, y=0, z=200)])
+                    for index, x in enumerate(xs, start=1)
+                ])
+
+            @property
+            def vision_result(self):
+                return next(self.results)
+
+        cfg = FirstTaskConfig(
+            align_control_period_s=0,
+            align_lost_timeout_s=0.0,
+        )
+        program = CompetitionProgram(FakeRobot(), cfg)
+
+        self.assertFalse(program._align_orange(
+            SimpleNamespace(x=173, y=0, z=200, confidence=80)))
 
     def test_alignment_tracks_same_orange_instead_of_nearest(self):
         cfg = FirstTaskConfig()

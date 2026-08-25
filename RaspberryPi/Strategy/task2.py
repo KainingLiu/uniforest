@@ -126,20 +126,23 @@ class Task2Config(FirstTaskConfig):
     post_tag6_lateral_speed_mm_s: float = 300.0
     building_target_x_mm: float = -8.4
     building_target_z_mm: float = 155.0
-    building_min_confidence: float = 45.0
-    building_min_height_width_ratio: float = 0.45
-    building_max_height_width_ratio: float = 1.30
+    # Building contours vary with occlusion and camera pitch. Keep the
+    # geometric gate permissive; position and multi-frame confirmation still
+    # reject isolated orange cube candidates.
+    building_min_confidence: float = 35.0
+    building_min_height_width_ratio: float = 0.35
+    building_max_height_width_ratio: float = 1.50
     building_x_tolerance_mm: float = 3.0
     building_z_tolerance_mm: float = 6.0
     building_heading_tolerance_deg: float = 2.4
     building_x_deadband_mm: float = 1.0
     building_z_deadband_mm: float = 2.0
     building_heading_deadband_deg: float = 0.5
-    building_confirm_frames: int = 5
+    building_confirm_frames: int = 3
     building_median_frames: int = 5
     building_align_timeout_s: float = 10.0
-    building_lost_timeout_s: float = 2.0
-    building_vision_stale_s: float = 0.4
+    building_lost_timeout_s: float = 3.0
+    building_vision_stale_s: float = 0.7
     building_control_period_s: float = 0.05
     building_forward_kp: float = 1.5
     building_forward_ki: float = 0.01
