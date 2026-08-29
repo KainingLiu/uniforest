@@ -29,6 +29,7 @@ set(MX_Application_Src
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/motor3508.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/remote_control.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/servo.c
+    ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/suction.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/stepper.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/imu.c
     ${CMAKE_CURRENT_SOURCE_DIR}/../../Core/Src/protocol.c

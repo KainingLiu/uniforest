@@ -33,8 +33,8 @@ class _BuildRecorder:
     def _wait(self, ms):
         self.calls.append(('wait', ms))
 
-    def _arm_front_smooth_up(self):
-        self.calls.append(('arm_front_smooth_up',))
+    def _arm_front_smooth_up(self, **kwargs):
+        self.calls.append(('arm_front_smooth_up', kwargs))
 
     def _stepper_move_and_wait(self, motor, direction, cm):
         self.calls.append(('move', motor, direction, cm))
@@ -50,7 +50,74 @@ class _BuildRecorder:
 
 
 class BuildSequenceTests(unittest.TestCase):
-    def test_first_cube_retract_uses_requested_dual3_schedule(self):
+    def test_build_uses_updated_pick_place_geometry_and_angles(self):
+        recorder = _BuildRecorder()
+
+        Actions.build(recorder)
+
+        self.assertIn(
+            ('move', STEPPER_HORIZ, STEP_DIR_FORWARD, 4),
+            recorder.calls,
+        )
+        self.assertIn(
+            ('dual', (
+                STEPPER_HORIZ, 19, STEP_DIR_FORWARD,
+                STEPPER_VERT, 19, STEP_DIR_REVERSE,
+            ), {'m2_offset_cm': 3}),
+            recorder.calls,
+        )
+        self.assertIn(
+            ('dual3', (
+                    STEPPER_VERT, 10, STEP_DIR_FORWARD,
+                2, STEP_DIR_REVERSE,
+                STEPPER_HORIZ, 23, STEP_DIR_REVERSE,
+            ), {'other_offset_cm': 3, 'lead2_offset_cm': 20}),
+            recorder.calls,
+        )
+        self.assertIn(
+            ('dual2', (
+                STEPPER_HORIZ, 23, STEP_DIR_FORWARD,
+                STEPPER_VERT, 2, STEP_DIR_FORWARD,
+                5, STEP_DIR_REVERSE,
+            ), {'ph2_offset_cm': 21}),
+            recorder.calls,
+        )
+        self.assertIn(
+            ('dual', (
+                STEPPER_VERT, 4, STEP_DIR_FORWARD,
+                STEPPER_HORIZ, 23, STEP_DIR_REVERSE,
+            ), {}),
+            recorder.calls,
+        )
+        self.assertIn(
+            ('move', STEPPER_VERT, STEP_DIR_REVERSE, 11.5),
+            recorder.calls,
+        )
+        self.assertIn(
+            ('move', STEPPER_VERT, STEP_DIR_FORWARD, 20.5),
+            recorder.calls,
+        )
+
+        self.assertEqual(
+            sum(1 for call in recorder.calls
+                if call[0] == 'arm_front_smooth_up'),
+            3,
+        )
+        self.assertIn(('set_angle', (0, 102.2), {}), recorder.calls)
+        self.assertIn(('set_angle', (0, 97.2), {}), recorder.calls)
+        self.assertIn(('set_angle', (1, 100), {}), recorder.calls)
+
+        pickup_return = recorder.calls.index(('set_angle', (0, 95.2), {}))
+        first_lift = recorder.calls.index(('arm_front_smooth_up', {'target': 3}))
+        self.assertEqual(first_lift, pickup_return + 1)
+
+        second_return = recorder.calls.index(
+            ('set_angle', (0, 97.2), {}), first_lift + 1)
+        second_lift = recorder.calls.index(
+            ('arm_front_smooth_up', {}), first_lift + 1)
+        self.assertEqual(second_lift, second_return + 1)
+
+    def test_first_cube_retract_uses_updated_dual3_schedule(self):
         recorder = _BuildRecorder()
 
         Actions.build(recorder)
@@ -59,7 +126,7 @@ class BuildSequenceTests(unittest.TestCase):
             (
                 'dual3',
                 (
-                    STEPPER_VERT, 10, STEP_DIR_FORWARD,
+                STEPPER_VERT, 10, STEP_DIR_FORWARD,
                     2, STEP_DIR_REVERSE,
                     STEPPER_HORIZ, 23, STEP_DIR_REVERSE,
                 ),

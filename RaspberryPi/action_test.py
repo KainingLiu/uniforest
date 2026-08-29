@@ -30,7 +30,7 @@ def main():
             raise SystemExit(1)
         robot.start(telem_rate=args.telem_rate)
         time.sleep(0.5)
-        robot.run_action(args.action)
+        robot.run_action(args.action, test_mode=True)
     finally:
         robot.stop()
 

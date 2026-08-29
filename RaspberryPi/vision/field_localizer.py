@@ -173,7 +173,12 @@ def solve_tag_pose(corners: np.ndarray, tag_id: int, config: dict,
         "max_camera_height_error_m",
         solver["max_camera_height_error_m"]))
     height_weight = float(solver["height_error_weight_px_per_m"])
-    max_reproj = float(solver["max_reprojection_error_px"])
+    # The tag camera currently uses an FOV-estimated model.  Allow a map
+    # entry to override the global quality gates for tags whose mounting or
+    # near-field perspective is known to be less stable.
+    max_reproj = float(tag.get(
+        "max_reprojection_error_px",
+        solver["max_reprojection_error_px"]))
     area = abs(float(cv2.contourArea(points)))
     best = None
 

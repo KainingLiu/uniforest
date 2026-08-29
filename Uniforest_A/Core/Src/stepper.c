@@ -5,7 +5,7 @@
  *
  *  TIM7 @ 100 kHz (10 µs tick) → Stepper_Tick() handles:
  *    - Pulse generation (PUL HIGH → delay → PUL LOW → delay)
- *    - Trapezoidal velocity profiles (accel → cruise → decel)
+ *    - S-curve velocity profiles (smooth accel → cruise → smooth decel)
  *    - Linked dual-motor coordination (Overlap / Overlap2 / Overlap3)
  *
  *  TB6600 drivers, common-cathode wiring.
@@ -40,12 +40,11 @@ typedef struct {
     uint32_t step_idx;      /* steps completed in this segment */
     uint32_t seg_steps;     /* total steps in this segment */
 
-    /* Trapezoidal profile (all in timer ticks, except stored originals in µs) */
+    /* S-curve profile (all in timer ticks, except stored originals in µs) */
     uint16_t start_delay;    /* ticks at ramp start */
     uint16_t target_delay;   /* ticks at cruise */
     uint16_t accel_steps;    /* ramp length */
     uint32_t decel_start;    /* seg_steps - accel_steps */
-    uint32_t delta_scaled;   /* (start_delay - target_delay) * 100 / accel_steps */
 
     /* Pulse generation */
     uint16_t tick_count;     /* ticks since last PUL toggle */
@@ -155,9 +154,6 @@ static void _stepper_launch_segment(StepperCtx_t *ctx, uint8_t motor,
     ctx->accel_steps  = accel_s;
     ctx->decel_start  = steps - accel_s;
 
-    /* Pre-compute delay decrement per step (×100 fixed-point) */
-    ctx->delta_scaled = ((uint32_t)(sd - td) * 100u) / accel_s;
-
     /* Initialize pulse state */
     ctx->half_delay  = sd;  /* start at start_delay */
     ctx->tick_count  = 0;
@@ -167,6 +163,44 @@ static void _stepper_launch_segment(StepperCtx_t *ctx, uint8_t motor,
 
     /* LED on */
     Stepper_LED_On(motor);
+}
+
+/*
+ * Return the half-cycle delay for a step in the current segment.
+ * The normalized smoothstep curve 3u^2 - 2u^3 has zero slope at both
+ * endpoints. Q15 arithmetic keeps this ISR free of floating point.
+ */
+static uint16_t _stepper_scurve_delay(const StepperCtx_t *ctx,
+                                     uint32_t step_idx)
+{
+    uint32_t u_q15;
+    uint32_t curve_q15;
+    uint32_t range = (uint32_t)(ctx->start_delay - ctx->target_delay);
+
+    if (step_idx < ctx->accel_steps)
+    {
+        u_q15 = (step_idx * 32768u) / ctx->accel_steps;
+        if (u_q15 > 32768u) u_q15 = 32768u;
+        uint32_t u2_q15 = (u_q15 * u_q15) >> 15;
+        uint32_t u3_q15 = (u2_q15 * u_q15) >> 15;
+        curve_q15 = 3u * u2_q15 - 2u * u3_q15;
+        return (uint16_t)(ctx->start_delay
+               - (range * curve_q15) / 32768u);
+    }
+
+    if (step_idx >= ctx->decel_start)
+    {
+        uint32_t decel_i = step_idx - ctx->decel_start;
+        u_q15 = (decel_i * 32768u) / ctx->accel_steps;
+        if (u_q15 > 32768u) u_q15 = 32768u;
+        uint32_t u2_q15 = (u_q15 * u_q15) >> 15;
+        uint32_t u3_q15 = (u2_q15 * u_q15) >> 15;
+        curve_q15 = 3u * u2_q15 - 2u * u3_q15;
+        return (uint16_t)(ctx->target_delay
+               + (range * curve_q15) / 32768u);
+    }
+
+    return ctx->target_delay;
 }
 
 /* ================== Timer Tick (called from TIM7 ISR) ======================= */
@@ -287,31 +321,14 @@ void Stepper_Tick(void)
             continue;
         }
 
-        /* ---- Recalculate half_delay for next step ---- */
+        /* ---- Recalculate half_delay for next step using S-curve ---- */
+        ctx->half_delay = _stepper_scurve_delay(ctx, ctx->step_idx);
         if (ctx->step_idx < ctx->accel_steps)
-        {
-            /* Acceleration: decreasing delay */
-            uint32_t d = ctx->start_delay
-                       - (ctx->delta_scaled * ctx->step_idx) / 100u;
-            ctx->half_delay = (uint16_t)d;
             ctx->phase = SM_ACCEL;
-        }
         else if (ctx->step_idx >= ctx->decel_start)
-        {
-            /* Deceleration: increasing delay */
-            uint32_t decel_i = ctx->step_idx - ctx->decel_start;
-            uint32_t d = ctx->target_delay
-                       + (ctx->delta_scaled * decel_i) / 100u;
-            if (d > ctx->start_delay) d = ctx->start_delay;
-            ctx->half_delay = (uint16_t)d;
             ctx->phase = SM_DECEL;
-        }
         else
-        {
-            /* Cruise */
-            ctx->half_delay = ctx->target_delay;
             ctx->phase = SM_CRUISE;
-        }
     }
 }
 
@@ -350,11 +367,6 @@ void Stepper_Init(void)
     gpio.Speed = GPIO_SPEED_FREQ_LOW;
     HAL_GPIO_Init(STEP2_DIR_PORT, &gpio);
 
-    /* --- LED pins (PD13, PD12) --- */
-    gpio.Pin   = LED_STEPPER1_PIN | LED_STEPPER2_PIN;
-    gpio.Speed = GPIO_SPEED_FREQ_LOW;
-    HAL_GPIO_Init(LED_STEPPER1_PORT, &gpio);
-
     /* Set initial states */
     for (int i = 0; i < STEPPER_COUNT; i++)
     {
@@ -371,9 +383,6 @@ void Stepper_Init(void)
         g_stepper[i].phase = SM_IDLE;
     }
 
-    /* LEDs off */
-    Stepper_LED_Off(STEPPER_HORIZ);
-    Stepper_LED_Off(STEPPER_VERT);
 
     /* ---- TIM7: 100 kHz tick for stepper pulse generation ---- */
     /* APB1 timer clock = 90 MHz → 900 counts = 100 kHz (10 µs) */
@@ -635,30 +644,12 @@ void Stepper_SetPosition(uint8_t motor, int32_t pos)
 
 void Stepper_LED_On(uint8_t motor)
 {
-    switch (motor)
-    {
-        case STEPPER_HORIZ:
-            HAL_GPIO_WritePin(LED_STEPPER1_PORT, LED_STEPPER1_PIN, GPIO_PIN_SET);
-            break;
-        case STEPPER_VERT:
-            HAL_GPIO_WritePin(LED_STEPPER2_PORT, LED_STEPPER2_PIN, GPIO_PIN_SET);
-            break;
-        default:
-            break;
-    }
+    /* PD12/PD13 are now reserved for the suction pump and valve. */
+    (void)motor;
 }
 
 void Stepper_LED_Off(uint8_t motor)
 {
-    switch (motor)
-    {
-        case STEPPER_HORIZ:
-            HAL_GPIO_WritePin(LED_STEPPER1_PORT, LED_STEPPER1_PIN, GPIO_PIN_RESET);
-            break;
-        case STEPPER_VERT:
-            HAL_GPIO_WritePin(LED_STEPPER2_PORT, LED_STEPPER2_PIN, GPIO_PIN_RESET);
-            break;
-        default:
-            break;
-    }
+    /* PD12/PD13 are now reserved for the suction pump and valve. */
+    (void)motor;
 }

@@ -39,6 +39,7 @@ extern "C" {
 #define CMD_SERVO_ANGLE         0x20   /* servo_id + angle_deg */
 #define CMD_SERVO_HOME          0x21   /* no data */
 #define CMD_SERVO_ANGLE_ALL     0x22   /* 4×uint16 angles */
+#define CMD_SUCTION             0x23   /* action: 1=pump on, 2=release */
 
 #define CMD_STEPPER_MOVE        0x30   /* motor + dir + steps(4B) */
 #define CMD_STEPPER_STOP        0x31   /* motor */

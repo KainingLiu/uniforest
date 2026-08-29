@@ -70,6 +70,10 @@ class Task2Config(FirstTaskConfig):
     delivery_tag_lateral_tolerance_mm: float = 25.0 * TAG_FOV_RETUNE_SCALE
     delivery_heading_tolerance_deg: float = 3.0
     delivery_tag_fine_gain_scale: float = 1.5
+    # Task2 tags use the wide-angle, uncalibrated tag camera.  Keep the
+    # chassis stopped briefly on a missed frame and reacquire a fresh pose.
+    delivery_tag_vision_stale_s: float = 0.7
+    delivery_tag_lost_timeout_s: float = 2.0
     post_tag_lateral_mm: float = 100.0
     post_tag_lateral_speed_mm_s: float = 300.0
     wall_premove_mm: float = 250.0
@@ -114,6 +118,8 @@ class Task2Config(FirstTaskConfig):
         FirstTaskConfig().delivery_heading_tolerance_deg)
     build_tag_fine_gain_scale: float = (
         FirstTaskConfig().delivery_tag_fine_gain_scale)
+    build_tag_vision_stale_s: float = 0.7
+    build_tag_lost_timeout_s: float = 2.0
     # Tag6 is approached after a long straight run. Slow the far-field
     # profile and enter deceleration earlier without changing final tolerances.
     delivery_tag_fast_forward_mm_s: float = 260.0
@@ -124,7 +130,7 @@ class Task2Config(FirstTaskConfig):
     delivery_tag_creep_lateral_mm: float = 25.0
     post_tag6_lateral_right_mm: float = 0.0
     post_tag6_lateral_speed_mm_s: float = 300.0
-    building_target_x_mm: float = -8.4
+    building_target_x_mm: float = 0.0
     building_target_z_mm: float = 155.0
     # Building contours vary with occlusion and camera pitch. Keep the
     # geometric gate permissive; position and multi-frame confirmation still
@@ -143,6 +149,9 @@ class Task2Config(FirstTaskConfig):
     building_align_timeout_s: float = 10.0
     building_lost_timeout_s: float = 3.0
     building_vision_stale_s: float = 0.7
+    building_track_max_x_jump_mm: float = 90.0
+    building_track_max_z_jump_mm: float = 140.0
+    building_track_lock_frames: int = 2
     building_control_period_s: float = 0.05
     building_forward_kp: float = 1.5
     building_forward_ki: float = 0.01
@@ -155,12 +164,14 @@ class Task2Config(FirstTaskConfig):
     building_heading_kd: float = 0.03
     building_linear_integral_limit: float = 150.0
     building_heading_integral_limit: float = 100.0
-    building_max_forward_mm_s: float = 100.0
-    building_max_lateral_mm_s: float = 100.0
+    building_max_forward_mm_s: float = 250.0
+    building_max_lateral_mm_s: float = 250.0
     building_max_yaw_deg_s: float = 30.0
+    # Keep the minimum above chassis static friction; do not creep below it.
     building_min_linear_mm_s: float = 100.0
+    building_far_linear_mm_s: float = 150.0
     building_min_yaw_deg_s: float = 6.0
-    building_linear_accel_mm_s2: float = 200.0
+    building_linear_accel_mm_s2: float = 500.0
     building_yaw_accel_deg_s2: float = 60.0
     post_build_reverse_mm: float = 200.0
     post_build_reverse_speed_mm_s: float = 300.0
@@ -169,9 +180,15 @@ class Task2Config(FirstTaskConfig):
     post_build_route_speed_mm_s: float = LONG_DISTANCE_MOVE_SPEED_MM_S
     post_build_tag_id: int = 1
     post_build_tag_distance_mm: float = 200.0
+    post_build_tag_distance_tolerance_mm: float = 20.0
+    # Tag1 is viewed at close range with the uncalibrated tag camera.  Stop
+    # and wait longer for a fresh frame instead of failing on one occlusion.
+    post_build_tag_vision_stale_s: float = 0.7
+    post_build_tag_lost_timeout_s: float = 2.5
     # At 200 mm the tag-camera lateral noise is larger than the Tag6 region;
     # accept a stable +/-10 mm result instead of driving on a 7-8 mm jitter.
     post_build_tag_lateral_tolerance_mm: float = 10.0
+    post_build_tag_heading_tolerance_deg: float = 4.0
     post_build_tag_heading_target_cw_deg: float = 270.0
     final_right_turn_target_cw_deg: float = 360.0
     finish_after_build: bool = False
@@ -243,7 +260,7 @@ class Task2Program(CompetitionProgram):
         print('[Task2] Preflight complete; heading zero='
               f'{self._heading_zero_deg:+.1f} deg')
 
-    def _building_from_result(self, result):
+    def _building_from_result(self, result, locked_position=None):
         cfg = self.config
         if (result is None
                 or time.time() - result.timestamp
@@ -259,9 +276,34 @@ class Task2Program(CompetitionProgram):
         ]
         if not candidates:
             return None
+        if locked_position is not None:
+            previous_x, previous_z = locked_position
+            tracked = [
+                block for block in candidates
+                if abs(block.x - previous_x)
+                <= cfg.building_track_max_x_jump_mm
+                and abs(block.z - previous_z)
+                <= cfg.building_track_max_z_jump_mm
+            ]
+            if tracked:
+                return min(tracked, key=lambda block:
+                           (block.x - previous_x) ** 2
+                           + (block.z - previous_z) ** 2)
+            return None
         return min(candidates, key=lambda block:
                    (block.x - cfg.building_target_x_mm) ** 2
                    + (block.z - cfg.building_target_z_mm) ** 2)
+
+    @staticmethod
+    def _building_motion_command(pid_output, error, *, deadband,
+                                 minimum, maximum, kick_error=25.0):
+        """Clamp every non-zero correction above chassis static friction."""
+        if abs(error) <= deadband:
+            return 0.0
+        value = max(-maximum, min(maximum, pid_output))
+        if abs(value) < minimum:
+            value = minimum if value >= 0.0 else -minimum
+        return max(-maximum, min(maximum, value))
 
     def _align_building(self):
         cfg = self.config
@@ -285,6 +327,9 @@ class Task2Program(CompetitionProgram):
         last_frame_timestamp = None
         confirmed = 0
         vx = vy = wz = 0.0
+        locked_position = None
+        pending_position = None
+        lock_frames = 0
         print('[Task2] Building visual alignment: '
               f'x={cfg.building_target_x_mm:+.1f} mm, '
               f'z={cfg.building_target_z_mm:.1f} mm')
@@ -292,7 +337,10 @@ class Task2Program(CompetitionProgram):
             while time.monotonic() - started < cfg.building_align_timeout_s:
                 now = time.monotonic()
                 result = self.robot.vision_result
-                block = self._building_from_result(result)
+                tracking_position = (locked_position
+                                     if locked_position is not None
+                                     else pending_position)
+                block = self._building_from_result(result, tracking_position)
                 frame_timestamp = result.timestamp if result is not None else None
                 if (frame_timestamp is not None
                         and frame_timestamp <= first_frame_after):
@@ -318,6 +366,18 @@ class Task2Program(CompetitionProgram):
                     continue
 
                 last_seen = now
+                if locked_position is None:
+                    if pending_position is None:
+                        pending_position = (block.x, block.z)
+                        lock_frames = 1
+                    else:
+                        pending_position = (block.x, block.z)
+                        lock_frames += 1
+                    if lock_frames >= cfg.building_track_lock_frames:
+                        locked_position = pending_position
+                        pending_position = None
+                else:
+                    locked_position = (block.x, block.z)
                 samples.append((block.x, block.z))
                 x_mm = median(item[0] for item in samples)
                 z_mm = median(item[1] for item in samples)
@@ -349,16 +409,22 @@ class Task2Program(CompetitionProgram):
                     else:
                         desired_vx = forward_pid.update(z_error, dt)
                         if not z_ok:
-                            desired_vx = self._minimum_command(
-                                desired_vx, cfg.building_min_linear_mm_s)
+                            desired_vx = self._building_motion_command(
+                                desired_vx, z_error,
+                                deadband=cfg.building_z_deadband_mm,
+                                minimum=cfg.building_min_linear_mm_s,
+                                maximum=cfg.building_max_forward_mm_s)
                     if abs(x_error) <= cfg.building_x_deadband_mm:
                         lateral_pid.reset()
                         desired_vy = 0.0
                     else:
                         desired_vy = lateral_pid.update(x_error, dt)
                         if not x_ok:
-                            desired_vy = self._minimum_command(
-                                desired_vy, cfg.building_min_linear_mm_s)
+                            desired_vy = self._building_motion_command(
+                                desired_vy, x_error,
+                                deadband=cfg.building_x_deadband_mm,
+                                minimum=cfg.building_min_linear_mm_s,
+                                maximum=cfg.building_max_lateral_mm_s)
                     if (abs(heading_error)
                             <= cfg.building_heading_deadband_deg):
                         heading_pid.reset()
@@ -510,10 +576,12 @@ class Task2Program(CompetitionProgram):
             target_distance_mm=cfg.post_build_tag_distance_mm,
             heading_target_cw_deg=(
                 cfg.post_build_tag_heading_target_cw_deg),
-            distance_tolerance_mm=cfg.build_tag_distance_tolerance_mm,
+            distance_tolerance_mm=cfg.post_build_tag_distance_tolerance_mm,
             lateral_tolerance_mm=cfg.post_build_tag_lateral_tolerance_mm,
-            heading_tolerance_deg=cfg.build_tag_heading_tolerance_deg,
+            heading_tolerance_deg=cfg.post_build_tag_heading_tolerance_deg,
             fine_gain_scale=cfg.build_tag_fine_gain_scale,
+            vision_stale_s=cfg.post_build_tag_vision_stale_s,
+            lost_timeout_s=cfg.post_build_tag_lost_timeout_s,
         )
 
         self.state = Task2State.FINAL_RIGHT_TURN
@@ -722,6 +790,8 @@ class Task2Program(CompetitionProgram):
             lateral_tolerance_mm=cfg.build_tag_lateral_tolerance_mm,
             heading_tolerance_deg=cfg.build_tag_heading_tolerance_deg,
             fine_gain_scale=cfg.build_tag_fine_gain_scale,
+            vision_stale_s=cfg.build_tag_vision_stale_s,
+            lost_timeout_s=cfg.build_tag_lost_timeout_s,
         )
 
         self._run_build_phase()

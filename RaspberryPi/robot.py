@@ -137,6 +137,10 @@ class Robot:
         self._telem_received_at: Optional[float] = None
         self._telem_lock = threading.Lock()
         self._pong_event = threading.Event()
+        # The A-board's 200 ms watchdog needs traffic even while an action is
+        # waiting for a motor/servo operation to finish.
+        self._heartbeat_stop = threading.Event()
+        self._heartbeat_thread: Optional[threading.Thread] = None
 
         # Dedicated AprilTag camera and full-field localization subsystem.
         self._localizer: Optional['FieldLocalizer'] = None
@@ -191,6 +195,14 @@ class Robot:
         self.transport.set_telemetry_rate(telem_rate)
         print(f"[Robot] Telemetry streaming at {telem_rate} Hz")
 
+        self._heartbeat_stop.clear()
+        self._heartbeat_thread = threading.Thread(
+            target=self._heartbeat_loop,
+            name='stm32-heartbeat',
+            daemon=True,
+        )
+        self._heartbeat_thread.start()
+
         # Start vision if configured
         if self._vision is not None:
             if self._vision.start():
@@ -206,6 +218,9 @@ class Robot:
     def stop(self):
         """Emergency stop and disconnect."""
         self._running = False
+        self._heartbeat_stop.set()
+        if self._heartbeat_thread and self._heartbeat_thread.is_alive():
+            self._heartbeat_thread.join(timeout=0.5)
         # Stop vision first
         if self._vision is not None:
             self._vision.stop()
@@ -215,6 +230,15 @@ class Robot:
         time.sleep(0.1)
         self.transport.disconnect()
         print("[Robot] Disconnected")
+
+    def _heartbeat_loop(self):
+        """Keep the A-board watchdog alive during blocking action waits."""
+        period_s = 0.05
+        while not self._heartbeat_stop.wait(period_s):
+            if not self.transport.ping():
+                # The A-board will enter its existing fail-safe stop path if
+                # the serial link really is unavailable.
+                continue
 
     # ==================== Telemetry Callbacks ================================
 
@@ -231,7 +255,14 @@ class Robot:
 
     def _on_pong(self, uptime_ms: int):
         self._pong_event.set()
-        print(f"[Robot] PONG — STM32 uptime: {uptime_ms} ms")
+        # Heartbeat runs at 20 Hz to satisfy the A-board watchdog. Keep the
+        # console readable by reporting a healthy link only periodically.
+        now = time.monotonic()
+        if (not hasattr(self, '_last_pong_log_at')
+                or now - self._last_pong_log_at >= 5.0):
+            print(f"[Robot] PONG — STM32 uptime: {uptime_ms} ms "
+                  "(link healthy)")
+            self._last_pong_log_at = now
 
     @property
     def telem(self) -> Optional[TelemBatch]:
@@ -509,15 +540,16 @@ class Robot:
 
     # ==================== Action Runner ======================================
 
-    def run_action(self, name: str):
+    def run_action(self, name: str, test_mode: bool = False):
         """Run a named action sequence."""
+        grap_kwargs = {'test_mode': True} if test_mode else {}
         actions = {
             'home': self.actions.servo_home,
             'hatch_open': self.actions.hatch_open,
             'hatch_close': self.actions.hatch_close,
-            'grap1': self.actions.grap1,
-            'grap2': self.actions.grap2,
-            'grap3': self.actions.grap3,
+            'grap1': lambda: self.actions.grap1(**grap_kwargs),
+            'grap2': lambda: self.actions.grap2(**grap_kwargs),
+            'grap3': lambda: self.actions.grap3(**grap_kwargs),
             'build': self.actions.build,
             'approach': lambda: self.approach_cube(),
         }

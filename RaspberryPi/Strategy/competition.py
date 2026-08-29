@@ -820,7 +820,9 @@ class CompetitionProgram:
             distance_tolerance_mm: Optional[float] = None,
             lateral_tolerance_mm: Optional[float] = None,
             heading_tolerance_deg: Optional[float] = None,
-            fine_gain_scale: Optional[float] = None):
+            fine_gain_scale: Optional[float] = None,
+            vision_stale_s: Optional[float] = None,
+            lost_timeout_s: Optional[float] = None):
         """Use a tag for translation while holding startup-relative yaw."""
         cfg = self.config
         tag_id = cfg.delivery_tag_id if tag_id is None else tag_id
@@ -841,6 +843,10 @@ class CompetitionProgram:
             if heading_tolerance_deg is None else heading_tolerance_deg)
         fine_gain_scale = (cfg.delivery_tag_fine_gain_scale
                            if fine_gain_scale is None else fine_gain_scale)
+        vision_stale_s = (cfg.delivery_tag_vision_stale_s
+                          if vision_stale_s is None else vision_stale_s)
+        lost_timeout_s = (cfg.delivery_tag_lost_timeout_s
+                          if lost_timeout_s is None else lost_timeout_s)
         distance_pid = _Pid(
             cfg.delivery_tag_distance_kp,
             cfg.delivery_tag_distance_ki,
@@ -881,7 +887,7 @@ class CompetitionProgram:
                 pose = self.robot.field_pose
                 observation = self._delivery_tag_from_pose(
                     pose, tag_id,
-                    cfg.delivery_tag_vision_stale_s)
+                    vision_stale_s)
                 if (pose is not None
                         and pose.timestamp <= first_valid_frame_after):
                     observation = None
@@ -901,7 +907,7 @@ class CompetitionProgram:
                     vx = vy = wz = 0.0
                     pids.reset()
                     self.robot.chassis.set_speeds([0, 0, 0, 0])
-                    if now - last_seen >= cfg.delivery_tag_lost_timeout_s:
+                    if now - last_seen >= lost_timeout_s:
                         raise RuntimeError(
                             f'tag {tag_id} lost during delivery alignment')
                     time.sleep(cfg.delivery_tag_control_period_s)

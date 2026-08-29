@@ -28,6 +28,17 @@ static const ServoEntry_t servo_table[SERVO_COUNT] = {
     [SERVO_HATCH_B]   = { &htim5, SERVO3_CHANNEL, SERVO4_HOME   },
 };
 
+void Servo_SetAngleTenth(uint8_t servo_id, uint16_t angle_tenth)
+{
+    if (servo_id >= SERVO_COUNT) return;
+    if (angle_tenth > 1800u) angle_tenth = 1800u;
+    uint32_t pulse = SERVO_PULSE_MIN
+                   + ((uint32_t)angle_tenth
+                      * (SERVO_PULSE_MAX - SERVO_PULSE_MIN)) / 1800u;
+    const ServoEntry_t *s = &servo_table[servo_id];
+    __HAL_TIM_SET_COMPARE(s->htim, s->channel, pulse);
+}
+
 /* ============================ Implementation ============================== */
 
 /**
@@ -128,7 +139,7 @@ void Servo_SetAngle(uint8_t servo_id, uint8_t angle_deg)
  */
 void Servo_HomeAll(void)
 {
-    Servo_SetAngle(SERVO_GRIPPER,   SERVO1_HOME);   /* 81°  gripper open */
+    Servo_SetAngleTenth(SERVO_GRIPPER, 972u);       /* suction flip 97.2° */
     Servo_SetAngle(SERVO_ARM_FRONT, SERVO2_HOME);   /* 90°  arm down */
     Servo_SetAngle(SERVO_HATCH_A,   SERVO3_HOME);   /* 63°  hatch A closed */
     Servo_SetAngle(SERVO_HATCH_B,   SERVO4_HOME);   /* 117° hatch B closed */

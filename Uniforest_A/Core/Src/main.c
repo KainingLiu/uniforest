@@ -27,6 +27,7 @@
 #include "motor3508.h"
 #include "remote_control.h"   /* SBUS — kept as backup */
 #include "servo.h"
+#include "suction.h"
 #include "stepper.h"
 #include "imu.h"
 #include "protocol.h"         /* UART7 Pi communication */
@@ -118,6 +119,9 @@ int main(void)
 
   /* ---- Initialize Servos (TIM2 + TIM5 PWM, 50 Hz) ---- */
   Servo_Init();
+
+  /* ---- Suction pump and release valve: PD12 / PD13 ---- */
+  Suction_Init();
 
   /* ---- Initialize Steppers (GPIO + TIM7 @ 100 kHz) ---- */
   Stepper_Init();
@@ -253,6 +257,9 @@ int main(void)
     /* ---- 3. Process inbound Pi commands (UART7) ---- */
     Protocol_RxPoll();
 
+    /* Non-blocking 1-second release valve timeout. */
+    Suction_Update();
+
     /* ---- 4. Send telemetry (at configured rate) ---- */
     Protocol_TelemTick();
 
@@ -261,6 +268,7 @@ int main(void)
     {
         /* Pi communication lost — stop chassis motors */
         Motor3508_StopAll();
+        Suction_AllOff();
 
         /* Blink red LED to indicate comm loss */
         static uint32_t last_blink = 0;

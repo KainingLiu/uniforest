@@ -14,8 +14,9 @@ from protocol.commands import (
 
 # ===================== Semantic Angle Aliases =================================
 
-ANGLE_GRIPPER_OPEN   = 85
-ANGLE_GRIPPER_CLOSE  = 102
+ANGLE_GRIPPER_OPEN   = 97
+ANGLE_GRIPPER_CLOSE  = 97
+ANGLE_SUCTION_FLIP_HOME = 97.2
 ANGLE_ARM_FRONT_DOWN = 90
 ANGLE_ARM_FRONT_UP   = 0
 ANGLE_HATCH_A_CLOSED = 63
@@ -23,7 +24,7 @@ ANGLE_HATCH_A_OPEN   = 130
 ANGLE_HATCH_B_CLOSED = 117
 ANGLE_HATCH_B_OPEN   = 50
 
-SERVO_HOME_ANGLES = [85, 90, 63, 117]  # gripper, arm, hatch_a, hatch_b
+SERVO_HOME_ANGLES = [97, 90, 63, 117]  # suction flip, arm, hatch_a, hatch_b
 
 
 class Servo:
@@ -32,8 +33,8 @@ class Servo:
     def __init__(self, transport: Transport):
         self._t = transport
 
-    def set_angle(self, servo_id: int, angle_deg: int):
-        """Set a single servo to angle_deg (0–180)."""
+    def set_angle(self, servo_id: int, angle_deg):
+        """Set a servo angle; fractional degrees use 0.1° protocol units."""
         self._t.set_servo_angle(servo_id, angle_deg)
 
     def set_all(self, angles: List[int]):
@@ -47,10 +48,20 @@ class Servo:
     # ---- Semantic helpers ----
 
     def gripper_open(self):
-        self.set_angle(SERVO_GRIPPER, ANGLE_GRIPPER_OPEN)
+        # Release: pump off + valve on for 1 s; A-board returns immediately.
+        self._t.suction(2)
 
     def gripper_close(self):
-        self.set_angle(SERVO_GRIPPER, ANGLE_GRIPPER_CLOSE)
+        # Pickup: pump on, valve forced off.
+        self._t.suction(1)
+
+    def suction_on(self):
+        """Start the suction pump."""
+        self._t.suction(1)
+
+    def suction_release(self):
+        """Stop the pump and open the valve asynchronously for one second."""
+        self._t.suction(2)
 
     def arm_front_up(self, target: int = 0):
         self.set_angle(SERVO_ARM_FRONT, target)

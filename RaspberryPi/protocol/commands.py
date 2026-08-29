@@ -28,6 +28,7 @@ CMD_CHASSIS_PID_RESET= 0x14  # motor_id
 CMD_SERVO_ANGLE      = 0x20  # servo_id + angle_deg
 CMD_SERVO_HOME       = 0x21  # no data
 CMD_SERVO_ANGLE_ALL  = 0x22  # 4×uint8 angles
+CMD_SUCTION          = 0x23  # 1=pump on, 2=non-blocking release
 
 CMD_STEPPER_MOVE     = 0x30  # motor + dir + steps(4B)
 CMD_STEPPER_STOP     = 0x31  # motor
@@ -166,14 +167,22 @@ def encode_chassis_pid_pos(motor_id: int, kp: float, ki: float,
 def encode_chassis_pid_reset(motor_id: int) -> bytes:
     return struct.pack('>B', motor_id)
 
-def encode_servo_angle(servo_id: int, angle_deg: int) -> bytes:
-    return struct.pack('>BB', servo_id, angle_deg)
+def encode_servo_angle(servo_id: int, angle_deg) -> bytes:
+    """Encode integer angles compatibly, or fractional angles in tenths."""
+    if float(angle_deg).is_integer():
+        return struct.pack('>BB', servo_id, int(angle_deg))
+    angle_tenth = round(float(angle_deg) * 10)
+    return struct.pack('>BH', servo_id, angle_tenth)
 
 def encode_servo_home() -> bytes:
     return b''
 
 def encode_servo_angle_all(angles: List[int]) -> bytes:
     return bytes(angles[:4])
+
+def encode_suction(action: int) -> bytes:
+    """Suction action: 1 starts pump, 2 releases for 1 second."""
+    return struct.pack('>B', action)
 
 def encode_stepper_move(motor: int, direction: int, steps: int,
                         start_delay: int = 0, target_delay: int = 0,

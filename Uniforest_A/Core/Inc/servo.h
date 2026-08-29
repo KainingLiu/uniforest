@@ -9,7 +9,7 @@
  *  ┌──────────┬────┬──────┬───────────────┬──────┐
  *  │  Servo   │ ID │ Pin  │ Timer/Channel │  AF  │
  *  ├──────────┼────┼──────┼───────────────┼──────┤
- *  │ S1 夹爪  │  0 │ PA1  │ TIM2_CH2      │ AF1  │
+ *  │ S1 吸盘翻转│  0 │ PA1  │ TIM2_CH2      │ AF1  │
  *  │ S2 前臂  │  1 │ PA2  │ TIM2_CH3      │ AF1  │
  *  │ S3 舱门A │  2 │ PA3  │ TIM2_CH4      │ AF1  │
  *  │ S4 舱门B │  3 │ PA0  │ TIM5_CH1      │ AF2  │
@@ -57,7 +57,7 @@ extern "C" {
 
 /* ======================== Home Angles ===================================== */
 
-#define SERVO1_HOME                 81      /* gripper open */
+#define SERVO1_HOME                 97      /* suction flip default; 97.2° command is quantized */
 #define SERVO2_HOME                 90      /* arm front down */
 #define SERVO3_HOME                 63      /* hatch A closed */
 #define SERVO4_HOME                 117     /* hatch B closed */
@@ -101,9 +101,12 @@ void Servo_Init(void);
  */
 void Servo_SetAngle(uint8_t servo_id, uint8_t angle_deg);
 
+/* Set a servo angle in 0.1° units, for example 522 = 52.2°. */
+void Servo_SetAngleTenth(uint8_t servo_id, uint16_t angle_tenth);
+
 /**
  * @brief  Set all servos to their home (idle) positions
- *         S1=81, S2=90, S3=63, S4=117
+ *         S1=85, S2=90, S3=63, S4=117
  */
 void Servo_HomeAll(void);
 

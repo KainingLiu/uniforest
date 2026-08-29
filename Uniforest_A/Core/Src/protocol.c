@@ -16,6 +16,7 @@
 #include "protocol.h"
 #include "motor3508.h"
 #include "servo.h"
+#include "suction.h"
 #include "stepper.h"
 #include "imu.h"
 #include "remote_control.h"
@@ -484,6 +485,7 @@ static void Protocol_Dispatch(const ProtoFrame_t *f)
         Motor3508_StopAll();
         Stepper_Stop(STEPPER_HORIZ);
         Stepper_Stop(STEPPER_VERT);
+        Suction_AllOff();
         break;
 
     /* ---- Chassis: Speed ---- */
@@ -550,7 +552,16 @@ static void Protocol_Dispatch(const ProtoFrame_t *f)
 
     /* ---- Servo: Single Angle ---- */
     case CMD_SERVO_ANGLE:
-        if (f->data_len >= 2)
+        if (f->data_len >= 3)
+        {
+            uint8_t sid = d[0];
+            uint16_t angle_tenth = (uint16_t)(((uint16_t)d[1] << 8) | d[2]);
+            if (sid < SERVO_COUNT && angle_tenth <= 1800)
+                Servo_SetAngleTenth(sid, angle_tenth);
+            else
+                status = ACK_ERR_PARAM;
+        }
+        else if (f->data_len >= 2)
         {
             uint8_t sid = d[0];
             uint8_t ang = d[1];
@@ -576,6 +587,20 @@ static void Protocol_Dispatch(const ProtoFrame_t *f)
                 if (d[i] <= 180)
                     Servo_SetAngle(i, d[i]);
             }
+        }
+        else status = ACK_ERR_PARAM;
+        break;
+
+    /* ---- Suction: pump / non-blocking release ---- */
+    case CMD_SUCTION:
+        if (f->data_len >= 1)
+        {
+            if (d[0] == 1)
+                Suction_PumpOn();
+            else if (d[0] == 2)
+                Suction_Release();
+            else
+                status = ACK_ERR_PARAM;
         }
         else status = ACK_ERR_PARAM;
         break;

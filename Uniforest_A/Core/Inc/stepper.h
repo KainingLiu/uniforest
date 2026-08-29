@@ -145,7 +145,7 @@ void Stepper_SetParams(uint16_t start_delay, uint16_t target_delay,
  * @param  steps        total step count
  * @param  start_delay  µs half-cycle delay at ramp start (0 = use defaults)
  * @param  target_delay µs half-cycle delay at cruise (0 = use defaults)
- * @param  accel_steps  ramp length in steps (0 = use defaults)
+ * @param  accel_steps  S-curve acceleration/deceleration length in steps (0 = use defaults)
  * @note   Returns immediately. Use Stepper_IsBusy() to poll completion.
  *         Motor must be idle when called.
  */

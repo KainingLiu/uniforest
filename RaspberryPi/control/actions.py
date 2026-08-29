@@ -41,6 +41,7 @@ from .stepper import (
 START_DELAY_US  = 1000   # STM32 6/5 scale => about 417 Hz start
 TARGET_DELAY_US = 100    # STM32 6/5 scale => about 4167 Hz cruise
 ACCEL_STEPS     = 400
+SUCTION_RELEASE_SETTLE_MS = 1000
 STEPPER_BUSY_START_TIMEOUT_MS = 1000
 STEPPER_SETTLE_MS             = 100
 STEPPER_POLL_MS               = 10
@@ -238,9 +239,11 @@ class Actions:
         self._wait_steppers_stopped(
             (1 << m_lead) | (1 << m_other), estimate_ms)
 
-    def _arm_front_smooth_up(self):
-        """Smooth arm lift (replicates Build steps 5/11/19)."""
-        steps = [50, 28, 14, 6, 2, 0]
+    def _arm_front_smooth_up(self, target: int = 0):
+        """Smoothly lift the arm to target (default 0°)."""
+        steps = [50, 28, 14, 6]
+        if target not in steps:
+            steps.append(target)
         for angle in steps:
             self._check_cancelled()
             self.servo.set_angle(1, angle)  # SERVO_ARM_FRONT
@@ -249,21 +252,22 @@ class Actions:
 
     # ==================== Simple Actions ======================================
 
-    def servo_home(self):
+    def servo_home(self, settle_ms: float = 300):
         """Home all servos to idle positions."""
         self._check_cancelled()
-        self.servo.set_angle(0, ANGLE_GRIPPER_OPEN)
-        self.servo.set_angle(1, ANGLE_ARM_FRONT_DOWN)
-        self.servo.set_angle(2, ANGLE_HATCH_A_CLOSED)
-        self.servo.set_angle(3, ANGLE_HATCH_B_CLOSED)
-        self._wait(300)
+        # CMD_SERVO_HOME keeps the flip servo at the A-board's exact 97.2°
+        # home pulse while preserving the other servo home positions.
+        self.servo.home_all()
+        if settle_ms > 0:
+            self._wait(settle_ms)
 
-    def hatch_open(self):
+    def hatch_open(self, settle_ms: float = 500):
         """Open both hatches."""
         self._check_cancelled()
         self.servo.set_angle(2, ANGLE_HATCH_A_OPEN)
         self.servo.set_angle(3, ANGLE_HATCH_B_OPEN)
-        self._wait(500)
+        if settle_ms > 0:
+            self._wait(settle_ms)
 
     def hatch_close(self):
         """Close both hatches."""
@@ -274,13 +278,17 @@ class Actions:
 
     # ==================== Grap1: 22cm horizontal grab =========================
 
-    def grap1(self):
+    def grap1(self, test_mode: bool = False):
         """7-step simple pick-and-place (22cm reach)."""
-        # 1. Servo init
-        self.servo_home()
+        # Start suction before any positioning motion and keep it on until
+        # gripper_open() releases the cube.
+        self.servo.gripper_close()
 
-        # 2. Hatch open
-        self.hatch_open()
+        # 1. Servo init (servo commands are asynchronous)
+        self.servo_home(settle_ms=0)
+
+        # 2. Hatch open (servo commands are asynchronous)
+        self.hatch_open(settle_ms=0)
 
         # 3. fwd 22cm → after 5cm: down 18cm
         self._stepper_dual_and_wait(
@@ -290,11 +298,7 @@ class Actions:
 
         self._wait(300)
 
-        # 4. Gripper close
-        self.servo.gripper_close()
-        self._wait(500)
-
-        # 5. up 18cm → after 5cm: back 22cm
+        # 4. up 18cm → after 5cm: back 22cm
         self._stepper_dual_and_wait(
             STEPPER_VERT,  18, STEP_DIR_FORWARD,
             STEPPER_HORIZ, 22, STEP_DIR_REVERSE,
@@ -305,37 +309,36 @@ class Actions:
         # 6. Hatch partial-close + gripper open
         self.servo.set_angle(2, 67)
         self.servo.set_angle(3, 113)
-        self._wait(400)
         self.servo.gripper_open()
-        self._wait(500)
 
         # 7. Final servo init
-        self.servo_home()
-        self._wait(100)
+        self.servo_home(settle_ms=0)
+        if test_mode:
+            self._wait(SUCTION_RELEASE_SETTLE_MS)
 
     # ==================== Grap2: 27cm horizontal grab =========================
 
-    def grap2(self):
+    def grap2(self, test_mode: bool = False):
         """7-step pick-and-place (27cm reach)."""
-        # 1. Servo init
-        self.servo_home()
+        # Start suction before any positioning motion and keep it on until
+        # gripper_open() releases the cube.
+        self.servo.gripper_close()
 
-        # 2. Hatch open
-        self.hatch_open()
+        # 1. Servo init (servo commands are asynchronous)
+        self.servo_home(settle_ms=0)
 
-        # 3. fwd 27cm → after 5cm: down 18cm
+        # 2. Hatch open (servo commands are asynchronous)
+        self.hatch_open(settle_ms=0)
+
+        # 3. fwd 27cm → after 10cm: down 18cm
         self._stepper_dual_and_wait(
             STEPPER_HORIZ, 27, STEP_DIR_FORWARD,
             STEPPER_VERT,  18, STEP_DIR_REVERSE,
-            m2_offset_cm=5)
+            m2_offset_cm=10)
 
         self._wait(300)
 
-        # 4. Gripper close
-        self.servo.gripper_close()
-        self._wait(500)
-
-        # 5. up 18cm → after 5cm: back 27cm
+        # 4. up 18cm → after 5cm: back 27cm
         self._stepper_dual_and_wait(
             STEPPER_VERT,  18, STEP_DIR_FORWARD,
             STEPPER_HORIZ, 27, STEP_DIR_REVERSE,
@@ -346,40 +349,40 @@ class Actions:
         # 6. Hatch partial-close + gripper open
         self.servo.set_angle(2, 67)
         self.servo.set_angle(3, 113)
-        self._wait(400)
         self.servo.gripper_open()
-        self._wait(500)
 
         # 7. Final servo init
-        self.servo_home()
-        self._wait(100)
+        self.servo_home(settle_ms=0)
+        if test_mode:
+            self._wait(SUCTION_RELEASE_SETTLE_MS)
 
     # ==================== Grap3: 22cm+10cm vertical grab ======================
 
-    def grap3(self):
-        """9-step pick-place-and-drop (22cm horizontal, 10cm vertical)."""
-        # 1. Servo init
-        self.servo_home()
-
-        # 2. Arm lower to 45° + hatch open
-        self.servo.set_angle(1, 45)
-        self.hatch_open()
-
-        # 3. fwd 22cm → after 5cm: down 10cm
-        self._stepper_dual_and_wait(
-            STEPPER_HORIZ, 22, STEP_DIR_FORWARD,
-            STEPPER_VERT,  10, STEP_DIR_REVERSE,
-            m2_offset_cm=5)
-
-        # 4. Gripper close
+    def grap3(self, test_mode: bool = False):
+        """Pick-place-and-drop with 27cm reach and 9cm vertical travel."""
+        # Start suction before any positioning motion and keep it on until
+        # gripper_open() releases the cube.
         self.servo.gripper_close()
-        self._wait(500)
 
-        # 5. rise 10cm continuously; after 5cm start retracting 22cm;
-        #    after retracting 14cm, reverse the vertical axis and descend 11cm
+        # 1. Servo init (servo commands are asynchronous)
+        self.servo_home(settle_ms=0)
+
+        # 2. Lift the front arm to 45° and flip the suction cup to 52.2°.
+        self.servo.set_angle(1, 45)
+        self.servo.set_angle(0, 52.2)
+        self.hatch_open(settle_ms=0)
+
+        # 3. fwd 27cm → after 17cm: down 9cm
+        self._stepper_dual_and_wait(
+            STEPPER_HORIZ, 27, STEP_DIR_FORWARD,
+            STEPPER_VERT,  9, STEP_DIR_REVERSE,
+            m2_offset_cm=17)
+
+        # 4. rise 9cm continuously; after 5cm start retracting 22cm;
+        #    after retracting 14cm, descend 9cm
         self._stepper_dual3_and_wait(
-            STEPPER_VERT, 10, STEP_DIR_FORWARD,
-                          11, STEP_DIR_REVERSE,
+            STEPPER_VERT, 9, STEP_DIR_FORWARD,
+                          9, STEP_DIR_REVERSE,
             STEPPER_HORIZ, 22, STEP_DIR_REVERSE,
             other_offset_cm=5,
             lead2_offset_cm=14)
@@ -387,15 +390,17 @@ class Actions:
         # 6. Hatch partial-close → gripper open → rise 11cm
         self.servo.set_angle(2, 67)
         self.servo.set_angle(3, 113)
-        self._wait(400)
         self.servo.gripper_open()
-        self._wait(200)
 
-        self._stepper_move_and_wait(STEPPER_VERT, STEP_DIR_FORWARD, 11)
+        # 7. Rise 9cm while retracting 5cm horizontally.
+        self._stepper_dual_and_wait(
+            STEPPER_VERT, 9, STEP_DIR_FORWARD,
+            STEPPER_HORIZ, 5, STEP_DIR_REVERSE)
 
         # 7. Servo init
-        self.servo_home()
-        self._wait(100)
+        self.servo_home(settle_ms=0)
+        if test_mode:
+            self._wait(SUCTION_RELEASE_SETTLE_MS)
 
     # ==================== Build: 24-step pick-and-place ========================
 
@@ -404,40 +409,42 @@ class Actions:
         24-step pick-and-place merged sequence.
 
         Balance check:
-          Horz: +5+18-23+23-23+23-23 = 0  ✓
-          Vert: -1-18+10-2-3+5-12+21-4+4 = 0  ✓
+          Horz: +4+19-23+23-23+23-23 = 0  ✓
+          Vert: -19+10-2-2+5-11.5+20.5-4+4 = +1 cm
         """
         # 1. Servo init
         self.servo_home()
 
         # 2. Hatch open
         self.hatch_open()
-
-        # 3. fwd 5cm ‖ down 1cm
-        self._stepper_dual_and_wait(
-            STEPPER_HORIZ, 5, STEP_DIR_FORWARD,
-            STEPPER_VERT,  1, STEP_DIR_REVERSE)
-        self._wait(300)
-
-        # 4. Gripper close
+        # Start suction immediately after the hatch opens and keep it on
+        # until the first release below.
         self.servo.gripper_close()
+
+        # 3. fwd 4cm only.
+        self._stepper_move_and_wait(
+            STEPPER_HORIZ, STEP_DIR_FORWARD, 4)
+
+        # 4. Set pickup angles and settle before the lift.
+        self.servo.set_angle(1, 100)
+        self.servo.set_angle(0, 102.2)
         self._wait(500)
+        # Start cup return immediately before the arm's smooth lift so the
+        # two servo movements run concurrently on their independent channels.
+        self.servo.set_angle(0, 95.2)
+        self._arm_front_smooth_up(target=3)
 
-        # 5. Arm front lift (smooth)
-        self._arm_front_smooth_up()
-
-        # 6. fwd 18cm → after 3cm: down 18cm
+        # 5. fwd 19cm → after 3cm: down 19cm
         self._stepper_dual_and_wait(
-            STEPPER_HORIZ, 18, STEP_DIR_FORWARD,
-            STEPPER_VERT,  18, STEP_DIR_REVERSE,
+            STEPPER_HORIZ, 19, STEP_DIR_FORWARD,
+            STEPPER_VERT,  19, STEP_DIR_REVERSE,
             m2_offset_cm=3)
         self._wait(300)
 
-        # 7. Gripper open
+        # 6. Release the first cube.
         self.servo.gripper_open()
-        self._wait(500)
 
-        # 8. Rise 10cm continuously; after 3cm start retracting 23cm;
+        # 7. Rise 10cm continuously; after 3cm start retracting 23cm;
         #    after retracting 20cm, reverse the vertical axis and descend 2cm
         self._stepper_dual3_and_wait(
             STEPPER_VERT, 10, STEP_DIR_FORWARD,
@@ -447,15 +454,14 @@ class Actions:
             lead2_offset_cm=20)
         self._wait(300)
 
-        # 9. Arm front lower
-        self.servo.arm_front_down()
-        self._wait(500)
-
-        # 10. Gripper close
+        # 8. Start suction for the second cube, set arm/cup angles, then settle.
         self.servo.gripper_close()
+        self.servo.set_angle(1, 95)
+        self.servo.set_angle(0, 102.2)
         self._wait(500)
 
-        # 11. Arm front lift (smooth)
+        # 9. Return the cup to home while smoothly lifting the arm to 0°.
+        self.servo.set_angle(0, 97.2)
         self._arm_front_smooth_up()
 
         # 12. up2 ‖ fwd23 → after fwd21: down5 (MoveOverlap2)
@@ -466,9 +472,8 @@ class Actions:
             ph2_offset_cm=21)
         self._wait(300)
 
-        # 13. Gripper open
+        # 13. Release the second cube.
         self.servo.gripper_open()
-        self._wait(500)
 
         # 14. up 5cm → after 1cm: back 23cm
         self._stepper_dual_and_wait(
@@ -477,24 +482,22 @@ class Actions:
             m2_offset_cm=1)
         self._wait(300)
 
-        # 15. Arm front lower
-        self.servo.arm_front_down()
-        self._wait(500)
+        # 15. Set the second-cube pickup angles.
+        self.servo.set_angle(1, 95)
+        self.servo.set_angle(0, 102.2)
 
-        # 16. down 12cm
-        self._stepper_move_and_wait(STEPPER_VERT, STEP_DIR_REVERSE, 12)
-        self._wait(300)
-
-        # 17. Gripper close
+        # 16. Start suction for the third cube, then descend 11.5cm.
         self.servo.gripper_close()
-        self._wait(500)
-
-        # 18. Rise 21cm
-        self._stepper_move_and_wait(STEPPER_VERT, STEP_DIR_FORWARD, 21)
+        self._stepper_move_and_wait(STEPPER_VERT, STEP_DIR_REVERSE, 11.5)
         self._wait(300)
 
-        # 19. Arm front lift (smooth)
+        # 18. Rise 20.5cm
+        self._stepper_move_and_wait(STEPPER_VERT, STEP_DIR_FORWARD, 20.5)
+        self._wait(300)
+
+        # 19. Arm front smooth lift and return the suction cup to 97.2°.
         self._arm_front_smooth_up()
+        self.servo.set_angle(0, 97.2)
 
         # 20. fwd 23cm → after 22cm: down 4cm
         self._stepper_dual_and_wait(
@@ -503,9 +506,8 @@ class Actions:
             m2_offset_cm=22)
         self._wait(300)
 
-        # 21. Gripper open
+        # 21. Release the third cube.
         self.servo.gripper_open()
-        self._wait(500)
 
         # 22. up 4cm ‖ back 23cm
         self._stepper_dual_and_wait(

@@ -22,7 +22,7 @@ from protocol.commands import (
     CMD_PING, CMD_EMERGENCY_STOP,
     CMD_CHASSIS_SPEED, CMD_CHASSIS_TORQUE,
     CMD_CHASSIS_PID_SPEED, CMD_CHASSIS_PID_POS, CMD_CHASSIS_PID_RESET,
-    CMD_SERVO_ANGLE, CMD_SERVO_HOME, CMD_SERVO_ANGLE_ALL,
+    CMD_SERVO_ANGLE, CMD_SERVO_HOME, CMD_SERVO_ANGLE_ALL, CMD_SUCTION,
     CMD_STEPPER_MOVE, CMD_STEPPER_STOP, CMD_STEPPER_PARAMS,
     CMD_STEPPER_MOVE_DUAL, CMD_STEPPER_MOVE_DUAL2, CMD_STEPPER_SET_POS,
     CMD_STEPPER_MOVE_DUAL3,
@@ -32,7 +32,7 @@ from protocol.commands import (
     TelemBatch, AckFrame, PROTO_SYNC, PROTO_MAX_DATA_LEN,
     encode_chassis_speed, encode_chassis_torque,
     encode_chassis_pid_speed, encode_chassis_pid_pos, encode_chassis_pid_reset,
-    encode_servo_angle, encode_servo_angle_all,
+    encode_servo_angle, encode_servo_angle_all, encode_suction,
     encode_stepper_move, encode_stepper_stop, encode_stepper_params,
     encode_stepper_move_dual, encode_stepper_move_dual2, encode_stepper_set_pos,
     encode_stepper_move_dual3,
@@ -319,6 +319,10 @@ class Transport:
         """Set all 4 servo angles at once."""
         from .commands import encode_servo_angle_all
         return self.send(CMD_SERVO_ANGLE_ALL, encode_servo_angle_all(angles))
+
+    def suction(self, action: int) -> bool:
+        """Send a non-blocking suction action to the A-board."""
+        return self.send(CMD_SUCTION, encode_suction(action))
 
     def stepper_move(self, motor: int, direction: int, steps: int,
                      start_delay: int = 0, target_delay: int = 0,

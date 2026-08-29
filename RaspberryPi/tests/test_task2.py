@@ -41,6 +41,8 @@ class Task2Tests(unittest.TestCase):
             25.0 * TAG_FOV_RETUNE_SCALE)
         self.assertEqual(cfg.delivery_heading_tolerance_deg, 3.0)
         self.assertEqual(cfg.delivery_tag_fine_gain_scale, 1.5)
+        self.assertEqual(cfg.delivery_tag_vision_stale_s, 0.7)
+        self.assertEqual(cfg.delivery_tag_lost_timeout_s, 2.0)
         self.assertEqual(cfg.post_tag_lateral_mm, 100.0)
         self.assertEqual(cfg.post_tag_lateral_speed_mm_s, 300.0)
         self.assertEqual(cfg.wall_premove_mm, 250.0)
@@ -79,6 +81,8 @@ class Task2Tests(unittest.TestCase):
         self.assertEqual(
             cfg.build_route_speed_mm_s, LONG_DISTANCE_MOVE_SPEED_MM_S)
         self.assertEqual(cfg.build_tag_id, 6)
+        self.assertEqual(cfg.build_tag_vision_stale_s, 0.7)
+        self.assertEqual(cfg.build_tag_lost_timeout_s, 2.0)
         self.assertEqual(
             cfg.build_tag_distance_mm,
             FirstTaskConfig().delivery_tag_distance_mm)
@@ -98,7 +102,7 @@ class Task2Tests(unittest.TestCase):
         self.assertEqual(
             cfg.build_tag_fine_gain_scale,
             FirstTaskConfig().delivery_tag_fine_gain_scale)
-        self.assertEqual(cfg.building_target_x_mm, -8.4)
+        self.assertEqual(cfg.building_target_x_mm, 0.0)
         self.assertEqual(cfg.building_target_z_mm, 155.0)
         self.assertEqual(cfg.building_min_confidence, 35.0)
         self.assertEqual(
@@ -106,10 +110,17 @@ class Task2Tests(unittest.TestCase):
              cfg.building_max_height_width_ratio),
              (0.35, 1.50))
         self.assertEqual(cfg.building_confirm_frames, 3)
+        self.assertEqual(cfg.building_align_timeout_s, 10.0)
         self.assertEqual(cfg.building_lost_timeout_s, 3.0)
+        self.assertEqual(cfg.building_track_max_x_jump_mm, 90.0)
+        self.assertEqual(cfg.building_track_max_z_jump_mm, 140.0)
         self.assertEqual(cfg.building_forward_kp, 1.5)
         self.assertEqual(cfg.building_lateral_kp, 1.8)
         self.assertEqual(cfg.building_min_linear_mm_s, 100.0)
+        self.assertEqual(cfg.building_max_forward_mm_s, 250.0)
+        self.assertEqual(cfg.building_max_lateral_mm_s, 250.0)
+        self.assertEqual(cfg.building_linear_accel_mm_s2, 500.0)
+        self.assertEqual(cfg.building_track_lock_frames, 2)
         self.assertEqual(cfg.post_build_reverse_mm, 200.0)
         self.assertEqual(cfg.post_build_reverse_speed_mm_s, 300.0)
         self.assertEqual(cfg.post_build_turn_target_cw_deg, 270.0)
@@ -119,7 +130,11 @@ class Task2Tests(unittest.TestCase):
             LONG_DISTANCE_MOVE_SPEED_MM_S)
         self.assertEqual(cfg.post_build_tag_id, 1)
         self.assertEqual(cfg.post_build_tag_distance_mm, 200.0)
+        self.assertEqual(cfg.post_build_tag_distance_tolerance_mm, 20.0)
         self.assertEqual(cfg.post_build_tag_lateral_tolerance_mm, 10.0)
+        self.assertEqual(cfg.post_build_tag_vision_stale_s, 0.7)
+        self.assertEqual(cfg.post_build_tag_lost_timeout_s, 2.5)
+        self.assertEqual(cfg.post_build_tag_heading_tolerance_deg, 4.0)
         self.assertEqual(cfg.post_build_tag_heading_target_cw_deg, 270.0)
         self.assertEqual(cfg.final_right_turn_target_cw_deg, 360.0)
 
@@ -322,13 +337,13 @@ class Task2Tests(unittest.TestCase):
             program.config.build_tag_fine_gain_scale)
         self.assertEqual(
             tag_align_options[2]['distance_tolerance_mm'],
-            program.config.build_tag_distance_tolerance_mm)
+            program.config.post_build_tag_distance_tolerance_mm)
         self.assertEqual(
             tag_align_options[2]['lateral_tolerance_mm'],
             program.config.post_build_tag_lateral_tolerance_mm)
         self.assertEqual(
             tag_align_options[2]['heading_tolerance_deg'],
-            program.config.build_tag_heading_tolerance_deg)
+            program.config.post_build_tag_heading_tolerance_deg)
         self.assertEqual(
             tag_align_options[2]['fine_gain_scale'],
             program.config.build_tag_fine_gain_scale)
@@ -340,7 +355,7 @@ class Task2Tests(unittest.TestCase):
             x=0.0, z=150.0, height_width_ratio=0.30)
         building = SimpleNamespace(
             color_name='Orange', confidence=55.0,
-            x=-8.4, z=155.0, height_width_ratio=1.080)
+            x=0.0, z=155.0, height_width_ratio=1.080)
         result = SimpleNamespace(
             timestamp=time.time(), all_blocks=[single_cube, building])
         program = Task2Program(SimpleNamespace(), cfg)
@@ -431,7 +446,7 @@ class Task2Tests(unittest.TestCase):
                 timestamp=now + index,
                 all_blocks=[SimpleNamespace(
                     color_name='Orange', confidence=55.0,
-                    x=-8.4, z=155.0, height_width_ratio=1.080)])
+                    x=0.0, z=155.0, height_width_ratio=1.080)])
             for index in range(1, 4)
         ])
 
@@ -473,8 +488,8 @@ class Task2Tests(unittest.TestCase):
 
         now = time.time()
         observations = iter([
-            (-8.4 + 20.0, 155.0 + 30.0),
-            (-8.4, 155.0),
+            (20.0, 155.0 + 30.0),
+            (0.0, 155.0),
         ])
 
         class FakeRobot:

@@ -38,6 +38,13 @@ class FieldLocalizerTests(unittest.TestCase):
         self.assertEqual(camera["height_m"], 0.25)
         self.assertEqual(
             config["tags"]["6"]["max_camera_height_error_m"], 0.35)
+        self.assertEqual(
+            config["tags"]["1"]["max_camera_height_error_m"], 0.35)
+        self.assertEqual(
+            config["tags"]["1"]["max_reprojection_error_px"], 4.5)
+        for tag_id in ("2", "3", "4", "5", "6"):
+            self.assertIn("max_camera_height_error_m", config["tags"][tag_id])
+            self.assertIn("max_reprojection_error_px", config["tags"][tag_id])
 
     def test_single_tag_recovers_position_without_external_heading(self):
         config = load_field_config()

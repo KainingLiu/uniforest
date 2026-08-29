@@ -366,6 +366,84 @@ def find_quadrilaterals(mask, min_area=None, max_front_aspect_ratio=None):
     return [q for _, q in results]
 
 
+def find_seamed_quadrilaterals(mask, hsv, min_area=None,
+                               max_front_aspect_ratio=None):
+    """Split touching orange blocks at a continuous dark seam.
+
+    The top-view camera can make the outside contour look like one object.
+    A seam is accepted only when it spans most of the component and orange
+    pixels exist on both sides, which prevents isolated dark shadows from
+    creating fake blocks.
+    """
+    if min_area is None:
+        min_area = CONFIG["min_contour_area"]
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL,
+                                   cv2.CHAIN_APPROX_SIMPLE)
+    seam_quads = []
+    dark = ((hsv[:, :, 2] <= 75) & (hsv[:, :, 1] <= 100)).astype(np.uint8)
+    for cnt in contours:
+        if cv2.contourArea(cnt) < min_area:
+            continue
+        x, y, w, h = cv2.boundingRect(cnt)
+        if w < 2 or h < 2:
+            continue
+        component = np.zeros(mask.shape, dtype=np.uint8)
+        cv2.drawContours(component, [cnt], -1, 255, -1)
+        orange = (mask > 0) & (component > 0)
+        local_dark = dark[y:y + h, x:x + w]
+        local_orange = orange[y:y + h, x:x + w]
+
+        # Vertical seam: prefer a narrow dark column crossing >=55% height.
+        dark_col = local_dark.sum(axis=0)
+        orange_col = local_orange.sum(axis=0)
+        col_candidates = np.where(
+            (dark_col >= max(3, int(h * 0.55)))
+            & (orange_col <= max(2, int(h * 0.25)))
+            & (np.arange(w) > max(2, int(w * 0.15)))
+            & (np.arange(w) < min(w - 3, int(w * 0.85))))[0]
+        seam = None
+        orientation = None
+        if len(col_candidates):
+            seam = int(np.median(col_candidates))
+            orientation = 'vertical'
+        else:
+            # Horizontal seam for stacked blocks or steep perspective.
+            dark_row = local_dark.sum(axis=1)
+            orange_row = local_orange.sum(axis=1)
+            row_candidates = np.where(
+                (dark_row >= max(3, int(w * 0.55)))
+                & (orange_row <= max(2, int(w * 0.25)))
+                & (np.arange(h) > max(2, int(h * 0.15)))
+                & (np.arange(h) < min(h - 3, int(h * 0.85))))[0]
+            if len(row_candidates):
+                seam = int(np.median(row_candidates))
+                orientation = 'horizontal'
+        if seam is None:
+            continue
+
+        parts = []
+        if orientation == 'vertical':
+            split = x + seam
+            left = np.zeros(mask.shape, dtype=np.uint8)
+            right = np.zeros(mask.shape, dtype=np.uint8)
+            left[:, :split] = mask[:, :split]
+            right[:, split + 1:] = mask[:, split + 1:]
+            parts = [left, right]
+        else:
+            split = y + seam
+            top = np.zeros(mask.shape, dtype=np.uint8)
+            bottom = np.zeros(mask.shape, dtype=np.uint8)
+            top[:split, :] = mask[:split, :]
+            bottom[split + 1:, :] = mask[split + 1:, :]
+            parts = [top, bottom]
+        for part in parts:
+            quads = find_quadrilaterals(
+                part, min_area=min_area,
+                max_front_aspect_ratio=max_front_aspect_ratio)
+            seam_quads.extend(quads)
+    return seam_quads
+
+
 def refine_corners_subpix(gray, quad):
     criteria = (cv2.TERM_CRITERIA_EPS + cv2.TERM_CRITERIA_MAX_ITER, 40, 0.001)
     try:
@@ -466,6 +544,10 @@ def detect_all_blocks(frame, state, color_profiles=None,
                                 iterations=iterations)
         quads = find_quadrilaterals(
             mask, max_front_aspect_ratio=max_aspect)
+        # A touching pair can be one external contour. Recover individual
+        # candidates from a real dark seam before normal size filtering.
+        quads.extend(find_seamed_quadrilaterals(
+            mask, hsv, max_front_aspect_ratio=max_aspect))
         for quad in quads:
             w_px, _ = measure_face_size(quad)
             min_w = frame.shape[1] * CONFIG["min_face_width_ratio"]

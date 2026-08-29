@@ -60,6 +60,28 @@ class CubeDetectionProfileTests(unittest.TestCase):
         self.assertEqual(len(orange_blocks), 1)
         self.assertGreater(orange_blocks[0].quad[:, 1].mean(), 240.0)
 
+    def test_touching_orange_blocks_split_at_dark_vertical_seam(self):
+        frame = np.zeros((480, 640, 3), dtype=np.uint8)
+        orange_bgr = (0, 140, 255)
+        frame[220:380, 170:470] = orange_bgr
+        frame[220:380, 315:325] = (20, 20, 20)
+        state = {'fx': 800.0, 'fy': 800.0, 'cx': 320.0, 'cy': 240.0}
+
+        blocks = detect_all_blocks(
+            frame, state,
+            color_profiles=color_profiles_for('task2_orange'),
+            roi_top_ratio=0.0,
+            morph_kernel_size=3,
+            morph_iterations=1)
+
+        orange_blocks = [block for block in blocks
+                         if block.color_name == 'Orange']
+        self.assertEqual(len(orange_blocks), 2)
+        centers = sorted(float(block.quad[:, 0].mean())
+                         for block in orange_blocks)
+        self.assertLess(centers[0], 315.0)
+        self.assertGreater(centers[1], 325.0)
+
     def test_switching_profile_clears_stale_result(self):
         detector = CubeDetector(camera_id=0)
         detector._result = object()
