@@ -20,8 +20,8 @@ Task1Config = FirstTaskConfig
 @dataclass(frozen=True)
 class Task1Round2Config(FirstTaskConfig):
     delivery_forward_base_mm: float = 2500.0
-    post_tag_lateral_right_mm: float = 300.0
-    pre_final_turn_lateral_left_mm: float = 300.0
+    post_tag_lateral_right_mm: float = 400.0
+    pre_final_turn_lateral_left_mm: float = 400.0
 
 
 class Task1Round2Program(CompetitionProgram):

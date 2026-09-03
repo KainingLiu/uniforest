@@ -87,7 +87,7 @@ class Task2Tests(unittest.TestCase):
             cfg.build_tag_distance_mm,
             FirstTaskConfig().delivery_tag_distance_mm)
         self.assertEqual(cfg.build_tag_heading_target_cw_deg, 180.0)
-        self.assertEqual(cfg.post_tag6_lateral_right_mm, 0.0)
+        self.assertEqual(cfg.post_tag6_lateral_right_mm, 100.0)
         self.assertEqual(cfg.post_tag6_lateral_speed_mm_s, 300.0)
         self.assertFalse(cfg.finish_after_build)
         self.assertEqual(
@@ -103,15 +103,16 @@ class Task2Tests(unittest.TestCase):
             cfg.build_tag_fine_gain_scale,
             FirstTaskConfig().delivery_tag_fine_gain_scale)
         self.assertEqual(cfg.building_target_x_mm, 0.0)
-        self.assertEqual(cfg.building_target_z_mm, 155.0)
+        self.assertEqual(cfg.building_target_z_mm, 75.0)
+        self.assertAlmostEqual(cfg.building_top_reference_v_px, 82.4)
         self.assertEqual(cfg.building_min_confidence, 35.0)
         self.assertEqual(
             (cfg.building_min_height_width_ratio,
              cfg.building_max_height_width_ratio),
-             (0.35, 1.50))
+             (0.35, 2.20))
         self.assertEqual(cfg.building_confirm_frames, 3)
-        self.assertEqual(cfg.building_align_timeout_s, 10.0)
-        self.assertEqual(cfg.building_lost_timeout_s, 3.0)
+        self.assertEqual(cfg.building_align_timeout_s, 7.0)
+        self.assertEqual(cfg.building_lost_timeout_s, 4.0)
         self.assertEqual(cfg.building_track_max_x_jump_mm, 90.0)
         self.assertEqual(cfg.building_track_max_z_jump_mm, 140.0)
         self.assertEqual(cfg.building_forward_kp, 1.5)
@@ -119,7 +120,7 @@ class Task2Tests(unittest.TestCase):
         self.assertEqual(cfg.building_min_linear_mm_s, 100.0)
         self.assertEqual(cfg.building_max_forward_mm_s, 250.0)
         self.assertEqual(cfg.building_max_lateral_mm_s, 250.0)
-        self.assertEqual(cfg.building_linear_accel_mm_s2, 500.0)
+        self.assertEqual(cfg.building_linear_accel_mm_s2, 1000.0)
         self.assertEqual(cfg.building_track_lock_frames, 2)
         self.assertEqual(cfg.post_build_reverse_mm, 200.0)
         self.assertEqual(cfg.post_build_reverse_speed_mm_s, 300.0)
@@ -310,6 +311,8 @@ class Task2Tests(unittest.TestCase):
              {'hold_ms': 0, 'accel_ms': 800}),
             ('reset_field_localization',),
             ('tag_align', 6, 425.0, 180.0),
+            ('move', 'right', 100.0, 300.0,
+             {'hold_ms': 0, 'accel_ms': 200}),
             ('reset_vision_filter',),
             ('building_align',),
             ('build',),
@@ -362,6 +365,30 @@ class Task2Tests(unittest.TestCase):
 
         self.assertIs(program._building_from_result(result), building)
 
+    def test_building_top_reference_uses_upper_edge_for_lateral_position(self):
+        program = Task2Program(SimpleNamespace())
+        block = SimpleNamespace(
+            x=35.0, z=200.0,
+            quad=[[300.0, 100.0], [340.0, 100.0],
+                  [360.0, 260.0], [280.0, 260.0]])
+        x_ref, z_ref = program._building_top_reference(block)
+        self.assertAlmostEqual(x_ref, (320.0 - 320.0) * 200.0 / 331.9)
+        self.assertEqual(z_ref, 200.0)
+
+    def test_building_top_reference_z_decreases_for_wider_nearer_edge(self):
+        program = Task2Program(SimpleNamespace())
+        far = SimpleNamespace(quad=[[300, 70], [340, 70], [360, 200], [280, 200]])
+        near = SimpleNamespace(quad=[[280, 110], [360, 110], [380, 220], [260, 220]])
+        self.assertLess(program._building_top_reference(near)[1],
+                        program._building_top_reference(far)[1])
+
+    def test_building_top_reference_z_decreases_when_edge_moves_down(self):
+        program = Task2Program(SimpleNamespace())
+        up = SimpleNamespace(quad=[[300, 70], [340, 70], [360, 200], [280, 200]])
+        down = SimpleNamespace(quad=[[300, 100], [340, 100], [360, 220], [280, 220]])
+        self.assertLess(program._building_top_reference(down)[1],
+                        program._building_top_reference(up)[1])
+
     def test_round2_moves_right_after_tag6_and_finishes_after_build(self):
         events = []
 
@@ -388,7 +415,7 @@ class Task2Tests(unittest.TestCase):
                 cfg.post_orange_lateral_base_mm, 700.0),
                 ('left', 200.0),
         )
-        self.assertEqual(cfg.post_tag6_lateral_right_mm, 300.0)
+        self.assertEqual(cfg.post_tag6_lateral_right_mm, 400.0)
         self.assertTrue(cfg.finish_after_build)
 
         program = Task2Round2Program(FakeRobot(), cfg)
@@ -402,7 +429,7 @@ class Task2Tests(unittest.TestCase):
         program._run_build_phase()
 
         self.assertEqual(events, [
-            ('move', 'right', 300.0, 300.0,
+            ('move', 'right', 400.0, 300.0,
              {'hold_ms': 0, 'accel_ms': 200}),
             ('reset_vision_filter',),
             ('building_align',),
@@ -521,6 +548,7 @@ class Task2Tests(unittest.TestCase):
 
         motion = next(command for command in robot.chassis.commands
                       if command != (0, 0, 0, 0))
+        self.assertGreater(motion[0], 0.0)
         self.assertGreater(motion[0], 0.0)
         self.assertGreater(motion[1], 0.0)
 

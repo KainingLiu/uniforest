@@ -166,11 +166,11 @@ class FirstTaskConfig:
     delivery_heading_min_yaw_deg_s: float = 8.0
     delivery_tag_linear_accel_mm_s2: float = 300.0
     delivery_heading_yaw_accel_deg_s2: float = 90.0
-    post_tag_lateral_right_mm: float = 0.0
+    post_tag_lateral_right_mm: float = 100.0
     post_tag_lateral_speed_mm_s: float = 300.0
     unload_reverse_mm: float = 300.0
     unload_reverse_speed_mm_s: float = 300.0
-    pre_final_turn_lateral_left_mm: float = 0.0
+    pre_final_turn_lateral_left_mm: float = 100.0
     pre_final_turn_lateral_speed_mm_s: float = 300.0
     unload_final_turn_cw_deg: float = 180.0
     unload_final_heading_hold_ms: int = 0

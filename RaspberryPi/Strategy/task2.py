@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from enum import Enum, auto
 from statistics import median
 import time
+import math
 from typing import TYPE_CHECKING, Optional
 
 from .competition import (
@@ -128,16 +129,21 @@ class Task2Config(FirstTaskConfig):
     delivery_tag_slowdown_lateral_mm: float = 100.0
     delivery_tag_creep_distance_mm: float = 35.0
     delivery_tag_creep_lateral_mm: float = 25.0
-    post_tag6_lateral_right_mm: float = 0.0
+    post_tag6_lateral_right_mm: float = 100.0
     post_tag6_lateral_speed_mm_s: float = 300.0
     building_target_x_mm: float = 0.0
-    building_target_z_mm: float = 155.0
+    # Calibrated from the current camera view at the confirmed build position.
+    building_target_z_mm: float = 75.0
+    # Current confirmed build pose: top-edge vertical pixel coordinate maps to
+    # the desired Z distance.  A lower image edge means a nearer building.
+    building_top_reference_v_px: float = 82.4
+    building_top_camera_cy_px: float = 240.0
     # Building contours vary with occlusion and camera pitch. Keep the
     # geometric gate permissive; position and multi-frame confirmation still
     # reject isolated orange cube candidates.
     building_min_confidence: float = 35.0
     building_min_height_width_ratio: float = 0.35
-    building_max_height_width_ratio: float = 1.50
+    building_max_height_width_ratio: float = 2.20
     building_x_tolerance_mm: float = 3.0
     building_z_tolerance_mm: float = 6.0
     building_heading_tolerance_deg: float = 2.4
@@ -146,8 +152,8 @@ class Task2Config(FirstTaskConfig):
     building_heading_deadband_deg: float = 0.5
     building_confirm_frames: int = 3
     building_median_frames: int = 5
-    building_align_timeout_s: float = 10.0
-    building_lost_timeout_s: float = 3.0
+    building_align_timeout_s: float = 7.0
+    building_lost_timeout_s: float = 4.0
     building_vision_stale_s: float = 0.7
     building_track_max_x_jump_mm: float = 90.0
     building_track_max_z_jump_mm: float = 140.0
@@ -171,7 +177,9 @@ class Task2Config(FirstTaskConfig):
     building_min_linear_mm_s: float = 100.0
     building_far_linear_mm_s: float = 150.0
     building_min_yaw_deg_s: float = 6.0
-    building_linear_accel_mm_s2: float = 500.0
+    # Slightly soften building alignment command changes without lowering the
+    # minimum motion commands needed to overcome chassis static friction.
+    building_linear_accel_mm_s2: float = 1000.0
     building_yaw_accel_deg_s2: float = 60.0
     post_build_reverse_mm: float = 200.0
     post_build_reverse_speed_mm_s: float = 300.0
@@ -199,7 +207,7 @@ class Task2Round2Config(Task2Config):
     post_tag_lateral_mm: float = 0.0
     left_wall_approach_enabled: bool = False
     post_orange_lateral_base_mm: float = 500.0
-    post_tag6_lateral_right_mm: float = 300.0
+    post_tag6_lateral_right_mm: float = 400.0
     finish_after_build: bool = True
 
 
@@ -280,19 +288,39 @@ class Task2Program(CompetitionProgram):
             previous_x, previous_z = locked_position
             tracked = [
                 block for block in candidates
-                if abs(block.x - previous_x)
-                <= cfg.building_track_max_x_jump_mm
-                and abs(block.z - previous_z)
-                <= cfg.building_track_max_z_jump_mm
+                if abs(self._building_top_reference(block)[0] - previous_x)
+                    <= cfg.building_track_max_x_jump_mm
+                and abs(self._building_top_reference(block)[1] - previous_z)
+                    <= cfg.building_track_max_z_jump_mm
             ]
             if tracked:
                 return min(tracked, key=lambda block:
-                           (block.x - previous_x) ** 2
-                           + (block.z - previous_z) ** 2)
+                           (self._building_top_reference(block)[0] - previous_x) ** 2
+                           + (self._building_top_reference(block)[1] - previous_z) ** 2)
             return None
         return min(candidates, key=lambda block:
-                   (block.x - cfg.building_target_x_mm) ** 2
-                   + (block.z - cfg.building_target_z_mm) ** 2)
+                   (self._building_top_reference(block)[0]
+                    - cfg.building_target_x_mm) ** 2
+                   + (self._building_top_reference(block)[1]
+                      - cfg.building_target_z_mm) ** 2)
+
+    @staticmethod
+    def _building_top_reference(block):
+        """Return X/Z measured from the visible upper edge of the contour."""
+        quad = getattr(block, 'quad', None)
+        if quad is None or len(quad) != 4:
+            return block.x, block.z
+        # order_corners() puts upper-left and upper-right at indices 0/1.
+        top_u = (float(quad[0][0]) + float(quad[1][0])) * 0.5
+        top_v = (float(quad[0][1]) + float(quad[1][1])) * 0.5
+        cy = 240.0
+        ref_v = 82.4
+        # Empirical competition-camera calibration: the upper edge moves
+        # downward as the robot approaches, so Z must decrease with top_v.
+        # Normalize against the confirmed target pixel row.
+        z_top = 132.8 * ref_v / max(top_v, 1.0)
+        x_top = (top_u - 320.0) * z_top / 331.9
+        return x_top, z_top
 
     @staticmethod
     def _building_motion_command(pid_output, error, *, deadband,
@@ -330,6 +358,7 @@ class Task2Program(CompetitionProgram):
         locked_position = None
         pending_position = None
         lock_frames = 0
+        lateral_aligned = False
         print('[Task2] Building visual alignment: '
               f'x={cfg.building_target_x_mm:+.1f} mm, '
               f'z={cfg.building_target_z_mm:.1f} mm')
@@ -366,19 +395,20 @@ class Task2Program(CompetitionProgram):
                     continue
 
                 last_seen = now
+                ref_x, ref_z = self._building_top_reference(block)
                 if locked_position is None:
                     if pending_position is None:
-                        pending_position = (block.x, block.z)
+                        pending_position = (ref_x, ref_z)
                         lock_frames = 1
                     else:
-                        pending_position = (block.x, block.z)
+                        pending_position = (ref_x, ref_z)
                         lock_frames += 1
                     if lock_frames >= cfg.building_track_lock_frames:
                         locked_position = pending_position
                         pending_position = None
                 else:
-                    locked_position = (block.x, block.z)
-                samples.append((block.x, block.z))
+                    locked_position = (ref_x, ref_z)
+                samples.append((ref_x, ref_z))
                 x_mm = median(item[0] for item in samples)
                 z_mm = median(item[1] for item in samples)
                 x_error = x_mm - cfg.building_target_x_mm
@@ -387,6 +417,10 @@ class Task2Program(CompetitionProgram):
                     cfg.build_tag_heading_target_cw_deg)
                 x_ok = abs(x_error) <= cfg.building_x_tolerance_mm
                 z_ok = abs(z_error) <= cfg.building_z_tolerance_mm
+                if not lateral_aligned and x_ok:
+                    lateral_aligned = True
+                    print('[Task2] Building lateral alignment complete; '
+                          'starting forward/backward alignment')
                 heading_ok = (
                     abs(heading_error)
                     <= cfg.building_heading_tolerance_deg)
@@ -403,10 +437,16 @@ class Task2Program(CompetitionProgram):
                 else:
                     confirmed = 0
                     dt = max(0.001, min(0.2, now - last_update))
-                    if abs(z_error) <= cfg.building_z_deadband_mm:
+                    if not lateral_aligned:
+                        forward_pid.reset()
+                        desired_vx = 0.0
+                    elif abs(z_error) <= cfg.building_z_deadband_mm:
                         forward_pid.reset()
                         desired_vx = 0.0
                     else:
+                        # Camera Z is positive forward (away from the camera),
+                        # matching chassis +vx. Positive error therefore
+                        # commands forward motion toward the target distance.
                         desired_vx = forward_pid.update(z_error, dt)
                         if not z_ok:
                             desired_vx = self._building_motion_command(
@@ -414,7 +454,10 @@ class Task2Program(CompetitionProgram):
                                 deadband=cfg.building_z_deadband_mm,
                                 minimum=cfg.building_min_linear_mm_s,
                                 maximum=cfg.building_max_forward_mm_s)
-                    if abs(x_error) <= cfg.building_x_deadband_mm:
+                    if lateral_aligned:
+                        lateral_pid.reset()
+                        desired_vy = 0.0
+                    elif abs(x_error) <= cfg.building_x_deadband_mm:
                         lateral_pid.reset()
                         desired_vy = 0.0
                     else:
@@ -443,6 +486,14 @@ class Task2Program(CompetitionProgram):
                     wz = self._slew_command(
                         desired_wz, wz,
                         cfg.building_yaw_accel_deg_s2, dt)
+                    # Do not let the slew limiter reduce a required forward
+                    # correction below static-friction speed; otherwise the
+                    # robot appears to stutter and never closes the Z error.
+                    if abs(desired_vx) > cfg.building_z_deadband_mm:
+                        if abs(vx) < cfg.building_min_linear_mm_s:
+                            vx = (cfg.building_min_linear_mm_s
+                                  if desired_vx > 0.0
+                                  else -cfg.building_min_linear_mm_s)
                     rpm = self.robot.chassis.mecanum_rpm(
                         vx / 10.0, vy / 10.0, wz)
                     self.robot.chassis.set_speeds(rpm)
@@ -524,7 +575,8 @@ class Task2Program(CompetitionProgram):
         print('[Task2] Grap2 complete')
         return True
 
-    def _run_build_phase(self):
+    def _run_build_alignment_and_action(self):
+        """Run the Tag6-to-Build segment shared with the standalone test."""
         cfg = self.config
         if cfg.post_tag6_lateral_right_mm > 0.0:
             self.state = Task2State.POST_TAG6_LATERAL
@@ -547,6 +599,10 @@ class Task2Program(CompetitionProgram):
                   'running Build')
         self.robot.actions.build()
         print(f'[{self.TASK_LABEL}] Build complete')
+
+    def _run_build_phase(self):
+        cfg = self.config
+        self._run_build_alignment_and_action()
 
         if cfg.finish_after_build:
             print(f'[{self.TASK_LABEL}] Round complete after Build')

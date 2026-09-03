@@ -48,6 +48,11 @@ class FirstTaskTests(unittest.TestCase):
         self.assertEqual(cfg.delivery_turn_heading_hold_ms, 0)
         self.assertEqual(cfg.delivery_tag_id, 6)
         self.assertEqual(cfg.delivery_tag_distance_mm, 425.0)
+        self.assertEqual(cfg.delivery_tag_distance_kp,
+                         1.2 / TAG_FOV_RETUNE_SCALE)
+        self.assertEqual(cfg.delivery_tag_lateral_kp,
+                         1.8 / TAG_FOV_RETUNE_SCALE)
+        self.assertEqual(cfg.delivery_tag_min_linear_mm_s, 100.0)
         self.assertAlmostEqual(
             cfg.delivery_tag_distance_tolerance_mm,
             30.0 * TAG_FOV_RETUNE_SCALE)
@@ -67,6 +72,8 @@ class FirstTaskTests(unittest.TestCase):
         self.assertEqual(cfg.delivery_tag_translation_median_frames, 5)
         self.assertEqual(cfg.delivery_heading_target_cw_deg, 180.0)
         self.assertEqual(cfg.unload_reverse_mm, 300.0)
+        self.assertEqual(cfg.post_tag_lateral_right_mm, 100.0)
+        self.assertEqual(cfg.pre_final_turn_lateral_left_mm, 100.0)
         self.assertEqual(cfg.unload_final_turn_cw_deg, 180.0)
         self.assertEqual(cfg.unload_final_heading_hold_ms, 0)
 
@@ -723,8 +730,8 @@ class FirstTaskTests(unittest.TestCase):
 
         cfg = Task1Round2Config()
         self.assertEqual(cfg.delivery_forward_base_mm, 2500.0)
-        self.assertEqual(cfg.post_tag_lateral_right_mm, 300.0)
-        self.assertEqual(cfg.pre_final_turn_lateral_left_mm, 300.0)
+        self.assertEqual(cfg.post_tag_lateral_right_mm, 400.0)
+        self.assertEqual(cfg.pre_final_turn_lateral_left_mm, 400.0)
 
         program = Task1Round2Program(FakeRobot(), cfg)
         program._drive_until_wall = lambda **kwargs: events.append(
@@ -746,14 +753,14 @@ class FirstTaskTests(unittest.TestCase):
             ('turn_to_heading', 180.0, {}),
             ('reset_field_localization',),
             ('tag_align', 6),
-            ('move', 'right', 300.0, 300.0,
+            ('move', 'right', 400.0, 300.0,
              {'hold_ms': 0, 'accel_ms': 200}),
             ('wall', 200.0, 4.0),
             ('hatch_open',),
             ('move', 'backward', 300.0, 300.0,
              {'hold_ms': 0, 'accel_ms': 200}),
             ('hatch_close',),
-            ('move', 'left', 300.0, 300.0,
+            ('move', 'left', 400.0, 300.0,
              {'hold_ms': 0, 'accel_ms': 200}),
             ('turn_to_heading', 360.0, {'hold_ms': 0}),
         ])
