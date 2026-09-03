@@ -132,12 +132,25 @@ class Task2Config(FirstTaskConfig):
     post_tag6_lateral_right_mm: float = 100.0
     post_tag6_lateral_speed_mm_s: float = 300.0
     building_target_x_mm: float = 0.0
-    # Calibrated from the current camera view at the confirmed build position.
+    # Z target is the horizontal robot-to-building distance at which Build
+    # places correctly.  With the cube camera a lower top edge means nearer.
     building_target_z_mm: float = 75.0
-    # Current confirmed build pose: top-edge vertical pixel coordinate maps to
-    # the desired Z distance.  A lower image edge means a nearer building.
-    building_top_reference_v_px: float = 82.4
-    building_top_camera_cy_px: float = 240.0
+    # Inverse-row Z model: z = building_z_scale / top_row.  The scale comes
+    # from one measured pose where the building top edge sat at image row 82.4
+    # while the robot was 132.8 mm away, so the scale is 132.8*82.4.  The Z
+    # target above then corresponds to the top edge around row scale/75 ~= 146,
+    # i.e. the upper-middle part of the frame.
+    building_z_scale_mm_px: float = 132.8 * 82.4
+    # Lateral pixels convert with the same calibrated focal length and optical
+    # center as camera_calib.json for the cube camera.
+    building_reference_fx_px: float = 331.93
+    building_reference_cx_px: float = 320.0
+    # Forward/back creep: inside this remaining Z error the approach slows to
+    # the creep band so the 100 mm/s static-friction floor cannot overshoot
+    # the +/-6 mm acceptance window and set up a forward/back limit cycle.
+    building_z_creep_start_mm: float = 30.0
+    building_z_creep_speed_mm_s: float = 90.0
+    building_z_creep_min_mm_s: float = 60.0
     # Building contours vary with occlusion and camera pitch. Keep the
     # geometric gate permissive; position and multi-frame confirmation still
     # reject isolated orange cube candidates.
@@ -155,8 +168,8 @@ class Task2Config(FirstTaskConfig):
     building_align_timeout_s: float = 7.0
     building_lost_timeout_s: float = 4.0
     building_vision_stale_s: float = 0.7
-    building_track_max_x_jump_mm: float = 90.0
-    building_track_max_z_jump_mm: float = 140.0
+    building_track_max_x_jump_mm: float = 50.0
+    building_track_max_z_jump_mm: float = 60.0
     building_track_lock_frames: int = 2
     building_control_period_s: float = 0.05
     building_forward_kp: float = 1.5
@@ -173,12 +186,15 @@ class Task2Config(FirstTaskConfig):
     building_max_forward_mm_s: float = 250.0
     building_max_lateral_mm_s: float = 250.0
     building_max_yaw_deg_s: float = 30.0
-    # Keep the minimum above chassis static friction; do not creep below it.
+    # Static-friction floor for starting motion. Required for pure lateral
+    # commands (mecanum rollers) and far forward/back approach; once the
+    # chassis is rolling the building_z_* creep band lets forward speed drop
+    # near the target instead of slamming every frame and overshooting.
     building_min_linear_mm_s: float = 100.0
     building_far_linear_mm_s: float = 150.0
     building_min_yaw_deg_s: float = 6.0
-    # Slightly soften building alignment command changes without lowering the
-    # minimum motion commands needed to overcome chassis static friction.
+    # Soften command changes; the accel limiter still allows a smooth stop as
+    # an axis enters its acceptance window.
     building_linear_accel_mm_s2: float = 1000.0
     building_yaw_accel_deg_s2: float = 60.0
     post_build_reverse_mm: float = 200.0
@@ -304,22 +320,20 @@ class Task2Program(CompetitionProgram):
                    + (self._building_top_reference(block)[1]
                       - cfg.building_target_z_mm) ** 2)
 
-    @staticmethod
-    def _building_top_reference(block):
+    def _building_top_reference(self, block):
         """Return X/Z measured from the visible upper edge of the contour."""
         quad = getattr(block, 'quad', None)
         if quad is None or len(quad) != 4:
             return block.x, block.z
+        cfg = self.config
         # order_corners() puts upper-left and upper-right at indices 0/1.
         top_u = (float(quad[0][0]) + float(quad[1][0])) * 0.5
         top_v = (float(quad[0][1]) + float(quad[1][1])) * 0.5
-        cy = 240.0
-        ref_v = 82.4
-        # Empirical competition-camera calibration: the upper edge moves
-        # downward as the robot approaches, so Z must decrease with top_v.
-        # Normalize against the confirmed target pixel row.
-        z_top = 132.8 * ref_v / max(top_v, 1.0)
-        x_top = (top_u - 320.0) * z_top / 331.9
+        # The upper edge moves downward as the robot approaches, so Z must
+        # decrease with top_v.  Normalize by the measured scale constant.
+        z_top = cfg.building_z_scale_mm_px / max(top_v, 1.0)
+        x_top = ((top_u - cfg.building_reference_cx_px)
+                 * z_top / cfg.building_reference_fx_px)
         return x_top, z_top
 
     @staticmethod
@@ -327,6 +341,29 @@ class Task2Program(CompetitionProgram):
                                  minimum, maximum, kick_error=25.0):
         """Clamp every non-zero correction above chassis static friction."""
         if abs(error) <= deadband:
+            return 0.0
+        value = max(-maximum, min(maximum, pid_output))
+        if abs(value) < minimum:
+            value = minimum if value >= 0.0 else -minimum
+        return max(-maximum, min(maximum, value))
+
+    @staticmethod
+    def _building_z_command(pid_output, z_error, cfg):
+        """Floor the forward/back command, but drop to a creep band near zero.
+
+        A flat 100 mm/s floor near the +/-6 mm acceptance window makes the
+        robot overshoot it every control tick and oscillate.  Inside the creep
+        start distance the command is clamped to a smaller band so the chassis
+        can glide to a stop inside the window; the 100 mm/s floor still starts
+        motion from standstill when far away.
+        """
+        if abs(z_error) <= cfg.building_z_creep_start_mm:
+            minimum = cfg.building_z_creep_min_mm_s
+            maximum = cfg.building_z_creep_speed_mm_s
+        else:
+            minimum = cfg.building_min_linear_mm_s
+            maximum = cfg.building_max_forward_mm_s
+        if abs(z_error) <= cfg.building_z_deadband_mm:
             return 0.0
         value = max(-maximum, min(maximum, pid_output))
         if abs(value) < minimum:
@@ -358,7 +395,13 @@ class Task2Program(CompetitionProgram):
         locked_position = None
         pending_position = None
         lock_frames = 0
-        lateral_aligned = False
+        set_profile = getattr(
+            self.robot, 'set_cube_detection_profile', None)
+        if set_profile is not None:
+            # Building align must see the bright top surface so the tracked
+            # upper edge is the real top of the stack, not the front-face
+            # boundary that biases Z low and forces a spurious forward/back.
+            set_profile('building')
         print('[Task2] Building visual alignment: '
               f'x={cfg.building_target_x_mm:+.1f} mm, '
               f'z={cfg.building_target_z_mm:.1f} mm')
@@ -406,21 +449,18 @@ class Task2Program(CompetitionProgram):
                     if lock_frames >= cfg.building_track_lock_frames:
                         locked_position = pending_position
                         pending_position = None
-                else:
-                    locked_position = (ref_x, ref_z)
                 samples.append((ref_x, ref_z))
                 x_mm = median(item[0] for item in samples)
                 z_mm = median(item[1] for item in samples)
+                # Gate the next candidate against the filtered position so a
+                # single top-edge spike cannot yank the tracker sideways.
+                locked_position = (x_mm, z_mm)
                 x_error = x_mm - cfg.building_target_x_mm
                 z_error = z_mm - cfg.building_target_z_mm
                 heading_error = self._heading_error(
                     cfg.build_tag_heading_target_cw_deg)
                 x_ok = abs(x_error) <= cfg.building_x_tolerance_mm
                 z_ok = abs(z_error) <= cfg.building_z_tolerance_mm
-                if not lateral_aligned and x_ok:
-                    lateral_aligned = True
-                    print('[Task2] Building lateral alignment complete; '
-                          'starting forward/backward alignment')
                 heading_ok = (
                     abs(heading_error)
                     <= cfg.building_heading_tolerance_deg)
@@ -437,46 +477,52 @@ class Task2Program(CompetitionProgram):
                 else:
                     confirmed = 0
                     dt = max(0.001, min(0.2, now - last_update))
-                    if not lateral_aligned:
+                    # Lateral alignment has priority: while X is out of
+                    # tolerance, hold Z still and re-center X; once X is in
+                    # tolerance, hold X and close Z.  Each axis only moves when
+                    # it is actually outside its own window, so an aligned axis
+                    # is never re-kicked at minimum speed, and an axis that
+                    # later drifts out is corrected again (no one-shot latch).
+                    if not x_ok:
                         forward_pid.reset()
                         desired_vx = 0.0
-                    elif abs(z_error) <= cfg.building_z_deadband_mm:
-                        forward_pid.reset()
-                        desired_vx = 0.0
-                    else:
-                        # Camera Z is positive forward (away from the camera),
-                        # matching chassis +vx. Positive error therefore
-                        # commands forward motion toward the target distance.
-                        desired_vx = forward_pid.update(z_error, dt)
-                        if not z_ok:
-                            desired_vx = self._building_motion_command(
-                                desired_vx, z_error,
-                                deadband=cfg.building_z_deadband_mm,
-                                minimum=cfg.building_min_linear_mm_s,
-                                maximum=cfg.building_max_forward_mm_s)
-                    if lateral_aligned:
-                        lateral_pid.reset()
-                        desired_vy = 0.0
-                    elif abs(x_error) <= cfg.building_x_deadband_mm:
-                        lateral_pid.reset()
-                        desired_vy = 0.0
-                    else:
-                        desired_vy = lateral_pid.update(x_error, dt)
-                        if not x_ok:
+                        if abs(x_error) <= cfg.building_x_deadband_mm:
+                            lateral_pid.reset()
+                            desired_vy = 0.0
+                        else:
+                            desired_vy = lateral_pid.update(x_error, dt)
                             desired_vy = self._building_motion_command(
                                 desired_vy, x_error,
                                 deadband=cfg.building_x_deadband_mm,
                                 minimum=cfg.building_min_linear_mm_s,
                                 maximum=cfg.building_max_lateral_mm_s)
+                    else:
+                        lateral_pid.reset()
+                        desired_vy = 0.0
+                        if abs(z_error) <= cfg.building_z_deadband_mm:
+                            forward_pid.reset()
+                            desired_vx = 0.0
+                        elif not z_ok:
+                            # Camera Z is positive forward (away from the
+                            # camera), matching chassis +vx, so a positive
+                            # error commands forward motion toward the target.
+                            desired_vx = forward_pid.update(z_error, dt)
+                            desired_vx = self._building_z_command(
+                                desired_vx, z_error, cfg)
+                        else:
+                            forward_pid.reset()
+                            desired_vx = 0.0
                     if (abs(heading_error)
                             <= cfg.building_heading_deadband_deg):
                         heading_pid.reset()
                         desired_wz = 0.0
-                    else:
+                    elif not heading_ok:
                         desired_wz = heading_pid.update(heading_error, dt)
-                        if not heading_ok:
-                            desired_wz = self._minimum_command(
-                                desired_wz, cfg.building_min_yaw_deg_s)
+                        desired_wz = self._minimum_command(
+                            desired_wz, cfg.building_min_yaw_deg_s)
+                    else:
+                        heading_pid.reset()
+                        desired_wz = 0.0
                     vx = self._slew_command(
                         desired_vx, vx,
                         cfg.building_linear_accel_mm_s2, dt)
@@ -486,14 +532,6 @@ class Task2Program(CompetitionProgram):
                     wz = self._slew_command(
                         desired_wz, wz,
                         cfg.building_yaw_accel_deg_s2, dt)
-                    # Do not let the slew limiter reduce a required forward
-                    # correction below static-friction speed; otherwise the
-                    # robot appears to stutter and never closes the Z error.
-                    if abs(desired_vx) > cfg.building_z_deadband_mm:
-                        if abs(vx) < cfg.building_min_linear_mm_s:
-                            vx = (cfg.building_min_linear_mm_s
-                                  if desired_vx > 0.0
-                                  else -cfg.building_min_linear_mm_s)
                     rpm = self.robot.chassis.mecanum_rpm(
                         vx / 10.0, vy / 10.0, wz)
                     self.robot.chassis.set_speeds(rpm)
@@ -506,6 +544,8 @@ class Task2Program(CompetitionProgram):
                 time.sleep(cfg.building_control_period_s)
         finally:
             self.robot.chassis.set_speeds([0, 0, 0, 0])
+            if set_profile is not None:
+                set_profile('default')
         raise RuntimeError('building visual alignment timed out')
 
     def _align_building_or_continue(self) -> bool:

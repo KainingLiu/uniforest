@@ -40,6 +40,21 @@ class CubeDetectionProfileTests(unittest.TestCase):
         self.assertEqual(morphology_for('task2_orange'), (3, 1))
         self.assertEqual(max_front_aspect_for('task2_orange'), 5.2)
 
+    def test_building_profile_includes_bright_top_surface(self):
+        building = profile_named(color_profiles_for('building'), 'Orange')
+        np.testing.assert_array_equal(building['hsv_low'], [0, 35, 40])
+        np.testing.assert_array_equal(building['hsv_high'], [50, 255, 255])
+        self.assertEqual(roi_top_ratio_for('building'), 0.0)
+        self.assertEqual(morphology_for('building'), (5, 2))
+        # The lit building top measures H~30-45, S~40-60, V~90-205 on the
+        # field and must be inside the building band while the saturated
+        # orange front (H~25) stays inside too.
+        low = building['hsv_low']
+        high = building['hsv_high']
+        for pixel in ([33, 50, 180], [32, 55, 100], [25, 136, 202]):
+            self.assertTrue(all(low[i] <= pixel[i] <= high[i]
+                                for i in range(3)))
+
     def test_task2_roi_excludes_upper_half_only(self):
         frame = np.zeros((480, 640, 3), dtype=np.uint8)
         orange_bgr = (0, 140, 255)

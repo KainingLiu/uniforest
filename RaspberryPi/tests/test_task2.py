@@ -104,7 +104,9 @@ class Task2Tests(unittest.TestCase):
             FirstTaskConfig().delivery_tag_fine_gain_scale)
         self.assertEqual(cfg.building_target_x_mm, 0.0)
         self.assertEqual(cfg.building_target_z_mm, 75.0)
-        self.assertAlmostEqual(cfg.building_top_reference_v_px, 82.4)
+        self.assertAlmostEqual(cfg.building_z_scale_mm_px, 132.8 * 82.4)
+        self.assertAlmostEqual(cfg.building_reference_fx_px, 331.93)
+        self.assertEqual(cfg.building_reference_cx_px, 320.0)
         self.assertEqual(cfg.building_min_confidence, 35.0)
         self.assertEqual(
             (cfg.building_min_height_width_ratio,
@@ -113,8 +115,11 @@ class Task2Tests(unittest.TestCase):
         self.assertEqual(cfg.building_confirm_frames, 3)
         self.assertEqual(cfg.building_align_timeout_s, 7.0)
         self.assertEqual(cfg.building_lost_timeout_s, 4.0)
-        self.assertEqual(cfg.building_track_max_x_jump_mm, 90.0)
-        self.assertEqual(cfg.building_track_max_z_jump_mm, 140.0)
+        self.assertEqual(cfg.building_track_max_x_jump_mm, 50.0)
+        self.assertEqual(cfg.building_track_max_z_jump_mm, 60.0)
+        self.assertEqual(cfg.building_z_creep_start_mm, 30.0)
+        self.assertEqual(cfg.building_z_creep_speed_mm_s, 90.0)
+        self.assertEqual(cfg.building_z_creep_min_mm_s, 60.0)
         self.assertEqual(cfg.building_forward_kp, 1.5)
         self.assertEqual(cfg.building_lateral_kp, 1.8)
         self.assertEqual(cfg.building_min_linear_mm_s, 100.0)
@@ -366,14 +371,28 @@ class Task2Tests(unittest.TestCase):
         self.assertIs(program._building_from_result(result), building)
 
     def test_building_top_reference_uses_upper_edge_for_lateral_position(self):
-        program = Task2Program(SimpleNamespace())
+        cfg = Task2Config()
+        program = Task2Program(SimpleNamespace(), cfg)
         block = SimpleNamespace(
             x=35.0, z=200.0,
             quad=[[300.0, 100.0], [340.0, 100.0],
                   [360.0, 260.0], [280.0, 260.0]])
         x_ref, z_ref = program._building_top_reference(block)
-        self.assertAlmostEqual(x_ref, (320.0 - 320.0) * 200.0 / 331.9)
-        self.assertEqual(z_ref, 200.0)
+        self.assertAlmostEqual(x_ref, 0.0)
+        self.assertAlmostEqual(z_ref, cfg.building_z_scale_mm_px / 100.0)
+
+    def test_building_top_reference_maps_calibrated_row_to_z_target(self):
+        cfg = Task2Config()
+        program = Task2Program(SimpleNamespace(), cfg)
+        target_row = cfg.building_z_scale_mm_px / cfg.building_target_z_mm
+        block = SimpleNamespace(
+            x=35.0, z=200.0,
+            quad=[[300.0, target_row], [340.0, target_row],
+                  [360.0, target_row + 120.0],
+                  [280.0, target_row + 120.0]])
+        x_ref, z_ref = program._building_top_reference(block)
+        self.assertAlmostEqual(x_ref, 0.0)
+        self.assertAlmostEqual(z_ref, cfg.building_target_z_mm)
 
     def test_building_top_reference_z_decreases_for_wider_nearer_edge(self):
         program = Task2Program(SimpleNamespace())
@@ -473,7 +492,7 @@ class Task2Tests(unittest.TestCase):
                 timestamp=now + index,
                 all_blocks=[SimpleNamespace(
                     color_name='Orange', confidence=55.0,
-                    x=0.0, z=155.0, height_width_ratio=1.080)])
+                    x=0.0, z=75.0, height_width_ratio=1.080)])
             for index in range(1, 4)
         ])
 
@@ -501,7 +520,7 @@ class Task2Tests(unittest.TestCase):
         self.assertFalse(any(command != (0, 0, 0, 0)
                              for command in robot.chassis.commands))
 
-    def test_building_pid_moves_toward_forward_right_offset(self):
+    def test_building_pid_lateral_first_then_forward(self):
         class FakeChassis:
             def __init__(self):
                 self.commands = []
@@ -514,9 +533,14 @@ class Task2Tests(unittest.TestCase):
                 self.commands.append(tuple(values))
 
         now = time.time()
+        # Frame 1: off-center but at the right Z -> lateral-only correction.
+        # Frame 2: centered in X but too far -> forward-only correction.
+        # Frame 3: centered and at target Z -> accept.
+        # Z steps are kept small so they stay within the tracking jump gate.
         observations = iter([
-            (20.0, 155.0 + 30.0),
-            (0.0, 155.0),
+            (20.0, 75.0),
+            (0.0, 120.0),
+            (0.0, 75.0),
         ])
 
         class FakeRobot:
@@ -538,7 +562,7 @@ class Task2Tests(unittest.TestCase):
         cfg = Task2Config(
             building_confirm_frames=1,
             building_median_frames=1,
-            building_control_period_s=0.0,
+            building_control_period_s=0.05,
         )
         robot = FakeRobot()
         program = Task2Program(robot, cfg)
@@ -546,11 +570,13 @@ class Task2Tests(unittest.TestCase):
 
         program._align_building()
 
-        motion = next(command for command in robot.chassis.commands
-                      if command != (0, 0, 0, 0))
-        self.assertGreater(motion[0], 0.0)
-        self.assertGreater(motion[0], 0.0)
-        self.assertGreater(motion[1], 0.0)
+        motions = [command for command in robot.chassis.commands
+                   if command != (0, 0, 0, 0)]
+        self.assertTrue(any(motion[1] > 0.0 for motion in motions),
+                        'expected a right lateral correction')
+        self.assertTrue(any(motion[0] > 0.0 for motion in motions),
+                        'expected a forward correction')
+        self.assertEqual(robot.chassis.commands[-1], (0, 0, 0, 0))
 
     def test_building_loss_or_timeout_stops_then_continues(self):
         for message in (

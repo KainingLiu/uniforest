@@ -13,6 +13,16 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from vision import CubeDetector
+from Strategy.task2 import Task2Config
+
+
+_BUILD_CFG = Task2Config()
+
+
+def top_left_u(quad) -> float:
+    if quad is None or len(quad) != 4:
+        return 320.0
+    return (quad[0][0] + quad[1][0]) / 2.0
 
 
 def quad_height_width_ratio(quad) -> float:
@@ -23,15 +33,26 @@ def quad_height_width_ratio(quad) -> float:
     return height / max(width, 1e-6)
 
 
+def top_edge_row(quad) -> float:
+    """Return the pixel row of the visible upper edge (quad rows 0/1)."""
+    if quad is None or len(quad) != 4:
+        return 0.0
+    return (quad[0][1] + quad[1][1]) / 2.0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument('--camera', default='cube')
     parser.add_argument('--duration', type=float, default=5.0)
+    parser.add_argument('--profile', default='building',
+                        help="cube detection profile; use 'building' to see "
+                             'the bright top surface, or default/task2_orange')
     args = parser.parse_args()
 
     detector = CubeDetector(camera_id=args.camera, show_gui=False)
     if not detector.start():
         return 1
+    detector.set_detection_profile(args.profile)
 
     samples = []
     last_timestamp = None
@@ -49,8 +70,16 @@ def main() -> int:
                 block = max(oranges, key=lambda item:
                             quad_height_width_ratio(item.quad))
                 ratio = block.height_width_ratio
-                samples.append((block.x, block.z, block.confidence, ratio))
+                row = top_edge_row(block.quad)
+                z_model = _BUILD_CFG.building_z_scale_mm_px / max(row, 1.0)
+                x_model = ((top_left_u(block.quad)
+                            - _BUILD_CFG.building_reference_cx_px)
+                           * z_model / _BUILD_CFG.building_reference_fx_px)
+                samples.append((block.x, block.z, block.confidence, ratio,
+                                row, z_model, x_model))
                 print(f'BUILDING_SAMPLE x={block.x:+.2f} z={block.z:.2f} '
+                      f'top_row={row:.2f} z_model={z_model:.2f} '
+                      f'x_model={x_model:+.2f} '
                       f'confidence={block.confidence:.1f} '
                       f'height_width={ratio:.3f}')
             time.sleep(0.01)
@@ -60,12 +89,12 @@ def main() -> int:
     if not samples:
         print('BUILDING_NOT_FOUND')
         return 1
+    sample = lambda index: median(item[index] for item in samples)
     print('BUILDING_MEDIAN '
-          f'x={median(item[0] for item in samples):+.2f} '
-          f'z={median(item[1] for item in samples):.2f} '
-          f'confidence={median(item[2] for item in samples):.1f} '
-          f'height_width={median(item[3] for item in samples):.3f} '
-          f'samples={len(samples)}')
+          f'x={sample(0):+.2f} z={sample(1):.2f} '
+          f'top_row={sample(4):.2f} z_model={sample(5):.2f} '
+          f'x_model={sample(6):+.2f} confidence={sample(2):.1f} '
+          f'height_width={sample(3):.3f} samples={len(samples)}')
     return 0
 
 

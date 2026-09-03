@@ -99,11 +99,12 @@ CONFIG = {
         },
         {
             "name": "Purple",
-            # With the competition camera's automatic white balance, the
-            # purple EVA spans violet to magenta and its lit top has lower
-            # saturation than the front face.
-            "hsv_low": np.array([110, 50, 30]),
-            "hsv_high": np.array([145, 255, 255]),
+            # Calibrated at manual exposure 312 / gain 32 with automatic white
+            # balance: the purple EVA then measures H~105-150 (median ~113),
+            # S~45+, V~35+.  The green field sits at H<=100, so a hue floor of
+            # 105 separates them.
+            "hsv_low": np.array([105, 40, 35]),
+            "hsv_high": np.array([155, 255, 255]),
             "draw_color": (200, 80, 180),
         },
     ],
@@ -137,6 +138,17 @@ DETECTION_PROFILE_OVERRIDES = {
             "hsv_high": np.array([35, 255, 255]),
         },
     },
+    # Building align views the full 3-layer orange stack from the cube camera.
+    # The lit top surface reads H~30-45, S~40-60 and is excluded by the
+    # cube-facing ranges, collapsing the contour to the front face and biasing
+    # the Z reference far too low in the frame.  Widen the band only while
+    # aligning so the true upper edge (the far edge of the top face) is found.
+    "building": {
+        "Orange": {
+            "hsv_low": np.array([0, 35, 40]),
+            "hsv_high": np.array([50, 255, 255]),
+        },
+    },
 }
 
 # Ignore field markings and other orange objects above the Task2 pickup area.
@@ -144,6 +156,7 @@ DETECTION_PROFILE_OVERRIDES = {
 DETECTION_PROFILE_ROI_TOP_RATIO = {
     "default": 0.0,
     "task2_orange": 0.5,
+    "building": 0.0,
 }
 
 # Task2 cubes are close together in the pickup view. Keep the gap between
@@ -151,12 +164,14 @@ DETECTION_PROFILE_ROI_TOP_RATIO = {
 DETECTION_PROFILE_MORPHOLOGY = {
     "default": (CONFIG["morph_kernel_size"], CONFIG["morph_iterations"]),
     "task2_orange": (3, 1),
+    "building": (CONFIG["morph_kernel_size"], CONFIG["morph_iterations"]),
 }
 
 # A merged pair produces an unusually wide front; reject it in Task2 only.
 DETECTION_PROFILE_MAX_FRONT_ASPECT = {
     "default": CONFIG["max_front_aspect_ratio"],
     "task2_orange": 5.2,
+    "building": CONFIG["max_front_aspect_ratio"],
 }
 
 
