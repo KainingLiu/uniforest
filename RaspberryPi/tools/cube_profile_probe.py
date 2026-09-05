@@ -15,6 +15,9 @@ from vision.cube_detector import (  # noqa: E402
     DETECTION_PROFILE_OVERRIDES,
     color_profiles_for,
     detect_all_blocks,
+    roi_top_ratio_for,
+    morphology_for,
+    max_front_aspect_for,
 )
 
 
@@ -44,7 +47,11 @@ def main() -> int:
     profiles = args.profiles or sorted(DETECTION_PROFILE_OVERRIDES)
     for profile_name in profiles:
         blocks = detect_all_blocks(
-            frame, state, color_profiles_for(profile_name))
+            frame, state, color_profiles_for(profile_name),
+            roi_top_ratio=roi_top_ratio_for(profile_name),
+            morph_kernel_size=morphology_for(profile_name)[0],
+            morph_iterations=morphology_for(profile_name)[1],
+            max_front_aspect_ratio=max_front_aspect_for(profile_name))
         print(f'{profile_name}: {len(blocks)} block(s)')
         for block in blocks:
             print(

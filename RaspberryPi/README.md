@@ -52,9 +52,52 @@
 | Task2 紫色 | 0.0 mm | [-5.0, 5.0] mm | [-3.0, 3.0] mm |
 | Task2 橙色 | 0.0 mm | [-20.0, 5.0] mm | [-3.0, 3.0] mm |
 
-贴合的橙色方块在整体轮廓内部存在黑色接缝时，检测器会先保留橙色连通区域，
-再检查贯穿大部分区域的低亮度接缝，并将其分割为独立候选。分割结果仍需通过
-四边形、尺寸和三维距离校验；普通单方块不会进入接缝分割路径。
+橙色拾取使用 `vision/orange_cluster.py` 的顶面簇检测：HSV 分割、
+Otsu 顶面提取、PCA 旋正、四边拟合和赛前固定平面映射。
+每个连通簇只返回左首方块，不依赖黑色接缝，也不会将整簇中心作为单块中心。
+分离的簇各返回一个目标；策略仍使用原有目标跟踪与选择机制。
+`default` 对应 demo task1，`task2_orange` 对应 demo task2。
+Purple 与 `building` 的 HSV、轮廓提取和定位路径保持原样。
+
+2026-09-05 橙色识别移植记录（尚未在比赛机器人上实测）：
+
+| 行为变化 | 受影响模块 | 测试/文档 |
+| --- | --- | --- |
+| 橙色从单轮廓宽度估距改为簇左缘定位 | orange_cluster、orange_calibration、cube_detector | test_orange_clusters；本节 |
+| Task1/Task2 共用 demo 当前相同的几何基线 | orange_config | 无缝紧贴、小间隙、大间隙、单块、三块 |
+| 每帧每簇重新估计位姿，避免机器人移动后沿用旧平面 | orange_cluster | 相机距离变化回归 |
+| 保持毫米、X 向右、Y 向上、Z 向前接口；坐标参考为顶面中心 | BlockInfo / Task1、Task2 目标跟踪输入 | 合成投影真值与符号检查 |
+| 保留 Task2 下半图 ROI，裁到 ROI 边界或左缘时拒绝目标 | cube_detector | ROI、画面裁边测试 |
+
+`vision/orange_config.py` 集中维护橙色参数；Task1 固定平面数据保存在
+`vision/task1_orange_fixed_calibration.json` 和
+`vision/task2_orange_fixed_calibration.json`，并由
+`vision/orange_fixed_geometry.py` 在模块加载时直接使用。当前从 demo 移植的基线为：
+俯角 45°、名义焦距 0.8×图宽、边长 10 cm、HSV `[0,45,60]` 至
+`[40,255,255]`；面积门槛 4000 px 按 1280 像素参考图宽平方缩放，
+形态学核同样按图宽缩放。为支持任意间距下大小不同的独立目标，关闭相对最大簇面积淘汰。
+这些不是当前比赛相机的已确认硬件事实；未复制 demo 的 Windows 曝光值、
+采集分辨率或相机索引。原相机曝光与紫色/建筑标定保持不变。
+顶面亮度不足、左缘不完整或几何校验不通过时可能无输出，不能保证任意遮挡下识别。
+固定 80 分置信度表示几何门槛通过，并非测量准确率。
+
+现场测试入口：先用 `python tools/cube_profile_probe.py IMAGE --profile default`
+或 `--profile task2_orange` 检查比赛相机原图，再使用
+`python vision/cube_detector.py --camera cube --no-gui --profile task2_orange`
+做只读检测。必须分别记录两轮 Task1/Task2 的曝光、俯角、单块/紧贴/不同间距、
+X/Z 误差及帧率；顶面中心与旧坐标参考不同，抓取前需确认对准误差。
+当前现场结果：未测试。现有 NumPy/OpenCV 依赖足够，无新增依赖。
+
+本地验证（2026-09-05）：新增 7 项识别测试全部通过，涵盖旋转顶面及降采样；
+Python 语法检查、import_smoke、A 板 Debug 配置/构建通过。
+全量 121 项中 115 项通过，5 项失败、1 项错误；使用 HEAD 原始检测器及原始
+检测测试复跑基线 116 项，复现相同 6 项问题（Task1 抖动/路线/对象身份/参数
+断言、tracker 对象身份、Task2 紫色搜索）。本次未改这些策略行为。
+
+
+协议未变：本次核对 Python schema/commands 与 A 板 protocol.h/protocol.c，
+未修改命令编号、载荷长度、字节序、80 字节遥测及急停处理。
+200 ms 失联停止约束和策略故障后不自动继续的行为保持原样。
 
 cube 相机 Linux 当前固定手动曝光 `exposure=312`、`gain=32`，白平衡保持自动（`white_balance` 置空），以避免运动/自动曝光引起轮廓顶边与颜色抖动；Orange、Purple 色带与 `building` 色带都在该曝光下标定，改动曝光或场地光照后需重测色带。
 
@@ -375,3 +418,5 @@ cd /home/uniforest/Uniforest/RaspberryPi
 `task2_main.py` 保留为第一轮 Task2 的独立入口及无运动预检入口。轮次明确的
 调试统一使用 `main.py --task task2-r1` 或 `main.py --task task2-r2`；完整比赛
 使用 `main.py`（默认 `--task all`）。
+Task1 和 Task2 橙色返回值各自维护独立的 `X_OFFSET_MM`，当前均为 `+5.0 mm`；
+修改其中一个任务不会影响另一个任务。该偏置只作用于橙色 `BlockInfo.x`，紫色和建筑不受影响。

@@ -39,9 +39,14 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import List, Optional, Tuple
 
+
 try:
+    from .orange_cluster import Detector as OrangeClusterDetector
+    from .orange_config import config_for as orange_config_for
     from .camera_devices import default_camera_selector, resolve_camera_source
 except ImportError:  # Direct execution: python vision/cube_detector.py
+    from orange_cluster import Detector as OrangeClusterDetector
+    from orange_config import config_for as orange_config_for
     from camera_devices import default_camera_selector, resolve_camera_source
 
 
@@ -196,6 +201,8 @@ def color_profiles_for(detection_profile: str):
         if override is not None:
             profile["hsv_low"] = override["hsv_low"].copy()
             profile["hsv_high"] = override["hsv_high"].copy()
+        if base["name"] == "Orange" and detection_profile != "building":
+            profile["orange_cluster_profile"] = detection_profile
         profiles.append(profile)
     return profiles
 
@@ -538,7 +545,7 @@ def detect_all_blocks(frame, state, color_profiles=None,
 
     all_blocks = []
     if color_profiles is None:
-        color_profiles = CONFIG["color_profiles"]
+        color_profiles = color_profiles_for("default")
     ksize = (CONFIG["morph_kernel_size"]
              if morph_kernel_size is None else morph_kernel_size)
     iterations = (CONFIG["morph_iterations"]
@@ -550,6 +557,35 @@ def detect_all_blocks(frame, state, color_profiles=None,
     roi_top_px = max(0, min(frame.shape[0],
                             round(frame.shape[0] * roi_top_ratio)))
     for profile in color_profiles:
+        orange_profile = profile.get("orange_cluster_profile")
+        if profile["name"] == "Orange" and orange_profile is not None:
+            orange_cfg = orange_config_for(orange_profile, frame.shape[1])
+            orange_cfg.ROI_TOP_RATIO = roi_top_ratio
+            detector = OrangeClusterDetector(orange_cfg)
+            # Apply pickup ROI without shifting full-frame coordinates.
+            orange_frame = frame.copy() if roi_top_px else frame
+            if roi_top_px:
+                orange_frame[:roi_top_px] = 0
+            cubes, info = detector.detect(orange_frame)
+            state["orange_diagnostics"] = {k: v for k, v in info.items() if k != "mask"}
+            for cube in cubes:
+                if not cube.position_valid or cube.clipped:
+                    continue
+                # Demo camera Y points down; competition Y points up. cm -> mm.
+                x, y, z = np.asarray(cube.cam_xyz) * (10.0, -10.0, 10.0)
+                x += float(getattr(orange_cfg, "X_OFFSET_MM", 0.0))
+                # Field calibration: orange pickup center is 5 mm to the
+                # right of the camera-frame reference for both task profiles.
+                x += 5.0
+                if not np.isfinite([x, y, z]).all() or not 20 < z < 5000:
+                    continue
+                quad = np.asarray(cube.top_quad, np.float32) / info["scale"]
+                w_px, h_px = measure_face_size(quad)
+                all_blocks.append(BlockInfo(
+                    color_name="Orange", draw_color=profile["draw_color"],
+                    x=float(x), y=float(y), z=float(z), confidence=80.0,
+                    height_width_ratio=h_px / max(w_px, 1e-6), quad=quad.copy()))
+            continue
         mask = cv2.inRange(hsv, profile["hsv_low"], profile["hsv_high"])
         if roi_top_px:
             mask[:roi_top_px, :] = 0
@@ -578,9 +614,10 @@ def detect_all_blocks(frame, state, color_profiles=None,
                 height_width_ratio=h_px / max(w_px, 1e-6),
                 quad=quad.copy(),
             ))
-    # Sort by true camera-relative distance so the first candidate is the
-    # physically nearest cube, including cubes away from the optical axis.
-    all_blocks.sort(key=lambda b: b.x * b.x + b.y * b.y + b.z * b.z)
+    # The pickup controller centers lateral image offset.  Select the
+    # candidate closest to the requested lateral centerline; depth and
+    # vertical distance must not make a farther-left/right cube win.
+    all_blocks.sort(key=lambda b: abs(b.x))
     return all_blocks
 
 

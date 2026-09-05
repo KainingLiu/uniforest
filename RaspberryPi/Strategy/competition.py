@@ -92,7 +92,9 @@ class FirstTaskConfig:
     orange_fine_min_x_mm: float = TASK1_ORANGE.fine_min_x_mm
     orange_fine_max_x_mm: float = TASK1_ORANGE.fine_max_x_mm
     align_kp: float = 1.5
-    align_ki: float = 0.10
+    # Integral action is disabled for lateral visual pickup: camera latency
+    # and the minimum breakout speed make accumulated error overshoot-prone.
+    align_ki: float = 0.0
     align_kd: float = 0.0
     align_integral_limit: float = 300.0
     align_min_speed_mm_s: float = 100.0
@@ -100,10 +102,14 @@ class FirstTaskConfig:
     align_start_speed_mm_s: float = 40.0
     align_max_speed_mm_s: float = 250.0
     align_fast_speed_mm_s: float = 420.0
-    align_slowdown_start_mm: float = 100.0
+    # Begin braking well before the narrow pickup window; the breakout speed
+    # remains unchanged so the chassis still overcomes static friction.
+    align_slowdown_start_mm: float = 180.0
     align_creep_start_mm: float = 30.0
     align_accel_mm_s2: float = 300.0
-    align_filter_frames: int = 3
+    # One-frame control feedback avoids commanding motion from an old median
+    # while preserving target confirmation in the search tracker.
+    align_filter_frames: int = 1
     align_track_max_x_jump_mm: float = 45.0
     align_track_max_z_jump_mm: float = 80.0
     # Zero keeps the legacy nearest-candidate behavior. Task2 overrides this
@@ -111,7 +117,7 @@ class FirstTaskConfig:
     align_track_ambiguity_margin_mm: float = 12.0
     align_window_hysteresis_mm: float = 5.0
     align_window_hold_s: float = 0.20
-    align_control_period_s: float = 0.05
+    align_control_period_s: float = 0.03
     align_lost_timeout_s: float = 0.5
     align_timeout_s: float = 10.0
     post_grab_settle_s: float = 0.0
