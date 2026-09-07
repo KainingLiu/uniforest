@@ -46,10 +46,10 @@ class TaskRunnerTests(unittest.TestCase):
             ('run', 'task2-r2'),
         ])
 
-    def test_round_selections_skip_task0(self):
+    def test_round_selections_start_with_task0(self):
         for selection, expected in (
-                ('round1', ['task1-r1', 'task2-r1']),
-                ('round2', ['task1-r2', 'task2-r2'])):
+                ('round1', ['task0', 'task1-r1', 'task2-r1']),
+                ('round2', ['task0', 'task1-r2', 'task2-r2'])):
             with self.subTest(selection=selection):
                 events = []
                 result = run_tasks(
@@ -140,19 +140,21 @@ class TaskRunnerTests(unittest.TestCase):
         ])
 
     def test_task0_failure_prevents_task1_start(self):
-        events = []
-
-        result = run_tasks(
-            object(), 'all',
-            task0_factory=self._factory('task0', events, result=8),
-            task1_factory=self._factory('task1', events),
-            task2_factory=self._factory('task2', events))
-
-        self.assertEqual(result, 8)
-        self.assertEqual([event[:2] for event in events], [
-            ('create', 'task0'),
-            ('run', 'task0'),
-        ])
+        for selection in ('all', 'round1', 'round2'):
+            with self.subTest(selection=selection):
+                events = []
+                result = run_tasks(
+                    object(), selection,
+                    task0_factory=self._factory('task0', events, result=8),
+                    task1_factory=self._factory('task1-r1', events),
+                    task2_factory=self._factory('task2-r1', events),
+                    task1_round2_factory=self._factory('task1-r2', events),
+                    task2_round2_factory=self._factory('task2-r2', events))
+                self.assertEqual(result, 8)
+                self.assertEqual([event[:2] for event in events], [
+                    ('create', 'task0'),
+                    ('run', 'task0'),
+                ])
 
     def test_runner_records_task_boundaries_when_diagnostics_available(self):
         events = []

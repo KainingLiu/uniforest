@@ -157,6 +157,31 @@ class ChassisPositionTests(unittest.TestCase):
         self.assertTrue(result.cancelled)
         self.assertEqual(transport.commands, [(0, 0, 0, 0)])
 
+    def test_stalled_linear_moves_use_travel_time_plus_two_second_margin(self):
+        for distance, speed, accel, hold, expected in (
+                (100, 400, 300, 0, 2.55),
+                (1500, 750, 800, 0, 4.8),
+                (100, 400, 300, 700, 3.25)):
+            with self.subTest(distance=distance, hold=hold):
+                clock = SimpleNamespace(now=0.0)
+                commands = []
+                transport = SimpleNamespace(set_chassis_speed=lambda rpm: commands.append(rpm))
+                chassis = Chassis(transport)
+                telem = TelemBatch.unpack(make_telem_payload((0, 0, 0, 0)))
+
+                def sleep(seconds):
+                    clock.now += seconds
+
+                with patch('control.chassis.time.monotonic', lambda: clock.now):
+                    result = chassis._move_linear(
+                        round(distance * COUNTS_PER_CM / 10), [-1, 1, 1, -1],
+                        chassis._mm_s_to_rpm(speed), transport, lambda: telem,
+                        distance, sleep_fn=sleep, accel_ms=accel, hold_ms=hold)
+                self.assertTrue(result.timed_out)
+                self.assertFalse(result.cancelled)
+                self.assertAlmostEqual(result.elapsed_ms / 1000, expected, delta=0.03)
+                self.assertEqual(commands[-1], [0, 0, 0, 0])
+
     def test_turn_tracks_yaw_across_wrap_and_holds(self):
         class FakeClock:
             def __init__(self):

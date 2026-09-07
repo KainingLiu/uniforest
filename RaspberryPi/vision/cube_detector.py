@@ -137,6 +137,7 @@ CONFIG = {
 # is red-orange while the lit top is around H=31, outside Task1's H<=25 range.
 DETECTION_PROFILE_OVERRIDES = {
     "default": {},
+    "task2_purple": {},
     "task2_orange": {
         "Orange": {
             "hsv_low": np.array([4, 65, 55]),
@@ -160,6 +161,7 @@ DETECTION_PROFILE_OVERRIDES = {
 # Coordinates and camera calibration remain relative to the full frame.
 DETECTION_PROFILE_ROI_TOP_RATIO = {
     "default": 0.0,
+    "task2_purple": 0.4,
     "task2_orange": 0.5,
     "building": 0.0,
 }
@@ -168,6 +170,7 @@ DETECTION_PROFILE_ROI_TOP_RATIO = {
 # neighboring cubes instead of bridging it with the default heavy close.
 DETECTION_PROFILE_MORPHOLOGY = {
     "default": (CONFIG["morph_kernel_size"], CONFIG["morph_iterations"]),
+    "task2_purple": (CONFIG["morph_kernel_size"], CONFIG["morph_iterations"]),
     "task2_orange": (3, 1),
     "building": (CONFIG["morph_kernel_size"], CONFIG["morph_iterations"]),
 }
@@ -175,6 +178,7 @@ DETECTION_PROFILE_MORPHOLOGY = {
 # A merged pair produces an unusually wide front; reject it in Task2 only.
 DETECTION_PROFILE_MAX_FRONT_ASPECT = {
     "default": CONFIG["max_front_aspect_ratio"],
+    "task2_purple": CONFIG["max_front_aspect_ratio"],
     "task2_orange": 5.2,
     "building": CONFIG["max_front_aspect_ratio"],
 }
@@ -192,6 +196,8 @@ def color_profiles_for(detection_profile: str):
 
     profiles = []
     for base in CONFIG["color_profiles"]:
+        if detection_profile == "task2_purple" and base["name"] != "Purple":
+            continue
         profile = {
             **base,
             "hsv_low": base["hsv_low"].copy(),
@@ -593,6 +599,8 @@ def detect_all_blocks(frame, state, color_profiles=None,
                                 iterations=iterations)
         mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel,
                                 iterations=iterations)
+        if roi_top_px:
+            mask[:roi_top_px, :] = 0
         quads = find_quadrilaterals(
             mask, max_front_aspect_ratio=max_aspect)
         # A touching pair can be one external contour. Recover individual

@@ -17,7 +17,7 @@ RoboGame 2026 竞技组 Uniforest 队机器人软件仓库。当前实现由 Ras
 - 两轮 Task1/Task2 普通定距平移：400 mm/s、300 ms 加速。
 - 长距离前进和第一轮 Task2 Build 后左移：750 mm/s、800 ms 加速。
 - 两轮 Task1 前进补偿基准均为 2800 mm；两轮 Task2 橙色抓取阶段净右移目标均为 700 mm，均扣除对应阶段编码器实测净右移量。
-- 第一轮 Task2 Build 后执行后退 200 mm、顺时针转 180°、左移 2500 mm、左顶墙；第二轮在 Build 后结束。
+- 第一轮 Task2 Build 后执行后退 100 mm、顺时针转 180°、左移 2500 mm、左顶墙；第二轮在 Build 后结束。
 - Grap1/2/3、Build 的整套机械时序在 A 板执行，上位机只发送动作请求并监视状态。动作接口扩展到 schema v2，80 字节完整遥测布局不变。
 - A 板 200 ms 通信失联时停止底盘、双步进和吸盘并取消动作，重连不会续跑原动作。
 
@@ -43,8 +43,7 @@ RoboGame 2026 竞技组 Uniforest 队机器人软件仓库。当前实现由 Ras
 python3 -m venv --system-site-packages .venv
 source .venv/bin/activate
 python -m pip install -r requirements.txt -r vision/requirements.txt
-python tests/import_smoke.py
-python -m unittest discover -s tests -t . -v
+python tools/check.py
 ```
 
 Windows 环境、设备预检和单项测试见[上位机使用说明](RaspberryPi/README.md)。C 固件无硬件编译：
@@ -55,7 +54,7 @@ cmake --preset Debug
 cmake --build build/Debug
 ```
 
-当前全量 Python 测试并非全绿：2026-09-07 本地 130 项存在 15 个失败（含子测试）和 1 个错误，与本轮修改前一致。相关动作/协议和路线测试通过，C 动作时序及取消/超时测试通过；具体环境、失败范围和测试入口见[验证记录](RaspberryPi/CHANGELOG.md)。
+当前全量 Python 测试并非全绿：2026-09-07 整理后本地 138 项存在 11 个橙色几何断言失败（含子测试），无错误。紫色 ROI、动作/协议和路线测试通过；统一入口为 `python tools/check.py`，开发机可加 `--firmware`，树莓派可加 `--native-actions`。具体环境和失败范围见[验证记录](RaspberryPi/CHANGELOG.md)。
 
 ## 比赛与调试入口
 
@@ -70,7 +69,7 @@ python main.py --task task1-r2
 python main.py --task task2-r2
 ```
 
-`all` 按 Task0、Task1-R1、Task2-R1、Task1-R2、Task2-R2 执行；Task0 只在完整流程中运行。单机械动作使用 `python action_test.py grap1|grap2|grap3|build`，实际调用时选择其中一个动作名。
+`all` 按 Task0、Task1-R1、Task2-R1、Task1-R2、Task2-R2 执行；`round1` 和 `round2` 也先执行一次 Task0，再执行对应轮次 Task1、Task2，单任务入口跳过 Task0。单机械动作使用 `python action_test.py grap1|grap2|grap3|build`，实际调用时选择其中一个动作名。
 
 ## 提交与备份
 

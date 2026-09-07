@@ -40,7 +40,7 @@ class FirstTaskTests(unittest.TestCase):
         self.assertEqual((cfg.align_min_x_mm, cfg.align_max_x_mm),
                          (-20.0, 5.0))
         self.assertEqual(cfg.align_target_x_mm, 0.0)
-        self.assertEqual(cfg.search_max_distance_mm, 1500.0)
+        self.assertEqual(cfg.search_max_distance_mm, 1800.0)
         self.assertEqual(cfg.target_cube_count, 3)
         self.assertEqual(cfg.orange_search_lock_x_jump_mm, 80.0)
         self.assertEqual(cfg.orange_search_confirm_frames, 2)
@@ -49,10 +49,10 @@ class FirstTaskTests(unittest.TestCase):
         self.assertEqual(cfg.delivery_tag_id, 6)
         self.assertEqual(cfg.delivery_tag_distance_mm, 425.0)
         self.assertEqual(cfg.delivery_tag_distance_kp,
-                         1.2 / TAG_FOV_RETUNE_SCALE)
+                         0.8 / TAG_FOV_RETUNE_SCALE)
         self.assertEqual(cfg.delivery_tag_lateral_kp,
-                         1.8 / TAG_FOV_RETUNE_SCALE)
-        self.assertEqual(cfg.delivery_tag_min_linear_mm_s, 100.0)
+                         1.2 / TAG_FOV_RETUNE_SCALE)
+        self.assertEqual(cfg.delivery_tag_min_linear_mm_s, 50.0)
         self.assertAlmostEqual(
             cfg.delivery_tag_distance_tolerance_mm,
             30.0 * TAG_FOV_RETUNE_SCALE)
@@ -232,7 +232,7 @@ class FirstTaskTests(unittest.TestCase):
         self.assertFalse(cfg.align_min_x_mm <= -22 <= cfg.align_max_x_mm)
         self.assertTrue(cfg.align_min_x_mm <= 3 <= cfg.align_max_x_mm)
 
-    def test_long_search_covers_full_1500_mm_range(self):
+    def test_long_search_consumes_budget_and_stops(self):
         class FakeClock:
             def __init__(self):
                 self.now = 0.0
@@ -466,7 +466,9 @@ class FirstTaskTests(unittest.TestCase):
 
         with patch('Strategy.competition.time.monotonic', clock.monotonic), \
                 patch('Strategy.competition.time.sleep', clock.sleep):
-            self.assertIs(program._find_orange(), target)
+            found = program._find_orange()
+            self.assertEqual((found.x, found.y, found.z, found.color_name),
+                             (target.x, target.y, target.z, target.color_name))
 
         self.assertEqual(robot.chassis.commands[-1], (0, 0, 0, 0))
         self.assertEqual(len(robot.chassis.commands), 6)
@@ -700,11 +702,15 @@ class FirstTaskTests(unittest.TestCase):
             ('turn_to_heading', 180.0, {}),
             ('reset_field_localization',),
             ('tag_align', 6),
+            ('move', 'right', 100.0, 400.0,
+             {'hold_ms': 0, 'accel_ms': 300}),
             ('wall', 200.0, 4.0),
             ('hatch_open',),
             ('move', 'backward', 300.0, 400.0,
              {'hold_ms': 0, 'accel_ms': 300}),
             ('hatch_close',),
+            ('move', 'left', 100.0, 400.0,
+             {'hold_ms': 0, 'accel_ms': 300}),
             ('turn_to_heading', 360.0, {'hold_ms': 0}),
         ])
 

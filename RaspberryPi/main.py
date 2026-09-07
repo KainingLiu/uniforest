@@ -18,7 +18,7 @@ def parse_args():
     parser.add_argument(
         '--task', choices=TASK_CHOICES, default='all',
         help='Run both rounds, one round, or one round-specific task '
-             '(default: all)')
+             '(default: all); all/round1/round2 start with Task0')
     parser.add_argument('--port', default=default_port,
                         help=f'A-board serial port (default: {default_port})')
     parser.add_argument('--baud', type=int, default=115200)

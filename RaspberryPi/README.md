@@ -53,13 +53,23 @@ py -3 -m venv .venv
 无硬件验证，在 `RaspberryPi/` 执行：
 
 ```bash
-python -m compileall -q control protocol Strategy robot.py main.py
-python tests/import_smoke.py
-python -m unittest discover -s tests -t . -v
-python ../Uniforest_A/tests/run_actions_host.py
+python tools/check.py
 ```
 
-最后一项需原生 C 编译器 `cc`，可在树莓派运行；仅编译真实 C 动作执行器与虚拟 HAL，不访问串口。全量 Python 测试的已知失败见 [CHANGELOG.md](CHANGELOG.md)，不能把当前全量结果写为全部通过。
+这个入口按顺序检查所有当前 Python 源码的语法、依赖导入和全量单元测试，
+任何失败都返回非零状态，不打开串口或相机。默认使用 `tests` 包发现测试，避免
+同名顶层历史脚本干扰。`import_smoke.py` 仍可独立使用，导入失败也返回非零状态。
+
+| 场景 | 命令 |
+| --- | --- |
+| 开发机完整检查，含 A 板编译 | `python tools/check.py --firmware` |
+| 树莓派完整检查，含 C 动作虚拟硬件测试 | `python tools/check.py --native-actions` |
+| 本次紫色 ROI 专项 | `python tools/check.py --module tests.test_cube_detection_profiles --module tests.test_task2` |
+
+`--firmware` 需要 CMake、Ninja 和 ARM GCC 已在 PATH 中，执行 Debug 配置和构建，
+不烧录；`--native-actions` 需要原生 C 编译器 `cc`（或设置 `CC`）。单项 `--module`
+只缩小单元测试范围，不代表全量通过。当前全量 138 项仍有 11 个橙色几何断言失败
+（含子测试），无错误；详细记录见 [CHANGELOG.md](CHANGELOG.md)。
 
 ### 设备与预检
 
@@ -76,12 +86,12 @@ python ../Uniforest_A/tests/run_actions_host.py
 
 ```bash
 python robot.py --preflight --vision --localization
-python tools/camera_roles_test.py
-python task2_main.py --preflight-only
-python building_build_test.py --preflight-only
 ```
 
 预检读取通信、遥测和已启用的视觉状态，不执行比赛动作。Windows 调试可显式指定 `--port COM5 --camera 1`。Tag 标定文件当前为 `calibrated=false`，估算内参不等价于完成实测标定。
+仅排查相机映射时使用 `python tools/camera_roles_test.py`；`task2_main.py` 和
+`building_build_test.py` 的 `--preflight-only` 保留为对应独立入口的可选检查，
+无需每次重复执行全部预检。正常顺序是无硬件检查、一次设备预检、一个单动作、完整任务。
 
 ### 比赛入口
 
@@ -97,7 +107,10 @@ python main.py --task task2-r2
 
 无参数 `main.py` 等价于 `--task all`；`task1`、`task2` 是第一轮别名。`task2_main.py` 保留第一轮 Task2 独立入口。任一任务失败后不继续后续任务。
 
-完整顺序为 Task0 → Task1-R1 → Task2-R1 → Task1-R2 → Task2-R2。Task0 仅在完整流程中执行，以 750 mm/s、800 ms 加速前进 1200 mm。
+完整顺序为 Task0 → Task1-R1 → Task2-R1 → Task1-R2 → Task2-R2。
+`round1` 执行 Task0 → Task1-R1 → Task2-R1；`round2` 执行 Task0 → Task1-R2 → Task2-R2。
+三个入口都只在开头运行一次 Task0，以 750 mm/s、800 ms 加速前进 1200 mm。
+单独的 `task1`/`task2` 及 `task*-r*` 入口仍跳过 Task0。Task0 失败时不执行后续任务。
 
 可选诊断日志：
 
@@ -146,6 +159,9 @@ A 板以 1 kHz 运行四轮速度环并上报累计编码器；树莓派根据�
 - 到位窗口：位置误差不超过 1000 counts（约 3 mm），四轮转速绝对值均不超过 50 RPM，连续满足 50 ms。
 - 到位后关闭速度前馈，由位置 PID 锁定；路线动作使用 `hold_ms=0`，不增加额外保持。
 - 策略允许定距控制器超时但编码器进度达到 90% 以上的结果；取消、遥测丢失和进度不足不适用。
+- 直线总超时为 `max(2000 ms, 预计匀速行驶时间 + accel_ms + hold_ms + 2000 ms)`。
+  已取消原来的 5 秒最低总时长；2 秒为估算行程后的额外余量，不是所有动作总共只运行 2 秒。
+  例如前进 100 mm、400 mm/s、加速 300 ms、无额外保持时，总超时约 2.55 秒。
 - 横移补偿系数当前为 `500/465`，来源于先前地胶测试记录。换场地或负载后需复测左右方向及不同距离，不能把编码器位移当作无滑移的实际位移。
 
 ```text
@@ -165,7 +181,7 @@ A 板以 1 kHz 运行四轮速度环并上报累计编码器；树莓派根据�
 两轮共用 `Strategy/competition.py` 状态机，稳定导入入口为 `Strategy/task1.py`。
 
 1. 以 200 mm/s 向前顶墙并重新标定当前航向零点。
-2. 以 300 mm/s 连续向右搜索橙色，累计搜索上限 1500 mm；锁定目标后进行粗对准和末端微调。
+2. 以 300 mm/s 连续向右搜索橙色，累计搜索上限 1800 mm；锁定目标后进行粗对准和末端微调。
 3. 抓取前以 150 mm/s 短压墙并重新校准航向，执行 Grap3；完成 3 个方块。
 4. 以 400 mm/s 后退 400 mm，转到启动零点顺时针 90° 航向。
 5. 以 750 mm/s 前进 `2800 mm - 抓取阶段编码器实测净右移量`，再转到 180° 航向。
@@ -178,25 +194,32 @@ A 板以 1 kHz 运行四轮速度环并上报累计编码器；树莓派根据�
 
 1. 以 750 mm/s 前进 2350 mm，转到 -90° 航向，对准 Tag3 至 250 mm。
 2. 第一轮以 400 mm/s 右移 100 mm，第二轮跳过；两轮均以 400 mm/s 前进 250 mm，再以 200 mm/s 向前顶墙。
-3. 以 300 mm/s 向左搜索紫色，搜索上限 600 mm；视觉对准后短压墙并执行 Grap2。未找到紫色则跳过，后续橙色数量从 2 个增至 3 个。
+3. 以 300 mm/s 向左搜索紫色，第一轮搜索上限 750 mm、第二轮 650 mm；搜索和对准使用 `task2_purple`，屏蔽上方 40%。视觉对准后短压墙并执行 Grap2。未找到紫色则跳过，后续橙色数量从 2 个增至 3 个。
 4. 以 400 mm/s 后退 100 mm，转回 0°；以前进 `400 mm - 紫色阶段实测净右移量` 返回，速度 400 mm/s。净左移为负，因此增加返回距离。
 5. 两轮均先以 200 mm/s 向左顶墙，再向前顶墙，重新校准航向。
-6. 以 300 mm/s 向右搜索橙色，逐块粗对准、末端微调和短压墙，执行 Grap1。
+6. 以 300 mm/s 向右搜索橙色，累计上限 1800 mm，逐块粗对准、末端微调和短压墙，执行 Grap1。
 7. 以 400 mm/s 后退 500 mm，再按 `700 mm - 橙色阶段实测净右移量` 补偿。两轮目标均为 700 mm；正值向右、负值向左、零值跳过，速度 400 mm/s。
 8. 转至 180° 航向，以 750 mm/s 前进 2100 mm，对准 Tag6 至 425 mm。
 9. 按轮次右移，进行建筑视觉对准并执行 Build。
-10. 第一轮 Build 后以 400 mm/s 后退 200 mm，顺时针相对转 180°，以 750 mm/s 左移 2500 mm，最后以 200 mm/s 左顶墙结束。第二轮在 Build 完成后直接结束。
+10. 第一轮 Build 后以 400 mm/s 后退 100 mm，顺时针相对转 180°，以 750 mm/s 左移 2500 mm，最后以 200 mm/s 左顶墙结束。第二轮在 Build 完成后直接结束。
 
 | 轮次差异 | 第一轮 | 第二轮 |
 | --- | ---: | ---: |
 | Task1 前进补偿基准 | 2800 mm | 2800 mm |
 | Task1 Tag6 后右移 / 最终转向前左移 | 100 / 100 mm | 400 / 400 mm |
 | Task2 Tag3 后右移 | 100 mm | 跳过 |
+| Task2 紫色累计向左搜索上限 | 750 mm | 650 mm |
 | Task2 橙色净右移目标 | 700 mm | 700 mm |
 | Task2 Tag6 后右移 | 100 mm | 400 mm |
 | Task2 Build 后路线 | 后退、转向、左移、左顶墙 | 无 |
 
 上述普通定距平移均用 400 mm/s、300 ms 加速。当前 Task2 不再执行 Build 后 Tag1 对准流程。
+
+两轮 Task1/Task2 在橙色搜索累计达到 1800 mm 时，即使数量不足（包括零块），
+也结束抓取并继续对应的卸载或 Build 路线。只允许搜索范围耗尽这一结果继续；
+其他通信、取消或动作异常仍按原故障流程处理。搜索预算按速度乘搜索时间累计，
+不包括视觉对准位移，抓取单块后不重置；后续路线补偿仍使用编码器实测净横移。
+紫色累计向左搜索上限为第一轮 750 mm、第二轮 650 mm。
 
 ## A 板机械动作
 
@@ -260,6 +283,11 @@ ID 1/2/3/4 对应 Grap1/Grap2/Grap3/Build；状态 0/1/2/3/4/5 为 idle/running/
 
 `cube_tracker.py` 管理连续确认、X/Z 跳变拒绝、丢帧保持、候选歧义和位置平滑。Task2 橙色跟踪使用 18 mm 歧义间隔，无法区分相邻目标时停车。
 
+两轮紫色搜索及对准自动使用 `task2_purple`：只检测紫色，下方 60% 为有效区域，
+640×480 时排除第 0–191 行。掩码处理保留完整图像坐标和相机内参，不裁图后
+重新计算中心。成功、搜索耗尽或异常退出后恢复 `default`，切换时清除旧检测结果。
+`task2_orange` 仍屏蔽上方 50%，`default`/`building` 不屏蔽。紫色色带未调整。
+
 cube Linux 曝光配置为 `exposure=312`、`gain=32`、自动白平衡，保存于 `vision/camera_settings.json`。光照、镜头、相机位置或曝光改变后须重新核对色带与平面标定；软件配置不等于已验证的硬件事实。
 
 ### 建筑
@@ -278,8 +306,10 @@ cube Linux 曝光配置为 `exposure=312`、`gain=32`、自动白平衡，保存
 
 ```bash
 python vision/cube_detector.py --camera cube --no-gui --profile task2_orange
+python vision/cube_detector.py --camera cube --no-gui --profile task2_purple
 python tools/cube_profile_probe.py IMAGE --profile default
 python tools/cube_profile_probe.py IMAGE --profile task2_orange
+python tools/cube_profile_probe.py IMAGE --profile task2_purple
 python tools/building_vision_probe.py --profile building
 python vision/camera_tuner.py --camera cube
 python vision/field_localizer.py --camera tag --duration 15

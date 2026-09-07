@@ -84,14 +84,14 @@ FWD_ACCEL_MS         = LONG_DISTANCE_FORWARD_ACCEL_MS
 FWD_BASE_DECEL_DIST  = 90000   # encoder counts
 FWD_BASE_PID_LIMIT   = 800.0
 FWD_HOLD_MS          = 700
-FWD_TIMEOUT_MS       = 5000
+FWD_TIMEOUT_MS       = 2000
 FWD_SETTLE_COUNTS    = 1000
 FWD_SETTLE_MS        = 50
 FWD_SETTLE_SPEED_RPM = 50
 # Keep only a short grace period after the estimated travel time. Strategy
 # code accepts a near-complete encoder result so a final precise settle is not
 # required for competition routing.
-FWD_TIMEOUT_MARGIN_MS = 1000
+FWD_TIMEOUT_MARGIN_MS = 2000
 
 # Field calibration on the competition mat: a 500 mm wheel-side command moves
 # the chassis about 465 mm laterally. Command the reciprocal wheel travel.

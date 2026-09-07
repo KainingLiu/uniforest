@@ -14,6 +14,7 @@ from .competition import (
     _Pid,
     CompetitionProgram,
     FirstTaskConfig,
+    SearchRangeExhausted,
     LONG_DISTANCE_MOVE_SPEED_MM_S,
     NORMAL_DISTANCE_MOVE_SPEED_MM_S,
     TAG_FOV_RETUNE_SCALE,
@@ -80,7 +81,7 @@ class Task2Config(FirstTaskConfig):
     wall_premove_mm: float = 250.0
     wall_premove_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
     purple_min_confidence: float = 25.0
-    purple_search_max_distance_mm: float = 600.0
+    purple_search_max_distance_mm: float = 750.0
     align_min_x_mm: float = TASK2_PURPLE.align_min_x_mm
     align_max_x_mm: float = TASK2_PURPLE.align_max_x_mm
     # Task2 purple-cube calibration: stable centered sample measured X=-0.5 mm.
@@ -197,7 +198,7 @@ class Task2Config(FirstTaskConfig):
     # an axis enters its acceptance window.
     building_linear_accel_mm_s2: float = 1000.0
     building_yaw_accel_deg_s2: float = 60.0
-    post_build_reverse_mm: float = 200.0
+    post_build_reverse_mm: float = 100.0
     post_build_reverse_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
     post_build_turn_cw_deg: float = 180.0
     post_build_route_distance_mm: float = 2500.0
@@ -207,6 +208,7 @@ class Task2Config(FirstTaskConfig):
 
 @dataclass(frozen=True)
 class Task2Round2Config(Task2Config):
+    purple_search_max_distance_mm: float = 650.0
     post_tag_lateral_mm: float = 0.0
     post_tag6_lateral_right_mm: float = 400.0
     finish_after_build: bool = True
@@ -548,29 +550,33 @@ class Task2Program(CompetitionProgram):
 
     def _search_and_align_purple(self) -> bool:
         cfg = self.config
-        not_found_error = 'purple cube not found within search range'
-        while True:
-            self.state = Task2State.PURPLE_SEARCH
-            try:
-                block = self._find_cube(
-                    color_name='purple',
-                    min_confidence=cfg.purple_min_confidence,
-                    search_direction=-1.0,
-                    max_distance_mm=cfg.purple_search_max_distance_mm,
-                )
-            except RuntimeError as exc:
-                if str(exc) != not_found_error:
-                    raise
-                print('[Task2] Purple cube not found within '
-                      f'{cfg.purple_search_max_distance_mm:.0f} mm; '
-                      'skipping Grap2')
-                return False
+        set_profile = getattr(self.robot, 'set_cube_detection_profile', None)
+        try:
+            if set_profile is not None:
+                set_profile('task2_purple')
+            while True:
+                self.state = Task2State.PURPLE_SEARCH
+                try:
+                    block = self._find_cube(
+                        color_name='purple',
+                        min_confidence=cfg.purple_min_confidence,
+                        search_direction=-1.0,
+                        max_distance_mm=cfg.purple_search_max_distance_mm,
+                    )
+                except SearchRangeExhausted:
+                    print('[Task2] Purple cube not found within '
+                          f'{cfg.purple_search_max_distance_mm:.0f} mm; '
+                          'skipping Grap2')
+                    return False
 
-            self.state = Task2State.PURPLE_ALIGN
-            if self._align_cube(
-                    block, color_name='purple',
-                    min_confidence=cfg.purple_min_confidence):
-                return True
+                self.state = Task2State.PURPLE_ALIGN
+                if self._align_cube(
+                        block, color_name='purple',
+                        min_confidence=cfg.purple_min_confidence):
+                    return True
+        finally:
+            if set_profile is not None:
+                set_profile('default')
 
     def _orange_target_count_for_run(self, purple_grabbed: bool) -> int:
         if purple_grabbed:
@@ -784,13 +790,20 @@ class Task2Program(CompetitionProgram):
                       f'{orange_target_count}')
                 while True:
                     self.state = Task2State.ORANGE_SEARCH
-                    block = self._find_cube(
-                        color_name='orange',
-                        min_confidence=cfg.orange_min_confidence,
-                        search_direction=1.0,
-                        lock_x_jump_mm=cfg.orange_search_lock_x_jump_mm,
-                        ambiguity_margin_mm=cfg.orange_track_ambiguity_margin_mm,
-                    )
+                    try:
+                        block = self._find_cube(
+                            color_name='orange',
+                            min_confidence=cfg.orange_min_confidence,
+                            search_direction=1.0,
+                            lock_x_jump_mm=cfg.orange_search_lock_x_jump_mm,
+                            ambiguity_margin_mm=cfg.orange_track_ambiguity_margin_mm,
+                        )
+                    except SearchRangeExhausted:
+                        print(f'[{self.TASK_LABEL}] Orange search exhausted at '
+                              f'{cfg.search_max_distance_mm:.0f} mm; collected '
+                              f'{cube_index - 1}/{orange_target_count}, '
+                              'continuing Build route')
+                        break
                     self.state = Task2State.ORANGE_ALIGN
                     if self._align_cube(
                             block, color_name='orange',
@@ -801,6 +814,8 @@ class Task2Program(CompetitionProgram):
                             ambiguity_margin_mm=cfg.orange_track_ambiguity_margin_mm):
                         if self._fine_align_orange(block):
                             break
+                if self.state == Task2State.ORANGE_SEARCH:
+                    break
 
                 self.state = Task2State.WALL_APPROACH
                 self._press_wall_before_grab(recalibrate_heading_zero=True)

@@ -3,11 +3,13 @@ import sys
 import time
 import unittest
 from types import SimpleNamespace
+from unittest.mock import patch
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from Strategy.competition import (
     FirstTaskConfig,
+    SearchRangeExhausted,
     LONG_DISTANCE_FORWARD_ACCEL_MS,
     LONG_DISTANCE_MOVE_SPEED_MM_S,
     TAG_FOV_RETUNE_SCALE,
@@ -53,7 +55,7 @@ class Task2Tests(unittest.TestCase):
         self.assertEqual(cfg.near_wall_timeout_s, 1.0)
         self.assertTrue(cfg.wall_timeout_is_success)
         self.assertEqual(cfg.search_speed_mm_s, 300.0)
-        self.assertEqual(cfg.purple_search_max_distance_mm, 600.0)
+        self.assertEqual(cfg.purple_search_max_distance_mm, 750.0)
         self.assertEqual((cfg.align_min_x_mm, cfg.align_max_x_mm),
                          (-5.0, 5.0))
         self.assertEqual(cfg.align_target_x_mm, 0.0)
@@ -127,7 +129,7 @@ class Task2Tests(unittest.TestCase):
         self.assertEqual(cfg.building_max_lateral_mm_s, 250.0)
         self.assertEqual(cfg.building_linear_accel_mm_s2, 1000.0)
         self.assertEqual(cfg.building_track_lock_frames, 2)
-        self.assertEqual(cfg.post_build_reverse_mm, 200.0)
+        self.assertEqual(cfg.post_build_reverse_mm, 100.0)
         self.assertEqual(cfg.post_build_reverse_speed_mm_s, 400.0)
         self.assertEqual(cfg.post_build_turn_cw_deg, 180.0)
         self.assertEqual(cfg.post_build_route_distance_mm, 2500.0)
@@ -240,16 +242,18 @@ class Task2Tests(unittest.TestCase):
              {'hold_ms': 0, 'accel_ms': 300}),
             ('wall', 200.0, 4.0, 'forward', 'Wall contact'),
             ('reset_vision_filter',),
+            ('cube_profile', 'task2_purple'),
             ('find_cube', {
                 'color_name': 'purple',
                 'min_confidence': 25.0,
                 'search_direction': -1.0,
-                'max_distance_mm': 600.0,
+                'max_distance_mm': 750.0,
             }),
             ('align_cube', 0.0, {
                 'color_name': 'purple',
                 'min_confidence': 25.0,
             }),
+            ('cube_profile', 'default'),
             ('press_wall_before_grab', False),
             ('grap2',),
             ('move', 'backward', 100.0, 400.0,
@@ -315,7 +319,7 @@ class Task2Tests(unittest.TestCase):
             ('reset_vision_filter',),
             ('building_align',),
             ('build',),
-            ('move', 'backward', 200.0, 400.0,
+            ('move', 'backward', 100.0, 400.0,
              {'hold_ms': 0, 'accel_ms': 300}),
             ('turn', 180.0, 90.0, {'hold_ms': 0, 'settle_cycles': 1}),
             ('move', 'left', 2500.0, 750.0,
@@ -687,7 +691,7 @@ class Task2Tests(unittest.TestCase):
 
         def not_found(**kwargs):
             calls.append(kwargs)
-            raise RuntimeError('purple cube not found within search range')
+            raise SearchRangeExhausted('purple cube not found within search range')
 
         program._find_cube = not_found
 
@@ -698,7 +702,7 @@ class Task2Tests(unittest.TestCase):
             'color_name': 'purple',
             'min_confidence': 25.0,
             'search_direction': -1.0,
-            'max_distance_mm': 600.0,
+            'max_distance_mm': 750.0,
         }])
         self.assertEqual(
             program._orange_target_count_for_run(purple_grabbed), 3)
@@ -737,20 +741,62 @@ class Task2Tests(unittest.TestCase):
 
         purple = SimpleNamespace(
             color_name='Purple', confidence=80.0, x=20.0, y=0.0, z=200.0)
-        robot = SimpleNamespace(
-            chassis=FakeChassis(),
-            vision_result=SimpleNamespace(
-                timestamp=time.time(), all_blocks=[purple]),
-        )
+        observations = iter([
+            SimpleNamespace(timestamp=time.time() + i * .01, all_blocks=[purple])
+            for i in range(2)])
+
+        class FakeRobot:
+            chassis = FakeChassis()
+
+            @property
+            def vision_result(self):
+                return next(observations)
+
+        robot = FakeRobot()
         program = Task2Program(robot)
 
-        found = program._find_cube(
-            color_name='purple', min_confidence=25.0,
-            search_direction=-1.0)
+        with patch('Strategy.competition.time.sleep'):
+            found = program._find_cube(
+                color_name='purple', min_confidence=25.0,
+                search_direction=-1.0)
 
-        self.assertIs(found, purple)
+        self.assertEqual((found.x, found.z, found.color_name), (20.0, 200.0, 'Purple'))
         self.assertLess(robot.chassis.commands[0][0], 0.0)
         self.assertEqual(robot.chassis.commands[-1], (0, 0, 0, 0))
+
+    def test_purple_profile_is_active_during_search_and_alignment_then_restored(self):
+        for cls in (Task2Program, Task2Round2Program):
+            for outcome in ('success', 'exhausted', 'fault'):
+                with self.subTest(program=cls.__name__, outcome=outcome):
+                    active = []
+                    robot = SimpleNamespace(set_cube_detection_profile=active.append)
+                    program = cls(robot)
+                    calls = 0
+
+                    def search(**kwargs):
+                        nonlocal calls
+                        calls += 1
+                        self.assertEqual(active[-1], 'task2_purple')
+                        self.assertEqual(kwargs['max_distance_mm'],
+                                         650.0 if cls is Task2Round2Program else 750.0)
+                        if outcome == 'exhausted':
+                            raise SearchRangeExhausted('limit')
+                        if outcome == 'fault':
+                            raise RuntimeError('camera failed')
+                        return object()
+
+                    def align(block, **kwargs):
+                        self.assertEqual(active[-1], 'task2_purple')
+                        return calls == 2
+
+                    program._find_cube = search
+                    program._align_cube = align
+                    if outcome == 'fault':
+                        with self.assertRaisesRegex(RuntimeError, 'camera failed'):
+                            program._search_and_align_purple()
+                    else:
+                        self.assertEqual(program._search_and_align_purple(), outcome == 'success')
+                    self.assertEqual(active, ['task2_purple', 'default'])
 
     def test_left_wall_timeout_defaults_to_success(self):
         class FakeChassis:

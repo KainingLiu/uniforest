@@ -31,7 +31,9 @@ class StrategyModuleTests(unittest.TestCase):
         selected = tracker.update(
             self._vision(now + 0.1, second), color_name='orange',
             min_confidence=25, max_age_s=1.0)
-        self.assertIs(selected, second)
+        self.assertIsNot(selected, second)
+        self.assertAlmostEqual(selected.x, 52.0)
+        self.assertEqual(second.x, 54)
         third = self._block(58)
         selected = tracker.update(
             self._vision(now + 0.2, third), color_name='orange',

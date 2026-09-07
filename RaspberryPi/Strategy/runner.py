@@ -38,8 +38,8 @@ def run_tasks(robot, selection='all', *,
     ]
     selections = {
         'all': [('Task0', task0_factory), *round1, *round2],
-        'round1': round1,
-        'round2': round2,
+        'round1': [('Task0', task0_factory), *round1],
+        'round2': [('Task0', task0_factory), *round2],
         'task1': [round1[0]],
         'task2': [round1[1]],
         'task1-r1': [round1[0]],

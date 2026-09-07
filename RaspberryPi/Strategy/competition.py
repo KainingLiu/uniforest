@@ -34,6 +34,10 @@ if TYPE_CHECKING:
 TAG_FOV_RETUNE_SCALE = 0.300549527
 
 
+class SearchRangeExhausted(RuntimeError):
+    """The cumulative search budget was consumed without acquiring a cube."""
+
+
 class CompetitionState(Enum):
     STARTUP = auto()
     READY = auto()
@@ -71,7 +75,7 @@ class FirstTaskConfig:
     # criterion. Forward contact uses the two rear wheel indices explicitly.
     stall_motor_count: int = 3
     search_speed_mm_s: float = 300.0
-    search_max_distance_mm: float = 1500.0
+    search_max_distance_mm: float = 1800.0
     search_control_period_s: float = 0.02
     vision_observe_s: float = 0.35
     vision_stale_s: float = 0.5
@@ -406,7 +410,7 @@ class CompetitionProgram:
                            if max_distance_mm is None else max_distance_mm)
         remaining_mm = search_limit_mm - self._search_position_mm
         if remaining_mm <= 0.0:
-            raise RuntimeError(
+            raise SearchRangeExhausted(
                 f'{color_name} cube not found within search range')
 
         rpm = self.robot.chassis.mecanum_rpm(
@@ -452,7 +456,7 @@ class CompetitionProgram:
             self.robot.chassis.set_speeds([0, 0, 0, 0])
 
         self._search_position_mm = search_limit_mm
-        raise RuntimeError(f'{color_name} cube not found within search range')
+        raise SearchRangeExhausted(f'{color_name} cube not found within search range')
 
     @staticmethod
     def _alignment_speed(x_error: float, integral: float,
@@ -748,10 +752,19 @@ class CompetitionProgram:
             print(f'[Task1] Cube {cube_index}/{cfg.target_cube_count}')
             while True:
                 self.state = CompetitionState.ORANGE_SEARCH
-                block = self._find_orange()
+                try:
+                    block = self._find_orange()
+                except SearchRangeExhausted:
+                    print(f'[{self.TASK_LABEL}] Orange search exhausted at '
+                          f'{cfg.search_max_distance_mm:.0f} mm; collected '
+                          f'{cube_index - 1}/{cfg.target_cube_count}, '
+                          'continuing delivery route')
+                    break
                 self.state = CompetitionState.ORANGE_ALIGN
                 if self._align_orange(block):
                     break
+            if self.state == CompetitionState.ORANGE_SEARCH:
+                break
 
             self.state = CompetitionState.WALL_APPROACH
             self._press_wall_before_grab(recalibrate_heading_zero=True)

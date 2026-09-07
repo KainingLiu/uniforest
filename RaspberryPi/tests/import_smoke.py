@@ -82,3 +82,5 @@ if errors:
     print(f'FAILED: {errors}')
 else:
     print('=== ALL MODULES LOADED SUCCESSFULLY ===')
+
+sys.exit(1 if errors else 0)
