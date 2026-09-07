@@ -50,12 +50,15 @@ extern "C" {
 #define CMD_STEPPER_MOVE_DUAL3  0x36   /* cross-triggered three-segment overlap */
 
 #define CMD_SET_TELEM_RATE      0x40   /* uint16 rate_hz */
+#define CMD_ACTION_START        0x50   /* token:u32, action:u8, flags:u8 */
+#define CMD_ACTION_STATUS       0x51   /* no payload; query latched outcome */
 
 /* =================== Telemetry / Response IDs (STM32 → Pi) ================= */
 
 #define TELEM_FULL              0x80   /* full telemetry batch (80 bytes) */
 #define TELEM_ACK               0x81   /* command ACK */
 #define TELEM_PONG              0x82   /* PING response */
+#define TELEM_ACTION            0x83   /* token:u32,id:u8,state:u8,stage:u8,uptime:u32 */
 
 /* ===================== ACK Status Codes ==================================== */
 

@@ -15,6 +15,7 @@ from .competition import (
     CompetitionProgram,
     FirstTaskConfig,
     LONG_DISTANCE_MOVE_SPEED_MM_S,
+    NORMAL_DISTANCE_MOVE_SPEED_MM_S,
     TAG_FOV_RETUNE_SCALE,
 )
 from .vision_targets import TASK2_ORANGE, TASK2_PURPLE
@@ -54,8 +55,7 @@ class Task2State(Enum):
     POST_BUILD_REVERSE = auto()
     POST_BUILD_TURN = auto()
     POST_BUILD_ROUTE = auto()
-    TAG1_ALIGN = auto()
-    FINAL_RIGHT_TURN = auto()
+    POST_BUILD_LEFT_WALL = auto()
     FINISHED = auto()
     FAULT = auto()
 
@@ -76,9 +76,9 @@ class Task2Config(FirstTaskConfig):
     delivery_tag_vision_stale_s: float = 0.7
     delivery_tag_lost_timeout_s: float = 2.0
     post_tag_lateral_mm: float = 100.0
-    post_tag_lateral_speed_mm_s: float = 300.0
+    post_tag_lateral_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
     wall_premove_mm: float = 250.0
-    wall_premove_speed_mm_s: float = 300.0
+    wall_premove_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
     purple_min_confidence: float = 25.0
     purple_search_max_distance_mm: float = 600.0
     align_min_x_mm: float = TASK2_PURPLE.align_min_x_mm
@@ -90,10 +90,10 @@ class Task2Config(FirstTaskConfig):
     orange_fine_min_x_mm: float = TASK2_ORANGE.fine_min_x_mm
     orange_fine_max_x_mm: float = TASK2_ORANGE.fine_max_x_mm
     post_grab_reverse_mm: float = 100.0
-    post_grab_reverse_speed_mm_s: float = 300.0
+    post_grab_reverse_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
     post_grab_heading_target_cw_deg: float = 0.0
     post_grab_forward_base_mm: float = 400.0
-    post_grab_forward_speed_mm_s: float = 400.0
+    post_grab_forward_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
     left_wall_approach_enabled: bool = True
     orange_target_count: int = 2
     orange_target_count_without_purple: int = 3
@@ -102,9 +102,9 @@ class Task2Config(FirstTaskConfig):
     orange_align_target_x_mm: float = TASK2_ORANGE.target_x_mm
     orange_track_ambiguity_margin_mm: float = 18.0
     post_orange_reverse_mm: float = 500.0
-    post_orange_reverse_speed_mm_s: float = 300.0
+    post_orange_reverse_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
     post_orange_lateral_base_mm: float = 700.0
-    post_orange_lateral_speed_mm_s: float = 300.0
+    post_orange_lateral_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
     final_turn_target_cw_deg: float = 180.0
     build_route_distance_mm: float = 2100.0
     build_route_speed_mm_s: float = LONG_DISTANCE_MOVE_SPEED_MM_S
@@ -130,7 +130,7 @@ class Task2Config(FirstTaskConfig):
     delivery_tag_creep_distance_mm: float = 35.0
     delivery_tag_creep_lateral_mm: float = 25.0
     post_tag6_lateral_right_mm: float = 100.0
-    post_tag6_lateral_speed_mm_s: float = 300.0
+    post_tag6_lateral_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
     building_target_x_mm: float = 0.0
     # Z target is the horizontal robot-to-building distance at which Build
     # places correctly.  With the cube camera a lower top edge means nearer.
@@ -198,31 +198,16 @@ class Task2Config(FirstTaskConfig):
     building_linear_accel_mm_s2: float = 1000.0
     building_yaw_accel_deg_s2: float = 60.0
     post_build_reverse_mm: float = 200.0
-    post_build_reverse_speed_mm_s: float = 300.0
-    post_build_turn_target_cw_deg: float = 270.0
-    post_build_route_distance_mm: float = 2200.0
+    post_build_reverse_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
+    post_build_turn_cw_deg: float = 180.0
+    post_build_route_distance_mm: float = 2500.0
     post_build_route_speed_mm_s: float = LONG_DISTANCE_MOVE_SPEED_MM_S
-    post_build_tag_id: int = 1
-    post_build_tag_distance_mm: float = 200.0
-    post_build_tag_distance_tolerance_mm: float = 20.0
-    # Tag1 is viewed at close range with the uncalibrated tag camera.  Stop
-    # and wait longer for a fresh frame instead of failing on one occlusion.
-    post_build_tag_vision_stale_s: float = 0.7
-    post_build_tag_lost_timeout_s: float = 2.5
-    # At 200 mm the tag-camera lateral noise is larger than the Tag6 region;
-    # accept a stable +/-10 mm result instead of driving on a 7-8 mm jitter.
-    post_build_tag_lateral_tolerance_mm: float = 10.0
-    post_build_tag_heading_tolerance_deg: float = 4.0
-    post_build_tag_heading_target_cw_deg: float = 270.0
-    final_right_turn_target_cw_deg: float = 360.0
     finish_after_build: bool = False
 
 
 @dataclass(frozen=True)
 class Task2Round2Config(Task2Config):
     post_tag_lateral_mm: float = 0.0
-    left_wall_approach_enabled: bool = False
-    post_orange_lateral_base_mm: float = 500.0
     post_tag6_lateral_right_mm: float = 400.0
     finish_after_build: bool = True
 
@@ -656,32 +641,26 @@ class Task2Program(CompetitionProgram):
             cfg.post_build_reverse_speed_mm_s)
 
         self.state = Task2State.POST_BUILD_TURN
-        self._turn_to_heading(cfg.post_build_turn_target_cw_deg)
+        # Use a relative CW turn: a shortest-path absolute-heading command
+        # can choose CCW near the 180-degree boundary after building alignment.
+        self.robot.chassis.turn(
+            cfg.post_build_turn_cw_deg, cfg.delivery_turn_speed_deg_s,
+            hold_ms=0, settle_cycles=1)
 
         self.state = Task2State.POST_BUILD_ROUTE
-        print(f'[Task2] Forward {cfg.post_build_route_distance_mm:.0f} mm '
-              f'at {cfg.post_build_route_speed_mm_s:.0f} mm/s toward Tag1')
+        print(f'[Task2] Left {cfg.post_build_route_distance_mm:.0f} mm '
+              f'at {cfg.post_build_route_speed_mm_s:.0f} mm/s after Build')
         self._checked_move(
-            'forward', cfg.post_build_route_distance_mm,
+            'left', cfg.post_build_route_distance_mm,
             cfg.post_build_route_speed_mm_s)
 
-        self.state = Task2State.TAG1_ALIGN
-        self.robot.reset_field_localization_filter()
-        self._align_delivery_tag(
-            tag_id=cfg.post_build_tag_id,
-            target_distance_mm=cfg.post_build_tag_distance_mm,
-            heading_target_cw_deg=(
-                cfg.post_build_tag_heading_target_cw_deg),
-            distance_tolerance_mm=cfg.post_build_tag_distance_tolerance_mm,
-            lateral_tolerance_mm=cfg.post_build_tag_lateral_tolerance_mm,
-            heading_tolerance_deg=cfg.post_build_tag_heading_tolerance_deg,
-            fine_gain_scale=cfg.build_tag_fine_gain_scale,
-            vision_stale_s=cfg.post_build_tag_vision_stale_s,
-            lost_timeout_s=cfg.post_build_tag_lost_timeout_s,
+        self.state = Task2State.POST_BUILD_LEFT_WALL
+        self._drive_until_wall(
+            timeout_s=cfg.far_wall_timeout_s,
+            speed_mm_s=cfg.far_wall_speed_mm_s,
+            direction='left',
+            context='Post-build left wall contact',
         )
-
-        self.state = Task2State.FINAL_RIGHT_TURN
-        self._turn_to_heading(cfg.final_right_turn_target_cw_deg)
 
     def _run_post_tag3_lateral(self):
         cfg = self.config

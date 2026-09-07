@@ -118,7 +118,7 @@ class Robot:
         self.servo = Servo(self.transport)
         self.stepper = Stepper(self.transport)
         self.actions = Actions(self.servo, self.stepper,
-                               telem_getter=lambda: self.telem)
+                               transport=self.transport)
 
         # Vision subsystem (optional)
         self._vision: Optional['CubeDetector'] = None

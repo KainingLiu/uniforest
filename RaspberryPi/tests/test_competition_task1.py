@@ -692,8 +692,8 @@ class FirstTaskTests(unittest.TestCase):
         program._run_delivery_route()
 
         self.assertEqual(events, [
-            ('move', 'backward', 400.0, 300.0,
-             {'hold_ms': 0, 'accel_ms': 200}),
+            ('move', 'backward', 400.0, 400.0,
+             {'hold_ms': 0, 'accel_ms': 300}),
             ('turn_to_heading', 90.0, {'hold_ms': 0}),
             ('move', 'forward', 2200.0, 750.0,
              {'hold_ms': 0, 'accel_ms': 800}),
@@ -702,13 +702,13 @@ class FirstTaskTests(unittest.TestCase):
             ('tag_align', 6),
             ('wall', 200.0, 4.0),
             ('hatch_open',),
-            ('move', 'backward', 300.0, 300.0,
-             {'hold_ms': 0, 'accel_ms': 200}),
+            ('move', 'backward', 300.0, 400.0,
+             {'hold_ms': 0, 'accel_ms': 300}),
             ('hatch_close',),
             ('turn_to_heading', 360.0, {'hold_ms': 0}),
         ])
 
-    def test_round2_delivery_route_uses_shorter_base_and_lateral_moves(self):
+    def test_round2_delivery_route_uses_shared_base_and_lateral_moves(self):
         events = []
 
         class FakeActions:
@@ -729,7 +729,9 @@ class FirstTaskTests(unittest.TestCase):
                 return SimpleNamespace(timed_out=False, cancelled=False)
 
         cfg = Task1Round2Config()
-        self.assertEqual(cfg.delivery_forward_base_mm, 2500.0)
+        self.assertEqual(cfg.delivery_forward_base_mm, 2800.0)
+        self.assertEqual(cfg.delivery_forward_base_mm,
+                         FirstTaskConfig().delivery_forward_base_mm)
         self.assertEqual(cfg.post_tag_lateral_right_mm, 400.0)
         self.assertEqual(cfg.pre_final_turn_lateral_left_mm, 400.0)
 
@@ -745,23 +747,23 @@ class FirstTaskTests(unittest.TestCase):
         program._run_delivery_route()
 
         self.assertEqual(events, [
-            ('move', 'backward', 400.0, 300.0,
-             {'hold_ms': 0, 'accel_ms': 200}),
+            ('move', 'backward', 400.0, 400.0,
+             {'hold_ms': 0, 'accel_ms': 300}),
             ('turn_to_heading', 90.0, {'hold_ms': 0}),
-            ('move', 'forward', 1900.0, 750.0,
+            ('move', 'forward', 2200.0, 750.0,
              {'hold_ms': 0, 'accel_ms': 800}),
             ('turn_to_heading', 180.0, {}),
             ('reset_field_localization',),
             ('tag_align', 6),
-            ('move', 'right', 400.0, 300.0,
-             {'hold_ms': 0, 'accel_ms': 200}),
+            ('move', 'right', 400.0, 400.0,
+             {'hold_ms': 0, 'accel_ms': 300}),
             ('wall', 200.0, 4.0),
             ('hatch_open',),
-            ('move', 'backward', 300.0, 300.0,
-             {'hold_ms': 0, 'accel_ms': 200}),
+            ('move', 'backward', 300.0, 400.0,
+             {'hold_ms': 0, 'accel_ms': 300}),
             ('hatch_close',),
-            ('move', 'left', 400.0, 300.0,
-             {'hold_ms': 0, 'accel_ms': 200}),
+            ('move', 'left', 400.0, 400.0,
+             {'hold_ms': 0, 'accel_ms': 300}),
             ('turn_to_heading', 360.0, {'hold_ms': 0}),
         ])
 

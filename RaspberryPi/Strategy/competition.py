@@ -12,6 +12,8 @@ from typing import TYPE_CHECKING, Optional
 from control.chassis import (
     LONG_DISTANCE_FORWARD_ACCEL_MS,
     LONG_DISTANCE_MOVE_SPEED_MM_S,
+    NORMAL_DISTANCE_MOVE_SPEED_MM_S,
+    NORMAL_DISTANCE_MOVE_ACCEL_MS,
 )
 from .common import minimum_command, slew_command, wrap_angle
 from .tag_alignment import median_translation, translation_jump
@@ -122,7 +124,7 @@ class FirstTaskConfig:
     align_timeout_s: float = 10.0
     post_grab_settle_s: float = 0.0
     delivery_reverse_mm: float = 400.0
-    delivery_reverse_speed_mm_s: float = 300.0
+    delivery_reverse_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
     delivery_turn_deg: float = 90.0
     delivery_turn_speed_deg_s: float = 90.0
     delivery_turn_heading_hold_ms: int = 0
@@ -173,14 +175,14 @@ class FirstTaskConfig:
     delivery_tag_linear_accel_mm_s2: float = 300.0
     delivery_heading_yaw_accel_deg_s2: float = 90.0
     post_tag_lateral_right_mm: float = 100.0
-    post_tag_lateral_speed_mm_s: float = 300.0
+    post_tag_lateral_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
     unload_reverse_mm: float = 300.0
-    unload_reverse_speed_mm_s: float = 300.0
+    unload_reverse_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
     pre_final_turn_lateral_left_mm: float = 100.0
-    pre_final_turn_lateral_speed_mm_s: float = 300.0
+    pre_final_turn_lateral_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
     unload_final_turn_cw_deg: float = 180.0
     unload_final_heading_hold_ms: int = 0
-    delivery_linear_accel_ms: int = 200
+    delivery_linear_accel_ms: int = NORMAL_DISTANCE_MOVE_ACCEL_MS
     long_distance_forward_accel_ms: int = LONG_DISTANCE_FORWARD_ACCEL_MS
 
 
@@ -357,7 +359,7 @@ class CompetitionProgram:
     def _checked_move(self, direction: str, distance_mm: float,
                       speed_mm_s: float):
         accel_ms = self.config.delivery_linear_accel_ms
-        if (direction.casefold() == 'forward'
+        if (direction.casefold() in ('forward', 'left')
                 and abs(speed_mm_s - LONG_DISTANCE_MOVE_SPEED_MM_S) < 1e-6):
             accel_ms = self.config.long_distance_forward_accel_ms
         result = self.robot.move_chassis(

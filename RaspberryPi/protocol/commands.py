@@ -39,12 +39,47 @@ CMD_STEPPER_SET_POS  = 0x35  # motor + pos(4B)
 CMD_STEPPER_MOVE_DUAL3=0x36  # cross-triggered three-segment overlap
 
 CMD_SET_TELEM_RATE   = 0x40  # uint16 rate_hz
+CMD_ACTION_START     = 0x50  # uint32 token + uint8 action + uint8 flags
+CMD_ACTION_STATUS    = 0x51  # query latched action state
 
 # =================== Telemetry / Response IDs (STM32 → Pi) ===================
 
 TELEM_FULL  = 0x80  # 80-byte telemetry batch
 TELEM_ACK   = 0x81  # command acknowledgement
 TELEM_PONG  = 0x82  # ping response
+TELEM_ACTION = 0x83  # 11-byte action status
+
+ACTION_GRAP1 = 1
+ACTION_GRAP2 = 2
+ACTION_GRAP3 = 3
+ACTION_BUILD = 4
+ACTION_IDLE = 0
+ACTION_RUNNING = 1
+ACTION_DONE = 2
+ACTION_CANCELLED = 3
+ACTION_TIMEOUT = 4
+ACTION_REJECTED = 5
+
+
+@dataclass(frozen=True)
+class ActionStatus:
+    token: int
+    action_id: int
+    state: int
+    stage: int
+    uptime_ms: int
+
+    @classmethod
+    def unpack(cls, data: bytes) -> 'ActionStatus':
+        return cls(*struct.unpack('>IBBBI', data))
+
+
+def encode_action_start(token: int, action_id: int, test_mode: bool = False) -> bytes:
+    if not 1 <= token <= 0xFFFFFFFF or action_id not in (1, 2, 3, 4):
+        raise ValueError('invalid action token or ID')
+    if action_id == ACTION_BUILD and test_mode:
+        raise ValueError('Build has no test-mode flag')
+    return struct.pack('>IBB', token, action_id, int(bool(test_mode)))
 
 # ======================= ACK Status Codes ====================================
 

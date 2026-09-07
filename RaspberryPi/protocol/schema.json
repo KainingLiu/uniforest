@@ -1,5 +1,5 @@
 {
-  "version": 1,
+  "version": 2,
   "frame": {
     "sync": 170,
     "max_data_length": 80,
@@ -9,7 +9,7 @@
   },
   "safety": {
     "communication_timeout_ms": 200,
-    "timeout_action": "stop chassis motors"
+    "timeout_action": "stop chassis and both steppers, cancel composite action, suction off; never resume on reconnect"
   },
   "commands": {
     "CMD_PING": {"id": 1, "data_length": 0},
@@ -30,12 +30,15 @@
     "CMD_STEPPER_MOVE_DUAL2": {"id": 52, "data_length": 27},
     "CMD_STEPPER_SET_POS": {"id": 53, "data_length": 5},
     "CMD_STEPPER_MOVE_DUAL3": {"id": 54, "data_length": 31},
-    "CMD_SET_TELEM_RATE": {"id": 64, "data_length": 2}
+    "CMD_SET_TELEM_RATE": {"id": 64, "data_length": 2},
+    "CMD_ACTION_START": {"id": 80, "data_length": 6, "format": ">IBB: token, action_id, test_mode"},
+    "CMD_ACTION_STATUS": {"id": 81, "data_length": 0}
   },
   "telemetry": {
     "TELEM_FULL": {"id": 128, "data_length": 80},
     "TELEM_ACK": {"id": 129, "data_length": 3},
     "TELEM_PONG": {"id": 130, "data_length": 4},
+    "TELEM_ACTION": {"id": 131, "data_length": 11, "format": ">IBBBI: token, action_id, state, stage, uptime_ms"},
     "full_fields": [
       {"name": "motors[0..3].angle", "type": "uint16", "count": 4},
       {"name": "motors[0..3].speed_rpm", "type": "int16", "count": 4},

@@ -129,8 +129,12 @@ class ChassisPositionTests(unittest.TestCase):
             (0, 0, 0, 0), (25, -25, 25, -25)))
 
         self.assertTrue(Chassis._linear_settled(stopped, 400))
-        self.assertFalse(Chassis._linear_settled(stopped, 401))
-        self.assertFalse(Chassis._linear_settled(moving, 0))
+        self.assertTrue(Chassis._linear_settled(stopped, 1000))
+        self.assertFalse(Chassis._linear_settled(stopped, 1001))
+        self.assertTrue(Chassis._linear_settled(moving, 0))
+        fast = TelemBatch.unpack(make_telem_payload(
+            (0, 0, 0, 0), (51, -51, 51, -51)))
+        self.assertFalse(Chassis._linear_settled(fast, 0))
 
     def test_cancelled_move_sends_only_zero_speed(self):
         class FakeTransport:

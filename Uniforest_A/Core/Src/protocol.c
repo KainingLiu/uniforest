@@ -14,6 +14,7 @@
  */
 
 #include "protocol.h"
+#include "actions.h"
 #include "motor3508.h"
 #include "servo.h"
 #include "suction.h"
@@ -460,10 +461,30 @@ static inline int32_t parse_i32_be(const uint8_t *b)
 /**
  * @brief  Dispatch a valid inbound command to the appropriate handler
  */
+static void send_action_status(uint8_t seq, ActionStatus_t s)
+{
+    uint8_t payload[11];
+    put_u32_be(payload, s.token);
+    payload[4] = s.id;
+    payload[5] = s.state;
+    payload[6] = s.stage;
+    put_u32_be(payload + 7, HAL_GetTick());
+    Protocol_SendFrame(TELEM_ACTION, seq, payload, sizeof(payload));
+}
+
 static void Protocol_Dispatch(const ProtoFrame_t *f)
 {
     const uint8_t *d = f->data;
     uint8_t status = ACK_OK;
+
+    /* Composite actions own the mechanism until done or explicitly stopped. */
+    if (Actions_IsBusy() &&
+        ((f->cmd >= CMD_SERVO_ANGLE && f->cmd <= CMD_SUCTION) ||
+         (f->cmd >= CMD_STEPPER_MOVE && f->cmd <= CMD_STEPPER_MOVE_DUAL3 &&
+          f->cmd != CMD_STEPPER_STOP))) {
+        Protocol_SendAck(f->cmd, f->seq, ACK_ERR_BUSY);
+        return;
+    }
 
     switch (f->cmd)
     {
@@ -483,9 +504,26 @@ static void Protocol_Dispatch(const ProtoFrame_t *f)
     /* ---- Emergency Stop ---- */
     case CMD_EMERGENCY_STOP:
         Motor3508_StopAll();
-        Stepper_Stop(STEPPER_HORIZ);
-        Stepper_Stop(STEPPER_VERT);
-        Suction_AllOff();
+        Actions_Abort(ACTION_CANCELLED);
+        break;
+
+    case CMD_ACTION_START:
+        if (f->data_len == 6) {
+            uint32_t token = (uint32_t)parse_i32_be(d);
+            status = Actions_Start(token, d[4], d[5]);
+            ActionStatus_t response = Actions_GetStatus();
+            if (status != ACK_OK)
+                response = (ActionStatus_t){token, d[4], ACTION_REJECTED, status};
+            send_action_status(f->seq, response);
+        } else status = ACK_ERR_PARAM;
+        break;
+
+    case CMD_ACTION_STATUS:
+        if (f->data_len != 0) status = ACK_ERR_PARAM;
+        else {
+            send_action_status(f->seq, Actions_GetStatus());
+            return;
+        }
         break;
 
     /* ---- Chassis: Speed ---- */
@@ -625,7 +663,10 @@ static void Protocol_Dispatch(const ProtoFrame_t *f)
         if (f->data_len >= 1)
         {
             if (d[0] < STEPPER_COUNT)
-                Stepper_Stop(d[0]);
+            {
+                if (Actions_IsBusy()) Actions_Abort(ACTION_CANCELLED);
+                else Stepper_Stop(d[0]);
+            }
             else
                 status = ACK_ERR_PARAM;
         }
@@ -782,6 +823,11 @@ void Protocol_Init(void)
 
 void Protocol_RxPoll(void)
 {
+    /* Latch a lost link before a newly arrived heartbeat can revive it. */
+    if (!Protocol_IsAlive()) {
+        Motor3508_StopAll();
+        Actions_Abort(ACTION_CANCELLED);
+    }
     uint8_t byte;
     while (ring_pop(&byte))
     {

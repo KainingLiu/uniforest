@@ -29,6 +29,7 @@
 #include "servo.h"
 #include "suction.h"
 #include "stepper.h"
+#include "actions.h"
 #include "imu.h"
 #include "protocol.h"         /* UART7 Pi communication */
 #include "debug_telem.h"      /* VOFA+ JustFloat debug telemetry (USART3) */
@@ -260,15 +261,17 @@ int main(void)
     /* Non-blocking 1-second release valve timeout. */
     Suction_Update();
 
+    if (Protocol_IsAlive()) Actions_Update();
+
     /* ---- 4. Send telemetry (at configured rate) ---- */
     Protocol_TelemTick();
 
     /* ---- 5. Communication timeout → emergency stop ---- */
     if (!Protocol_IsAlive())
     {
-        /* Pi communication lost — stop chassis motors */
+        /* Stop the whole mechanism; reconnecting cannot resume its sequence. */
         Motor3508_StopAll();
-        Suction_AllOff();
+        Actions_Abort(ACTION_CANCELLED);
 
         /* Blink red LED to indicate comm loss */
         static uint32_t last_blink = 0;

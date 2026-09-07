@@ -11,7 +11,8 @@ RoboGame 2026 竞技组 Uniforest 队的 DJI RoboMaster A 板固件。主控为 
 - CAN1 中断接收 C620 反馈并累计多圈编码器位置；
 - TIM7 以 100 kHz 生成双步进电机脉冲；
 - 主循环轮询 JY61P IMU、处理上位机命令并按设定频率发送 80 字节遥测；
-- 超过 200 ms 未收到有效上位机帧时停止底盘，并以红灯闪烁提示通信丢失。
+- 主循环非阻塞执行 Grap1/2/3 和 Build 整套机械时序，树莓派仅请求与监视动作；
+- 超过 200 ms 未收到有效上位机帧时停止底盘、双步进和吸盘，取消整套动作，并以红灯闪烁提示通信丢失；重连不会继续原动作。
 
 SBUS 接收仍作为备用输入初始化，但当前正式主循环不调用阻塞式 `Remote_Control()`。USART3 VOFA+ 调试遥测默认关闭，避免与 UART7 共用 DAPLink 时冲突。
 
@@ -20,6 +21,7 @@ SBUS 接收仍作为备用输入初始化，但当前正式主循环不调用阻
 - [`PROJECT.md`](PROJECT.md)：当前架构、模块职责、通信协议和调试边界。
 - `Core/Src/main.c`：初始化、主循环和 TIM6 底盘速度环中断。
 - `Core/Src/protocol.c`：UART7 帧解析、命令分发和遥测打包。
+- `Core/Src/actions.c`：Grap1/2/3、Build 动作表和非阻塞执行器；参数调整后需重新烧录。
 - `Core/Src/motor3508.c`：CAN 电机反馈、速度闭环与累计编码器。
 - `Core/Src/servo.c`、`Core/Src/stepper.c`：执行机构驱动。
 - `Uniforest_A_0628.ioc`：STM32CubeMX 工程配置；文件名是历史名称，不代表当前版本。
@@ -34,5 +36,21 @@ cmake --build build/Debug
 ```
 
 CMake 目标名仍为 `Uniforest_A_0628`，因此产物沿用旧名称。这只是构建配置的历史命名。
+
+## 动作无硬件测试
+
+在本目录执行，需要 Python 3 和原生 C 编译器 `cc`（可通过 `CC` 环境变量指定）：
+
+```bash
+python3 tests/run_actions_host.py
+```
+
+测试编译真实 `actions.c` 与虚拟硬件，核对 Grap1/2/3 普通/测试模式及 Build
+共 7 组迁移前输出与等待时序，同时验证逐阶段取消、忙碌保护、超时、重复请求
+和时钟回绕。测试不访问串口，不能替代烧录后的实机验证。
+
+2026-09-07 上位机动作客户端依赖 schema v2 的 `0x50/0x51/0x83` 接口，必须
+配套新固件。烧录后使用 `RaspberryPi/action_test.py` 做单动作测试，再运行完整
+任务；日期、参数和验证状态见 [变更记录](../RaspberryPi/CHANGELOG.md)。
 
 所有有效迭代均在本目录完成；工作区根目录的 `备份/` 只保存历史快照。

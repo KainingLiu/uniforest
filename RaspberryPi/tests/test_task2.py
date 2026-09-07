@@ -44,9 +44,9 @@ class Task2Tests(unittest.TestCase):
         self.assertEqual(cfg.delivery_tag_vision_stale_s, 0.7)
         self.assertEqual(cfg.delivery_tag_lost_timeout_s, 2.0)
         self.assertEqual(cfg.post_tag_lateral_mm, 100.0)
-        self.assertEqual(cfg.post_tag_lateral_speed_mm_s, 300.0)
+        self.assertEqual(cfg.post_tag_lateral_speed_mm_s, 400.0)
         self.assertEqual(cfg.wall_premove_mm, 250.0)
-        self.assertEqual(cfg.wall_premove_speed_mm_s, 300.0)
+        self.assertEqual(cfg.wall_premove_speed_mm_s, 400.0)
         self.assertEqual(cfg.far_wall_speed_mm_s, 200.0)
         self.assertEqual(cfg.far_wall_timeout_s, 4.0)
         self.assertEqual(cfg.near_wall_speed_mm_s, 150.0)
@@ -60,7 +60,7 @@ class Task2Tests(unittest.TestCase):
         self.assertEqual((cfg.orange_fine_min_x_mm,
                           cfg.orange_fine_max_x_mm), (-3.0, 3.0))
         self.assertEqual(cfg.post_grab_reverse_mm, 100.0)
-        self.assertEqual(cfg.post_grab_reverse_speed_mm_s, 300.0)
+        self.assertEqual(cfg.post_grab_reverse_speed_mm_s, 400.0)
         self.assertEqual(cfg.post_grab_heading_target_cw_deg, 0.0)
         self.assertEqual(cfg.post_grab_forward_base_mm, 400.0)
         self.assertEqual(cfg.post_grab_forward_speed_mm_s, 400.0)
@@ -73,9 +73,9 @@ class Task2Tests(unittest.TestCase):
         self.assertEqual(cfg.orange_align_target_x_mm, 0.0)
         self.assertEqual(cfg.orange_track_ambiguity_margin_mm, 18.0)
         self.assertEqual(cfg.post_orange_reverse_mm, 500.0)
-        self.assertEqual(cfg.post_orange_reverse_speed_mm_s, 300.0)
+        self.assertEqual(cfg.post_orange_reverse_speed_mm_s, 400.0)
         self.assertEqual(cfg.post_orange_lateral_base_mm, 700.0)
-        self.assertEqual(cfg.post_orange_lateral_speed_mm_s, 300.0)
+        self.assertEqual(cfg.post_orange_lateral_speed_mm_s, 400.0)
         self.assertEqual(cfg.final_turn_target_cw_deg, 180.0)
         self.assertEqual(cfg.build_route_distance_mm, 2100.0)
         self.assertEqual(
@@ -88,7 +88,7 @@ class Task2Tests(unittest.TestCase):
             FirstTaskConfig().delivery_tag_distance_mm)
         self.assertEqual(cfg.build_tag_heading_target_cw_deg, 180.0)
         self.assertEqual(cfg.post_tag6_lateral_right_mm, 100.0)
-        self.assertEqual(cfg.post_tag6_lateral_speed_mm_s, 300.0)
+        self.assertEqual(cfg.post_tag6_lateral_speed_mm_s, 400.0)
         self.assertFalse(cfg.finish_after_build)
         self.assertEqual(
             cfg.build_tag_distance_tolerance_mm,
@@ -128,21 +128,12 @@ class Task2Tests(unittest.TestCase):
         self.assertEqual(cfg.building_linear_accel_mm_s2, 1000.0)
         self.assertEqual(cfg.building_track_lock_frames, 2)
         self.assertEqual(cfg.post_build_reverse_mm, 200.0)
-        self.assertEqual(cfg.post_build_reverse_speed_mm_s, 300.0)
-        self.assertEqual(cfg.post_build_turn_target_cw_deg, 270.0)
-        self.assertEqual(cfg.post_build_route_distance_mm, 2200.0)
+        self.assertEqual(cfg.post_build_reverse_speed_mm_s, 400.0)
+        self.assertEqual(cfg.post_build_turn_cw_deg, 180.0)
+        self.assertEqual(cfg.post_build_route_distance_mm, 2500.0)
         self.assertEqual(
             cfg.post_build_route_speed_mm_s,
             LONG_DISTANCE_MOVE_SPEED_MM_S)
-        self.assertEqual(cfg.post_build_tag_id, 1)
-        self.assertEqual(cfg.post_build_tag_distance_mm, 200.0)
-        self.assertEqual(cfg.post_build_tag_distance_tolerance_mm, 20.0)
-        self.assertEqual(cfg.post_build_tag_lateral_tolerance_mm, 10.0)
-        self.assertEqual(cfg.post_build_tag_vision_stale_s, 0.7)
-        self.assertEqual(cfg.post_build_tag_lost_timeout_s, 2.5)
-        self.assertEqual(cfg.post_build_tag_heading_tolerance_deg, 4.0)
-        self.assertEqual(cfg.post_build_tag_heading_target_cw_deg, 270.0)
-        self.assertEqual(cfg.final_right_turn_target_cw_deg, 360.0)
 
     def test_preflight_uses_startup_heading_and_tag_localization(self):
         robot = SimpleNamespace(
@@ -163,6 +154,9 @@ class Task2Tests(unittest.TestCase):
 
         class FakeRobot:
             def __init__(self):
+                self.chassis = SimpleNamespace(
+                    turn=lambda angle, speed, **kwargs: events.append(
+                        ('turn', angle, speed, kwargs)))
                 self.actions = SimpleNamespace(
                     grap2=lambda: events.append(('grap2',)),
                     grap1=lambda: events.append(('grap1',)),
@@ -240,10 +234,10 @@ class Task2Tests(unittest.TestCase):
             ('turn_to_heading', -90.0),
             ('reset_field_localization',),
             ('tag_align', 3, 250.0, -90.0),
-            ('move', 'right', 100.0, 300.0,
-             {'hold_ms': 0, 'accel_ms': 200}),
-            ('move', 'forward', 250.0, 300.0,
-             {'hold_ms': 0, 'accel_ms': 200}),
+            ('move', 'right', 100.0, 400.0,
+             {'hold_ms': 0, 'accel_ms': 300}),
+            ('move', 'forward', 250.0, 400.0,
+             {'hold_ms': 0, 'accel_ms': 300}),
             ('wall', 200.0, 4.0, 'forward', 'Wall contact'),
             ('reset_vision_filter',),
             ('find_cube', {
@@ -258,11 +252,11 @@ class Task2Tests(unittest.TestCase):
             }),
             ('press_wall_before_grab', False),
             ('grap2',),
-            ('move', 'backward', 100.0, 300.0,
-             {'hold_ms': 0, 'accel_ms': 200}),
+            ('move', 'backward', 100.0, 400.0,
+             {'hold_ms': 0, 'accel_ms': 300}),
             ('turn_to_heading', 0.0),
             ('move', 'forward', 590.0, 400.0,
-             {'hold_ms': 0, 'accel_ms': 200}),
+             {'hold_ms': 0, 'accel_ms': 300}),
             ('wall', 200.0, 4.0, 'left', 'Left wall contact'),
             ('wall', 200.0, 4.0, 'forward', 'Forward wall contact'),
             ('recalibrate_heading_zero',),
@@ -307,28 +301,26 @@ class Task2Tests(unittest.TestCase):
             ('grap1',),
             ('reset_vision_filter',),
             ('cube_profile', 'default'),
-            ('move', 'backward', 500.0, 300.0,
-             {'hold_ms': 0, 'accel_ms': 200}),
-            ('move', 'right', 390.0, 300.0,
-             {'hold_ms': 0, 'accel_ms': 200}),
+            ('move', 'backward', 500.0, 400.0,
+             {'hold_ms': 0, 'accel_ms': 300}),
+            ('move', 'right', 390.0, 400.0,
+             {'hold_ms': 0, 'accel_ms': 300}),
             ('turn_to_heading', 180.0),
             ('move', 'forward', 2100.0, 750.0,
              {'hold_ms': 0, 'accel_ms': 800}),
             ('reset_field_localization',),
             ('tag_align', 6, 425.0, 180.0),
-            ('move', 'right', 100.0, 300.0,
-             {'hold_ms': 0, 'accel_ms': 200}),
+            ('move', 'right', 100.0, 400.0,
+             {'hold_ms': 0, 'accel_ms': 300}),
             ('reset_vision_filter',),
             ('building_align',),
             ('build',),
-            ('move', 'backward', 200.0, 300.0,
-             {'hold_ms': 0, 'accel_ms': 200}),
-            ('turn_to_heading', 270.0),
-            ('move', 'forward', 2200.0, 750.0,
+            ('move', 'backward', 200.0, 400.0,
+             {'hold_ms': 0, 'accel_ms': 300}),
+            ('turn', 180.0, 90.0, {'hold_ms': 0, 'settle_cycles': 1}),
+            ('move', 'left', 2500.0, 750.0,
              {'hold_ms': 0, 'accel_ms': 800}),
-            ('reset_field_localization',),
-            ('tag_align', 1, 200.0, 270.0),
-            ('turn_to_heading', 360.0),
+            ('wall', 200.0, 4.0, 'left', 'Post-build left wall contact'),
         ])
         self.assertNotIn('distance_tolerance_mm', tag_align_options[0])
         self.assertEqual(
@@ -343,18 +335,8 @@ class Task2Tests(unittest.TestCase):
         self.assertEqual(
             tag_align_options[1]['fine_gain_scale'],
             program.config.build_tag_fine_gain_scale)
-        self.assertEqual(
-            tag_align_options[2]['distance_tolerance_mm'],
-            program.config.post_build_tag_distance_tolerance_mm)
-        self.assertEqual(
-            tag_align_options[2]['lateral_tolerance_mm'],
-            program.config.post_build_tag_lateral_tolerance_mm)
-        self.assertEqual(
-            tag_align_options[2]['heading_tolerance_deg'],
-            program.config.post_build_tag_heading_tolerance_deg)
-        self.assertEqual(
-            tag_align_options[2]['fine_gain_scale'],
-            program.config.build_tag_fine_gain_scale)
+        self.assertEqual(len(tag_align_options), 2)
+        self.assertEqual(program.state, Task2State.POST_BUILD_LEFT_WALL)
 
     def test_building_selector_rejects_single_cube_shape(self):
         cfg = Task2Config()
@@ -369,6 +351,48 @@ class Task2Tests(unittest.TestCase):
         program = Task2Program(SimpleNamespace(), cfg)
 
         self.assertIs(program._building_from_result(result), building)
+
+    def test_post_build_route_finishes_or_faults_without_later_motion(self):
+        for failure in (None, 'left_move', 'wall'):
+            with self.subTest(failure=failure):
+                events = []
+                robot = SimpleNamespace(
+                    chassis=SimpleNamespace(turn=lambda *args, **kwargs:
+                        events.append('turn_right')),
+                    transport=SimpleNamespace(emergency_stop=lambda:
+                        events.append('estop')))
+                program = Task2Program(robot)
+                program._preflight = lambda: None
+                program._run_build_alignment_and_action = lambda: (
+                    events.append('build'))
+                program._run_partial_task = program._run_build_phase
+
+                def move(direction, distance, speed):
+                    event = 'left_move' if direction == 'left' else 'reverse'
+                    events.append(event)
+                    if failure == event:
+                        raise RuntimeError('chassis move failed')
+
+                def wall(**kwargs):
+                    events.append('wall')
+                    if failure == 'wall':
+                        raise RuntimeError('telemetry lost during wall approach')
+
+                program._checked_move = move
+                program._drive_until_wall = wall
+                if failure is None:
+                    self.assertEqual(program.run(), 0)
+                    self.assertEqual(program.state, Task2State.FINISHED)
+                    self.assertEqual(events, [
+                        'build', 'reverse', 'turn_right', 'left_move', 'wall'])
+                else:
+                    with self.assertRaises(RuntimeError):
+                        program.run()
+                    self.assertEqual(program.state, Task2State.FAULT)
+                    expected = ['build', 'reverse', 'turn_right', 'left_move']
+                    if failure == 'wall':
+                        expected.append('wall')
+                    self.assertEqual(events, expected + ['estop'])
 
     def test_building_top_reference_uses_upper_edge_for_lateral_position(self):
         cfg = Task2Config()
@@ -427,11 +451,11 @@ class Task2Tests(unittest.TestCase):
 
         cfg = Task2Round2Config()
         self.assertEqual(cfg.post_tag_lateral_mm, 0.0)
-        self.assertFalse(cfg.left_wall_approach_enabled)
-        self.assertEqual(cfg.post_orange_lateral_base_mm, 500.0)
+        self.assertTrue(cfg.left_wall_approach_enabled)
+        self.assertEqual(cfg.post_orange_lateral_base_mm, 700.0)
         self.assertEqual(
             Task2Program._lateral_correction_command(
-                cfg.post_orange_lateral_base_mm, 700.0),
+                cfg.post_orange_lateral_base_mm, 900.0),
                 ('left', 200.0),
         )
         self.assertEqual(cfg.post_tag6_lateral_right_mm, 400.0)
@@ -448,15 +472,15 @@ class Task2Tests(unittest.TestCase):
         program._run_build_phase()
 
         self.assertEqual(events, [
-            ('move', 'right', 400.0, 300.0,
-             {'hold_ms': 0, 'accel_ms': 200}),
+            ('move', 'right', 400.0, 400.0,
+             {'hold_ms': 0, 'accel_ms': 300}),
             ('reset_vision_filter',),
             ('building_align',),
             ('build',),
         ])
         self.assertEqual(program.state, Task2State.BUILD)
 
-    def test_round2_skips_post_tag3_move_and_left_wall(self):
+    def test_round2_skips_post_tag3_move_but_keeps_both_walls(self):
         events = []
         program = Task2Round2Program(SimpleNamespace())
         program._drive_until_wall = lambda **kwargs: events.append(
@@ -470,9 +494,48 @@ class Task2Tests(unittest.TestCase):
         program._run_post_return_wall_approach()
 
         self.assertEqual(events, [
+            ('wall', 'left', 'Left wall contact'),
             ('wall', 'forward', 'Forward wall contact'),
             ('recalibrate_heading_zero',),
         ])
+
+    def test_fast_left_move_uses_same_acceleration_as_forward(self):
+        for accel_ms in (800, 1200):
+            with self.subTest(accel_ms=accel_ms):
+                requests = []
+
+                def move(direction, distance, speed, **kwargs):
+                    requests.append((direction, kwargs['accel_ms']))
+                    return SimpleNamespace(timed_out=False, cancelled=False)
+
+                program = Task2Program(
+                    SimpleNamespace(move_chassis=move),
+                    Task2Config(long_distance_forward_accel_ms=accel_ms))
+                program._checked_move('forward', 2500.0, 750.0)
+                program._checked_move('left', 2500.0, 750.0)
+                for direction in ('forward', 'backward', 'left', 'right'):
+                    program._checked_move(direction, 400.0, 400.0)
+                self.assertEqual(requests, [
+                    ('forward', accel_ms), ('left', accel_ms),
+                    ('forward', 300), ('backward', 300),
+                    ('left', 300), ('right', 300)])
+
+    def test_both_rounds_share_pre_orange_wall_order_and_parameters(self):
+        for program_type in (Task2Program, Task2Round2Program):
+            with self.subTest(program=program_type.__name__):
+                events = []
+                program = program_type(SimpleNamespace())
+                program._drive_until_wall = lambda **kwargs: events.append(
+                    ('wall', kwargs['direction'], kwargs['speed_mm_s'],
+                     kwargs['timeout_s']))
+                program._recalibrate_heading_zero = lambda: events.append(
+                    ('heading_zero',))
+                program._run_post_return_wall_approach()
+                self.assertEqual(events, [
+                    ('wall', 'left', 200.0, 4.0),
+                    ('wall', 'forward', 200.0, 4.0),
+                    ('heading_zero',),
+                ])
 
     def test_building_alignment_accepts_current_calibrated_position(self):
         class FakeChassis:

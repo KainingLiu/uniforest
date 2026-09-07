@@ -27,6 +27,8 @@ from protocol.commands import (
     CMD_STEPPER_MOVE_DUAL, CMD_STEPPER_MOVE_DUAL2, CMD_STEPPER_SET_POS,
     CMD_STEPPER_MOVE_DUAL3,
     CMD_SET_TELEM_RATE,
+    CMD_ACTION_START, CMD_ACTION_STATUS, TELEM_ACTION,
+    ActionStatus, encode_action_start,
     TELEM_FULL, TELEM_ACK, TELEM_PONG,
     ACK_OK, ACK_ERR_CRC,
     TelemBatch, AckFrame, PROTO_SYNC, PROTO_MAX_DATA_LEN,
@@ -67,6 +69,8 @@ class Transport:
         self.rx_frames = 0
         self.rx_crc_errors = 0
         self.tx_frames = 0
+        self.action_status = None
+        self._action_lock = threading.Lock()
 
     # ======================== Connection ======================================
 
@@ -243,7 +247,15 @@ class Transport:
 
     def _dispatch(self, cmd: int, seq: int, data: bytes):
         """Route a received frame to the appropriate callback."""
-        if cmd == TELEM_FULL:
+        if cmd == TELEM_ACTION:
+            try:
+                status = ActionStatus.unpack(data)
+            except (ValueError, struct.error):
+                return
+            with self._action_lock:
+                self.action_status = (status, time.monotonic())
+
+        elif cmd == TELEM_FULL:
             try:
                 telem = TelemBatch.unpack(data)
                 if self._on_telemetry:
@@ -268,6 +280,17 @@ class Transport:
                 pass
 
     # ======================== High-Level Commands =============================
+
+    def get_action_status(self):
+        with self._action_lock:
+            return self.action_status
+
+    def query_action_status(self) -> bool:
+        return self.send(CMD_ACTION_STATUS)
+
+    def start_action(self, token: int, action_id: int, test_mode: bool = False) -> bool:
+        return self.send(CMD_ACTION_START,
+                         encode_action_start(token, action_id, test_mode))
 
     def ping(self) -> bool:
         """Send a PING and return True if sent."""
