@@ -20,6 +20,7 @@ from .competition import (
     TAG_FOV_RETUNE_SCALE,
 )
 from .vision_targets import TASK2_ORANGE, TASK2_PURPLE
+from .orange_search import OrangeSearchRecovery
 
 if TYPE_CHECKING:
     from robot import Robot
@@ -783,6 +784,8 @@ class Task2Program(CompetitionProgram):
             self.robot.reset_vision_filter()
             self._search_position_mm = 0.0
             orange_lateral_origin = self._capture_lateral_origin()
+            # Reuse the post-wall encoder origin across all orange pickups.
+            self._orange_recovery = OrangeSearchRecovery(origin=orange_lateral_origin)
             orange_target_count = self._orange_target_count_for_run(
                 purple_grabbed)
             for cube_index in range(1, orange_target_count + 1):

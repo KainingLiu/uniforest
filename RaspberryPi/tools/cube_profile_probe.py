@@ -53,6 +53,8 @@ def main() -> int:
             morph_iterations=morphology_for(profile_name)[1],
             max_front_aspect_ratio=max_front_aspect_for(profile_name))
         print(f'{profile_name}: {len(blocks)} block(s)')
+        if profile_name in ('default', 'task2_orange'):
+            print('  orange diagnostics:', state.get('orange_diagnostics', {}))
         for block in blocks:
             print(
                 f'  {block.color_name}: x={block.x:+.1f} mm, '

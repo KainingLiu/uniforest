@@ -82,22 +82,19 @@ class SearchExhaustionTests(unittest.TestCase):
                     robot.actions.build.assert_not_called()
 
     def test_search_exhaustion_stops_at_1800_and_keeps_cumulative_budget(self):
-        clock = SimpleNamespace(now=0.0)
-        robot = Mock(vision_result=None)
+        from tests.test_orange_search import SearchRobot
+        robot = SearchRobot()
         program = CompetitionProgram(robot)
         program._search_position_mm = 1500.0
-
-        def sleep(seconds):
-            clock.now += seconds
-
-        with patch('Strategy.competition.time.monotonic', lambda: clock.now), \
-                patch('Strategy.competition.time.sleep', sleep):
+        with patch('time.monotonic', lambda: robot.now), \
+                patch('time.time', lambda: 100 + robot.now), \
+                patch('time.sleep', robot.sleep):
             with self.assertRaises(SearchRangeExhausted):
                 program._find_orange()
-            self.assertAlmostEqual(clock.now, 1.0, delta=0.03)
+            self.assertAlmostEqual(robot.now, 1.0, delta=0.03)
             self.assertEqual(program._search_position_mm, 1800)
-            robot.chassis.set_speeds.assert_called_with([0, 0, 0, 0])
-            robot.chassis.set_speeds.reset_mock()
+            self.assertEqual(robot.commands[-1][1], 0)
+            robot.commands.clear()
             with self.assertRaises(SearchRangeExhausted):
                 program._find_orange()
-            robot.chassis.set_speeds.assert_not_called()
+            self.assertEqual(robot.commands, [])

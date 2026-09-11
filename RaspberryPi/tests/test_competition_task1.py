@@ -233,50 +233,17 @@ class FirstTaskTests(unittest.TestCase):
         self.assertTrue(cfg.align_min_x_mm <= 3 <= cfg.align_max_x_mm)
 
     def test_long_search_consumes_budget_and_stops(self):
-        class FakeClock:
-            def __init__(self):
-                self.now = 0.0
-
-            def monotonic(self):
-                return self.now
-
-            def sleep(self, seconds):
-                self.now += seconds
-
-        class FakeChassis:
-            def __init__(self):
-                self.commands = []
-
-            @staticmethod
-            def mecanum_rpm(vx, vy, wz):
-                return [vy, vy, -vy, -vy]
-
-            def set_speeds(self, rpm):
-                self.commands.append(tuple(rpm))
-
-        class FakeRobot:
-            def __init__(self):
-                self.chassis = FakeChassis()
-
-            @property
-            def vision_result(self):
-                return None
-
-        cfg = FirstTaskConfig(
-            search_max_distance_mm=3.6,
-            search_control_period_s=0.01,
-        )
-        clock = FakeClock()
-        robot = FakeRobot()
-        program = CompetitionProgram(robot, cfg)
-
-        with patch('Strategy.competition.time.monotonic', clock.monotonic), \
-                patch('Strategy.competition.time.sleep', clock.sleep):
+        from tests.test_orange_search import SearchRobot
+        robot = SearchRobot()
+        program = CompetitionProgram(robot, FirstTaskConfig(
+            search_max_distance_mm=3.6, search_control_period_s=0.01))
+        with patch('time.monotonic', lambda: robot.now), \
+                patch('time.time', lambda: 100 + robot.now), \
+                patch('time.sleep', robot.sleep):
             with self.assertRaisesRegex(RuntimeError, 'search range'):
                 program._find_orange()
-
         self.assertEqual(program._search_position_mm, 3.6)
-        self.assertEqual(robot.chassis.commands[-1], (0, 0, 0, 0))
+        self.assertEqual(robot.commands[-1][1], 0)
 
     def test_delivery_tag_keeps_fine_adjusting_inside_tolerance(self):
         class FakeClock:
@@ -422,57 +389,22 @@ class FirstTaskTests(unittest.TestCase):
         self.assertEqual(robot.chassis.commands[-1], (0, 0, 0, 0))
 
     def test_long_search_stops_as_soon_as_orange_is_seen(self):
-        class FakeClock:
-            def __init__(self):
-                self.now = 0.0
-
-            def monotonic(self):
-                return self.now
-
-            def sleep(self, seconds):
-                self.now += seconds
-
-        class FakeChassis:
-            def __init__(self):
-                self.commands = []
-
-            @staticmethod
-            def mecanum_rpm(vx, vy, wz):
-                return [vy, vy, -vy, -vy]
-
-            def set_speeds(self, rpm):
-                self.commands.append(tuple(rpm))
-
+        from tests.test_orange_search import SearchRobot
         target = SimpleNamespace(
             color_name='Orange', confidence=80, x=70, y=0, z=200)
-        now = time.time()
-        observations = iter([
-            None, None, None,
-            SimpleNamespace(timestamp=now, all_blocks=[target]),
-            SimpleNamespace(timestamp=now + 0.1, all_blocks=[target]),
-        ])
-
-        class FakeRobot:
-            def __init__(self):
-                self.chassis = FakeChassis()
-
-            @property
-            def vision_result(self):
-                return next(observations)
-
-        clock = FakeClock()
-        robot = FakeRobot()
+        robot = SearchRobot(frames=lambda r: r.frame(
+            blocks=[target] if r.now >= .06 else []))
         program = CompetitionProgram(robot)
-
-        with patch('Strategy.competition.time.monotonic', clock.monotonic), \
-                patch('Strategy.competition.time.sleep', clock.sleep):
+        with patch('time.monotonic', lambda: robot.now), \
+                patch('time.time', lambda: 100 + robot.now), \
+                patch('time.sleep', robot.sleep):
             found = program._find_orange()
-            self.assertEqual((found.x, found.y, found.z, found.color_name),
-                             (target.x, target.y, target.z, target.color_name))
-
-        self.assertEqual(robot.chassis.commands[-1], (0, 0, 0, 0))
-        self.assertEqual(len(robot.chassis.commands), 6)
-        self.assertAlmostEqual(program._search_position_mm, 24.0)
+        self.assertEqual((found.x, found.y, found.z, found.color_name),
+                         (target.x, target.y, target.z, target.color_name))
+        self.assertEqual(robot.commands[-1][1], 0)
+        # Stop on the first candidate, without charging its confirmation hold.
+        self.assertAlmostEqual(program._search_position_mm, 18.0)
+        self.assertTrue(all(speed == 0 for at, speed in robot.commands if at >= .06))
 
     def test_alignment_slew_prevents_startup_speed_spike(self):
         cfg = FirstTaskConfig()

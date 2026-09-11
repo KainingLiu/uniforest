@@ -80,6 +80,8 @@ class VisionResult:
     all_blocks: List[BlockInfo] = field(default_factory=list)
     timestamp: float = 0.0
     fps: float = 0.0
+    # Full-frame pixel rows of a substantial orange component cut off at left.
+    orange_left_clipped_y_range: Optional[Tuple[float, float]] = None
 
 
 # ============================================================
@@ -550,6 +552,7 @@ def detect_all_blocks(frame, state, color_profiles=None,
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
     all_blocks = []
+    state["orange_diagnostics"] = {}
     if color_profiles is None:
         color_profiles = color_profiles_for("default")
     ksize = (CONFIG["morph_kernel_size"]
@@ -945,6 +948,8 @@ class CubeDetector:
                 all_blocks=result_blocks,
                 timestamp=time.time(),
                 fps=state["fps"],
+                orange_left_clipped_y_range=state["orange_diagnostics"].get(
+                    "left_clipped_y_range"),
             )
 
             # Publish under the profile lock so a frame computed with the old

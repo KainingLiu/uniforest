@@ -69,6 +69,7 @@ class Transport:
         self.rx_frames = 0
         self.rx_crc_errors = 0
         self.tx_frames = 0
+        self.emergency_stop_generation = 0
         self.action_status = None
         self._action_lock = threading.Lock()
 
@@ -298,6 +299,7 @@ class Transport:
 
     def emergency_stop(self) -> bool:
         """Send EMERGENCY_STOP — stops all motors immediately."""
+        self.emergency_stop_generation += 1
         return self.send(CMD_EMERGENCY_STOP)
 
     def set_chassis_speed(self, rpm: list) -> bool:

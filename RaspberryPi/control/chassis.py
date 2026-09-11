@@ -299,7 +299,7 @@ class Chassis:
 
     def set_speeds(self, rpm: List[float]):
         """Send 4×RPM targets to STM32 speed PID."""
-        self._t.set_chassis_speed([int(round(r)) for r in rpm[:4]])
+        return self._t.set_chassis_speed([int(round(r)) for r in rpm[:4]])
 
     def set_torques(self, torque: List[int]):
         """Send 4×raw torque commands (bypasses PID)."""

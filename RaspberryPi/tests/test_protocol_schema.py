@@ -3,6 +3,7 @@ import sys
 import unittest
 import re
 import struct
+from unittest.mock import Mock
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -13,6 +14,14 @@ from protocol.schema import command_data_length, load_schema, validate_python_co
 
 
 class ProtocolSchemaTests(unittest.TestCase):
+    def test_emergency_stop_generation_changes_even_if_send_fails(self):
+        transport = Transport()
+        transport.send = Mock(return_value=False)
+        self.assertEqual(transport.emergency_stop_generation, 0)
+        self.assertFalse(transport.emergency_stop())
+        self.assertEqual(transport.emergency_stop_generation, 1)
+        transport.send.assert_called_once_with(commands.CMD_EMERGENCY_STOP)
+
     def test_python_constants_match_schema(self):
         validate_python_constants()
 

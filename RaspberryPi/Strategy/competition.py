@@ -22,6 +22,7 @@ from .cube_tracker import CubeTargetTracker, select_tracked_block
 from .wall_approach import velocity_for_direction
 from .wall_controller import StallConfirmation
 from .vision_targets import TASK1_ORANGE
+from .orange_search import OrangeSearchRecovery, find_orange
 
 if TYPE_CHECKING:
     from robot import Robot
@@ -85,6 +86,13 @@ class FirstTaskConfig:
     orange_search_lock_z_jump_mm: float = 100.0
     orange_search_lock_lost_frames: int = 3
     orange_search_confirm_frames: int = 2
+    orange_edge_confirm_frames: int = 3
+    orange_edge_speed_mm_s: float = 200.0
+    orange_edge_max_distance_mm: float = 1000.0
+    orange_edge_timeout_s: float = 6.0
+    orange_edge_stop_s: float = 0.10
+    orange_edge_origin_margin_mm: float = 10.0
+    orange_edge_retry_spacing_mm: float = 100.0
     # Relative to the Task1 calibrated target X=-1.0 mm: [-20, +3] mm.
     align_min_x_mm: float = TASK1_ORANGE.align_min_x_mm
     align_max_x_mm: float = TASK1_ORANGE.align_max_x_mm
@@ -203,6 +211,7 @@ class CompetitionProgram:
         self.config = config
         self.state = CompetitionState.STARTUP
         self._search_position_mm = 0.0
+        self._orange_recovery = OrangeSearchRecovery()
         self._cube_lateral_displacement_mm: Optional[float] = None
         self._heading_zero_deg: Optional[float] = None
         # The fine-align stage must inherit the target observed at the end of
@@ -430,6 +439,11 @@ class CompetitionProgram:
                                  if ambiguity_margin_mm is None
                                  else ambiguity_margin_mm),
         )
+        if color_name.casefold() == 'orange' and search_direction > 0.0:
+            block = find_orange(self, tracker, search_limit_mm)
+            if block is None:
+                raise SearchRangeExhausted('orange cube not found within search range')
+            return block
         print(f'[{self.TASK_LABEL}] {display_color} not visible; '
               f'continuous search {direction_name} '
               f'from {self._search_position_mm:.0f}/'
@@ -748,6 +762,7 @@ class CompetitionProgram:
 
         self._search_position_mm = 0.0
         lateral_origin = self._capture_lateral_origin()
+        self._orange_recovery = OrangeSearchRecovery(origin=lateral_origin)
         for cube_index in range(1, cfg.target_cube_count + 1):
             print(f'[Task1] Cube {cube_index}/{cfg.target_cube_count}')
             while True:

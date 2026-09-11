@@ -151,7 +151,8 @@ class Detector:
         mask = self._orange_mask(frame)
         cubes = []
         info = {"status": "empty", "n_clusters": 0, "message": "",
-                "mask": mask, "scale": frame.shape[1] / float(orig_w)}
+                "mask": mask, "scale": frame.shape[1] / float(orig_w),
+                "left_clipped_y_range": None}
 
         if np.count_nonzero(mask) < self.cfg.MIN_MASK_FRAC * H_img * W_img:
             info["message"] = "视野中无橙色方块"
@@ -184,6 +185,14 @@ class Detector:
                 if touches_side or cv2.contourArea(cnt) >= min_relative * largest_area:
                     kept.append(cnt)
             contours = kept
+        # Publish presence before edge fitting: a row spanning the image can
+        # have no usable corners. Only substantial, ROI-valid components count.
+        left_components = [cnt for cnt in contours
+                           if cv2.boundingRect(cnt)[0] <= edge]
+        if left_components:
+            _, y, _, h = cv2.boundingRect(max(left_components, key=cv2.contourArea))
+            info["left_clipped_y_range"] = (y / info["scale"],
+                                             (y + h) / info["scale"])
         contours = self._merge_nearby_contours(contours)
         # 诊断：检测到橙色但最终无簇时，记录被哪级滤掉（排查闪烁）
         if not contours:

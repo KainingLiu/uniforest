@@ -3,6 +3,49 @@
 当前操作方法与参数以 [README.md](README.md) 和源码为准。本文件保留变更日期、
 适用范围及当时验证结果；历史通过记录不代表当前全量测试通过。
 
+## 2026-09-10
+
+### 橙色回找速度与范围扩大
+
+两轮 Task1 / Task2 共用的向左回找速度从 120 改为 200 mm/s，距离上限从 300
+改为 1000 mm；超时从 3 延长至 6 s，留足 5 s 行程及停车确认时间。阶段起点、
+候选确认、故障退出和 1800 mm 向右搜索预算规则不变。
+影响：Strategy/competition.py 参数、test_orange_search 速度/长距离预算验证及 README。
+协议未变：命令编号、载荷长度、字节序、遥测布局和 A 板 200 ms 失联急停未改动；
+无需重新烧录。定向入口：`python tools/check.py --module tests.test_orange_search`。
+现场入口仍为 `python main.py --task task1-r1` / `task1-r2` / `task2-r1` / `task2-r2`；
+参数按用户要求修改，尚未实机确认。
+本地语法、导入及 12 项回找专项测试通过；连续截断仿真确认可回找约 1000 mm，
+不再受原 3 s 超时限制。本次为参数修改，未重复全量测试或下位机构建。
+树莓派已同步本次 4 个文件并核对哈希；远端读取确认两轮 Task1/Task2 均为
+200 mm/s、1000 mm、6 s。未执行实机动作。
+
+### 橙色左缘出画时有限向左回找
+
+| 行为变化 | 受影响模块 | 测试 / 文档 |
+| --- | --- | --- |
+| 有效 ROI 内的大橙色簇触及左边界时，即使没有几何候选也发布逐帧提示 | vision/orange_cluster.py、cube_detector.py | test_orange_search 合成图：满屏排、上方 ROI、噪点、右侧裁剪、分辨率和配置切换 |
+| 无有效候选且连续 3 个新帧提示截断，停车后以 120 mm/s 左移回找 | Strategy/orange_search.py、competition.py、task2.py | 仿真回找成功、候选确认、同排关联、搜索极限和失败退出 |
+| 单次左移最多 300 mm / 3 s，不越过橙色阶段起点；连续截断只尝试一次 | 同上 | 起点限制、编码器不动、时间限制及防振荡 |
+| 1800 mm 只累计正常向右搜索指令时间，停车与左移独立；净位移补偿继续使用编码器 | 同上 | test_search_exhaustion、Task1/Task2 路线测试 |
+| 新搜索遇遥测/图像失效、发送失败或期间收到本地急停立即退出，不当作搜索耗尽继续 | control/chassis.py 返回发送结果、protocol/transport.py 本地急停计数 | test_orange_search、test_protocol_schema |
+
+适用：两轮 Task1 / Task2 橙色阶段；紫色和 Build 视觉不启用回找。回找前、恢复
+向右前停车 100 ms；距阶段起点保留 10 mm 加一个控制周期的左移指令距离。
+一次回找后须连续 3 个新帧无左侧截断，且净右移超过上次触发位置 100 mm 才重新
+允许回找。同排关联使用原截断区域与候选四边形的纵向重叠，不能保证区分所有重叠物。
+
+协议未变：双方命令编号、载荷长度、字节序、80 字节遥测布局、A 板 200 ms 通信
+失联急停保持原样；新增急停计数仅在上位机内存中使用，无需重新烧录，无新增依赖。
+测试入口：`python tools/check.py --module tests.test_orange_search --module tests.test_search_exhaustion --module tests.test_protocol_schema`。
+现场入口：`python main.py --task task1-r1` / `task1-r2` / `task2-r1` / `task2-r2`。
+当前参数为初始建议值，尚未实机确认；编码器边界不能消除地面打滑或停车惯性。
+本地验证：上述新测试及搜索耗尽、Task1、Task2、协议、视觉配置共 79 项通过，
+Python 语法和导入检查通过，A 板 Debug 配置与构建通过。旧搜索测试补入持续更新
+的空画面和遥测；首帧候选即停车，因此确认期间不再消耗向右里程。未执行实机动作。
+树莓派 `/home/uniforest/Uniforest/RaspberryPi` 已同步本次 14 个文件并核对 SHA-256；
+远端语法、导入及回找/搜索耗尽/协议 22 项检查通过（OpenCV 4.10.0）。
+
 ## 2026-09-07
 
 ### 第一轮 Build 后退距离
