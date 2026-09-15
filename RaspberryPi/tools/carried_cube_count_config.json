@@ -1,0 +1,138 @@
+{
+  "feature_version": 4,
+  "storage_mm": [
+    100,
+    100,
+    300
+  ],
+  "max_count": 3,
+  "roi": [
+    0,
+    0.7,
+    1,
+    0.3
+  ],
+  "count_prototypes": [
+    {
+      "count": 0,
+      "features": [
+        0.0
+      ]
+    },
+    {
+      "count": 1,
+      "features": [
+        0.383594
+      ],
+      "additional_features": [
+        [
+          0.365625
+        ]
+      ]
+    },
+    {
+      "count": 2,
+      "features": [
+        0.634375
+      ]
+    },
+    {
+      "count": 3,
+      "features": [
+        1.0
+      ]
+    }
+  ],
+  "max_distance": 0.12,
+  "min_margin": 0.02,
+  "calibration": {
+    "date": "2026-09-15T21:48:03.224426+08:00",
+    "status": "real_capture_replay_pass_pending_new_field_validation",
+    "training_sessions": {
+      "0": "20260914-222902-163502",
+      "1": "20260914-223958-850466",
+      "2": "20260914-224444-938367",
+      "3": "20260914-224748-097887"
+    },
+    "training_frames_per_count": 8,
+    "excluded_training_sessions": {
+      "20260914-224713-124217": "user confirmed actual count 2, recorded label 3"
+    },
+    "observed_block_colors": [
+      "orange",
+      "purple"
+    ],
+    "image_size": [
+      640,
+      480
+    ],
+    "camera_source": "/dev/v4l/by-id/usb-LRCP_USB3.0_LRCP_USB3.0_200901010001-video-index0",
+    "requested_camera_settings": {
+      "exposure": 312.0,
+      "gain": 32.0,
+      "white_balance": null
+    },
+    "pose": {
+      "flip_inspect_deg": 37.2,
+      "arm_inspect_deg": 120,
+      "arm_home_deg": 90,
+      "flip_home_deg": 97.2,
+      "flip_wait_ms": 300,
+      "arm_wait_ms": 400,
+      "return_wait_ms": 300
+    },
+    "minimum_prototype_separation": 0.25078100000000003,
+    "threshold_rule": "normalized orange width distance 0.12 and class-distance margin 0.02; real-image replay, independent captures pending",
+    "limitations": [
+      "Camera/inspection pose and exposure must match the recorded setup.",
+      "Purple override is a user-specified carrying rule, not visual enumeration.",
+      "New independent captures after this change are still needed.",
+      "Task1/Task2 integration pending field verification; standalone raw-image replay passed."
+    ],
+    "revision": "v4 bottom 30% orange width only",
+    "additional_training_sessions": {
+      "1": [
+        "20260914-234749-192432"
+      ]
+    }
+  },
+  "purple_rule": {
+    "enabled": true,
+    "roi": [
+      0.390625,
+      0.7,
+      0.234375,
+      0.3
+    ],
+    "hsv_low": [
+      105,
+      40,
+      35
+    ],
+    "hsv_high": [
+      155,
+      255,
+      255
+    ],
+    "min_area_fraction": 0.15,
+    "min_width_fraction": 0.5,
+    "min_height_fraction": 0.2,
+    "min_frame_fraction": 0.75,
+    "count": 1,
+    "basis": "user rule; real purple-in-storage 23:22:23, outside-purple negative 23:22:58"
+  },
+  "orange_width_rule": {
+    "hsv_low": [
+      0,
+      80,
+      40
+    ],
+    "hsv_high": [
+      50,
+      255,
+      255
+    ],
+    "min_area_fraction": 0.01,
+    "min_brightness": 0.1
+  }
+}

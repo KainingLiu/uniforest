@@ -46,6 +46,7 @@ class CompetitionState(Enum):
     ORANGE_SEARCH = auto()
     ORANGE_ALIGN = auto()
     GRAB = auto()
+    COUNT_CHECK = auto()
     DELIVERY_ROUTE = auto()
     DELIVERY_TAG_ALIGN = auto()
     POST_TAG_LATERAL = auto()
@@ -763,41 +764,52 @@ class CompetitionProgram:
         self._search_position_mm = 0.0
         lateral_origin = self._capture_lateral_origin()
         self._orange_recovery = OrangeSearchRecovery(origin=lateral_origin)
-        for cube_index in range(1, cfg.target_cube_count + 1):
-            print(f'[Task1] Cube {cube_index}/{cfg.target_cube_count}')
-            while True:
-                self.state = CompetitionState.ORANGE_SEARCH
-                try:
-                    block = self._find_orange()
-                except SearchRangeExhausted:
-                    print(f'[{self.TASK_LABEL}] Orange search exhausted at '
-                          f'{cfg.search_max_distance_mm:.0f} mm; collected '
-                          f'{cube_index - 1}/{cfg.target_cube_count}, '
-                          'continuing delivery route')
-                    break
-                self.state = CompetitionState.ORANGE_ALIGN
-                if self._align_orange(block):
-                    break
-            if self.state == CompetitionState.ORANGE_SEARCH:
-                break
-
-            self.state = CompetitionState.WALL_APPROACH
-            self._press_wall_before_grab(recalibrate_heading_zero=True)
-
-            self.state = CompetitionState.GRAB
-            print(f'[Task1] Orange {cube_index}/{cfg.target_cube_count} '
-                  f'aligned; running Grap3')
-            self.robot.actions.grap3()
-            print(f'[Task1] Grap3 {cube_index}/{cfg.target_cube_count} '
-                  f'complete')
-            self.robot.reset_vision_filter()
-            time.sleep(cfg.post_grab_settle_s)
+        self._collect_orange_with_count_check(
+            cfg.target_cube_count, self._grab_task1_orange)
 
         self._cube_lateral_displacement_mm = (
             self._measure_lateral_displacement_mm(lateral_origin))
         print('[Task1] Encoder-measured cube lateral displacement: '
               f'{self._cube_lateral_displacement_mm:+.0f} mm '
               '(right positive)')
+
+    def _collect_orange_with_count_check(self, initial_target, grab_one):
+        """Keep one search budget/origin across initial collection and refill."""
+        remaining = initial_target
+        while True:
+            for index in range(1, remaining + 1):
+                print(f'[{self.TASK_LABEL}] Orange pickup {index}/{remaining}')
+                try:
+                    grab_one()
+                except SearchRangeExhausted:
+                    print(f'[{self.TASK_LABEL}] Orange search range exhausted; '
+                          'skip count inspection and continue route')
+                    return
+            self.state = type(self.state).COUNT_CHECK
+            count = self.robot.check_carried_cube_count()
+            if count is None or count == 3:
+                print(f'[{self.TASK_LABEL}] Carried count={count}; continue route')
+                return
+            if count not in (0, 1, 2):
+                raise RuntimeError(f'invalid carried cube count: {count}')
+            remaining = 3 - count
+            print(f'[{self.TASK_LABEL}] Carried count={count}; refill {remaining}')
+
+    def _grab_task1_orange(self):
+        cfg = self.config
+        while True:
+            self.state = CompetitionState.ORANGE_SEARCH
+            block = self._find_orange()
+            self.state = CompetitionState.ORANGE_ALIGN
+            if self._align_orange(block):
+                break
+        self.state = CompetitionState.WALL_APPROACH
+        self._press_wall_before_grab(recalibrate_heading_zero=True)
+        self.state = CompetitionState.GRAB
+        print('[Task1] Orange aligned; running Grap3')
+        self.robot.actions.grap3()
+        self.robot.reset_vision_filter()
+        time.sleep(cfg.post_grab_settle_s)
 
     @staticmethod
     def _wrap_angle(angle_deg: float) -> float:

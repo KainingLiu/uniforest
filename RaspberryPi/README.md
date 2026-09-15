@@ -1,6 +1,6 @@
 # Raspberry Pi 上位机程序
 
-当前运行基线：2026-09-07。历史参数和验证结果集中在 [CHANGELOG.md](CHANGELOG.md)，下位机接口见 [PROJECT.md](../Uniforest_A/PROJECT.md)。
+当前源码基线：2026-09-16。历史参数和验证结果集中在 [CHANGELOG.md](CHANGELOG.md)，下位机接口见 [PROJECT.md](../Uniforest_A/PROJECT.md)。
 
 ## 环境与目录
 
@@ -15,9 +15,27 @@
 | `protocol/` | 帧编解码、传输和 schema v2 契约 |
 | `vision/` | cube/tag 相机、方块检测、AprilTag 定位和标定配置 |
 | `sensors/`、`utils/` | 传感器封装和通用辅助 |
-| `tools/`、`tests/` | 人工调试工具、自动化测试和导入检查 |
+| `tools/`、`tests/` | 实机/图像调试工具；少量协议格式和导入检查 |
 
 依赖方向为 `main.py → Strategy → robot → control/protocol/vision`。比赛代码不导入 `tools/` 或 `tests/`。历史备份不属于当前实现。
+
+Task1/Task2（两轮）完成原定橙色抓取后执行携带数量检查：3 或 null 继续路线，
+0/1/2 则补抓 3/2/1 块并复查；搜索距离耗尽则跳过检查直接继续。补抓共用原搜索
+距离和编码器原点。`tools/carried_cube_count_test.py` 保留为独立标定采样入口。
+识别 null 不包括通信、相机采集和动作故障，这些异常仍中止任务。动作参数、使用方法和
+协议核对见 [携带数量检查说明](tools/carried_cube_count_test.md)。本功能协议未变。
+
+当前检查时序为翻转 37.2°→等待 300 ms→前臂 120°→等待 500 ms→丢弃 3 帧、
+采集 8 帧→前臂 90°→等待 200 ms→翻转 97.2°→清除检查视角旧结果。识别仅用
+下方 30% 橙色宽度，仓内紫色计 1。抓取结束后先确认 ACTION_DONE、发送底盘零速，
+最多等待 1 秒内连续 3 帧新遥测确认静止，满足即执行检查。最新时序和比赛衔接待现场验证。
+
+### 仓库与树莓派部署记录
+
+截至 2026-09-15 的数量功能采用定向部署，未整库覆盖树莓派。GitHub 以当前源码
+为准；树莓派既有的旧搜索实现、步进默认参数 100 和 `quiet_heartbeat` 选项曾予以
+保留。当前仓库包含左边缘搜索恢复和步进默认参数 83。后续整库同步时应核对这些
+差异及 A 板版本，不能仅凭数量检查文件已同步就认定两个环境完全一致。
 
 ### 安装
 
@@ -43,6 +61,12 @@ py -3 -m venv .venv
 
 ## 验证与启动顺序
 
+树莓派桌面提供 **Uniforest 全任务流程**、**Uniforest round1**、**Uniforest round2**
+三个快捷入口，分别执行 `main.py --task all` / `round1` / `round2`，均包含 Task0。
+打开入口即运行，在终端显示实时日志；按 Ctrl+C 停止，结束后按回车关闭窗口。
+入口使用项目 `.venv/bin/python` 和 `tools/desktop_task.sh`，无需手动激活环境。
+三个入口共用防重复启动锁；该锁仅约束桌面入口，不约束手动命令。
+
 1. 检查工作区状态、当前固件版本和机构起始位置。
 2. 运行 Python 语法、导入和无硬件测试。
 3. 在 `Uniforest_A/` 执行 `cmake --preset Debug`、`cmake --build build/Debug`。
@@ -56,20 +80,19 @@ py -3 -m venv .venv
 python tools/check.py
 ```
 
-这个入口按顺序检查所有当前 Python 源码的语法、依赖导入和全量单元测试，
-任何失败都返回非零状态，不打开串口或相机。默认使用 `tests` 包发现测试，避免
-同名顶层历史脚本干扰。`import_smoke.py` 仍可独立使用，导入失败也返回非零状态。
+这个入口只检查 Python 语法、依赖导入和 6 项通信协议格式，成功时只显示简短
+汇总，失败时显示错误。不打开串口或相机，不模拟机器人，不代表动作、视觉
+准确率或现场标定通过。`import_smoke.py` 仍可独立使用。
 
 | 场景 | 命令 |
 | --- | --- |
-| 开发机完整检查，含 A 板编译 | `python tools/check.py --firmware` |
-| 树莓派完整检查，含 C 动作虚拟硬件测试 | `python tools/check.py --native-actions` |
-| 本次紫色 ROI 专项 | `python tools/check.py --module tests.test_cube_detection_profiles --module tests.test_task2` |
+| 语法、导入、协议格式 | `python tools/check.py` |
+| 同时编译 A 板 | `python tools/check.py --firmware` |
 
 `--firmware` 需要 CMake、Ninja 和 ARM GCC 已在 PATH 中，执行 Debug 配置和构建，
-不烧录；`--native-actions` 需要原生 C 编译器 `cc`（或设置 `CC`）。单项 `--module`
-只缩小单元测试范围，不代表全量通过。当前全量 138 项仍有 11 个橙色几何断言失败
-（含子测试），无错误；详细记录见 [CHANGELOG.md](CHANGELOG.md)。
+不烧录。2026-09-14 已移除模拟机器人、模拟时钟、合成视觉和旧动作轨迹测试，
+同时移除 `--native-actions`、`--module`。实机功能按对应调试入口和现场记录验证；
+此次精简不能视为原有测试失败已被修复。历史结果留在 [CHANGELOG.md](CHANGELOG.md)。
 
 ### 设备与预检
 
@@ -233,14 +256,21 @@ A 板以 1 kHz 运行四轮速度环并上报累计编码器；树莓派根据�
 图像/遥测失效、通信发送失败或搜索期间本地急停则终止任务。参数尚未实机确认，
 起点约束不代表消除了打滑和惯性。协议未变，无需重新烧录。
 
-定向无硬件验证：
+基础格式检查：
 
 ```bash
-python tools/check.py --module tests.test_orange_search --module tests.test_search_exhaustion --module tests.test_protocol_schema
+python tools/check.py
 ```
 
 保存图像验证可用 `python tools/cube_profile_probe.py IMAGE --profile task2_orange`，
 输出 `left_clipped_y_range` 为左侧截断区域在原图中的纵向像素范围；`None` 表示无提示。
+
+## 步进电机动作参数
+
+Grap1、Grap2、Grap3 和 Build 的步进电机默认巡航速度约为 **5020 步/秒**（约
+125.5 mm/s，按 40 步/mm 计算）；起步速度约 417 步/秒。加速和减速各 400 步，
+使用 S 曲线。下位机目标半周期延时为 83 μs，实际值受 TIM7 10 μs tick 和 6/5
+安全倍率量化。修改后需重新烧录 A 板。
 
 ## A 板机械动作
 
@@ -249,7 +279,7 @@ python tools/check.py --module tests.test_orange_search --module tests.test_sear
 - Grap1：水平伸出 22 cm、竖直下降 18 cm，重叠返回并释放。
 - Grap2：水平伸出 27 cm、竖直下降 18 cm，重叠返回并释放。
 - Grap3：伸出 27 cm并下降 9 cm；收回时竖直上升 9 cm，在 5 cm 处启动水平收回 22 cm，水平收回 14 cm 时触发下降 9 cm；释放后上升 9 cm并收回剩余 5 cm。
-- Build：执行 C 动作表中的三次拾取/放置；完整输出和等待时序由 `actions_legacy_trace.json` 对照验证。
+- Build：执行 C 动作表中的三次拾取/放置；以当前 `actions.c` 与实机动作记录核对时序。
 
 单动作测试，选择一条运行：
 

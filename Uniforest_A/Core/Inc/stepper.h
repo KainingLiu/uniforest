@@ -49,7 +49,7 @@ extern "C" {
 /* ======================= Speed Profile Parameters ========================= */
 
 #define STEP_START_DELAY_US         1000    /* actual start ~417 Hz after safety scale */
-#define STEP_TARGET_DELAY_US        100     /* actual cruise ~4.17 kHz after safety scale */
+#define STEP_TARGET_DELAY_US        83      /* actual cruise ~5.02 kHz after safety scale */
 #define STEP_ACCEL_STEPS            400     /* accel / decel ramp length */
 
 /*

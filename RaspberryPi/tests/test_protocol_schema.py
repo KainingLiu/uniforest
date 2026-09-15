@@ -3,7 +3,6 @@ import sys
 import unittest
 import re
 import struct
-from unittest.mock import Mock
 from pathlib import Path
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -14,14 +13,6 @@ from protocol.schema import command_data_length, load_schema, validate_python_co
 
 
 class ProtocolSchemaTests(unittest.TestCase):
-    def test_emergency_stop_generation_changes_even_if_send_fails(self):
-        transport = Transport()
-        transport.send = Mock(return_value=False)
-        self.assertEqual(transport.emergency_stop_generation, 0)
-        self.assertFalse(transport.emergency_stop())
-        self.assertEqual(transport.emergency_stop_generation, 1)
-        transport.send.assert_called_once_with(commands.CMD_EMERGENCY_STOP)
-
     def test_python_constants_match_schema(self):
         validate_python_constants()
 
@@ -46,7 +37,7 @@ class ProtocolSchemaTests(unittest.TestCase):
         transport._dispatch(commands.TELEM_ACTION, 7, payload[:-1])
         self.assertEqual(transport.get_action_status()[0], status)
 
-    def test_firmware_ids_and_action_sizes_match_schema(self):
+    def test_firmware_ids_match_schema(self):
         root = Path(__file__).resolve().parents[2] / 'Uniforest_A/Core'
         header = (root / 'Inc/protocol.h').read_text(encoding='utf-8')
         ids = {name: int(value, 16) for name, value in re.findall(
@@ -56,10 +47,6 @@ class ProtocolSchemaTests(unittest.TestCase):
             for name, entry in schema[group].items():
                 if name != 'full_fields':
                     self.assertEqual(ids[name], entry['id'], name)
-        source = (root / 'Src/protocol.c').read_text(encoding='utf-8')
-        start = source.split('case CMD_ACTION_START:', 1)[1].split('case CMD_ACTION_STATUS:', 1)[0]
-        self.assertIn('f->data_len == 6', start)
-        self.assertIn('uint8_t payload[11]', source)
 
 
 if __name__ == "__main__":

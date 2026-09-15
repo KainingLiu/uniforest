@@ -49,7 +49,10 @@ class Transport:
         self._port = port
         self._baudrate = baudrate
         self._seq = 0
-        self._tx_lock = threading.Lock()
+        self._tx_lock = threading.RLock()
+        self._servo_ack_condition = threading.Condition()
+        self._servo_ack_sequence = None
+        self._servo_ack = None
         self._running = False
         self._debug = debug
 
@@ -267,6 +270,11 @@ class Transport:
         elif cmd == TELEM_ACK:
             try:
                 ack = AckFrame.unpack(data)
+                with self._servo_ack_condition:
+                    if (ack.echoed_cmd == CMD_SERVO_ANGLE
+                            and seq == self._servo_ack_sequence):
+                        self._servo_ack = ack
+                        self._servo_ack_condition.notify_all()
                 if self._on_ack:
                     self._on_ack(ack)
             except Exception:
@@ -281,6 +289,31 @@ class Transport:
                 pass
 
     # ======================== High-Level Commands =============================
+
+    def set_servo_angle_checked(self, servo_id, angle, check, timeout=.15):
+        """Wait for this servo command's SEQ-matched ACK; preserve callbacks."""
+        check()
+        with self._servo_ack_condition, self._tx_lock:
+            self._servo_ack = None
+            if not self.set_servo_angle(servo_id, angle):
+                raise RuntimeError('inspection servo send failed')
+            self._servo_ack_sequence = self._seq
+        try:
+            deadline = time.monotonic() + timeout
+            while True:
+                check()
+                with self._servo_ack_condition:
+                    ack = self._servo_ack
+                    if ack is not None:
+                        if ack.status != ACK_OK:
+                            raise RuntimeError(f'inspection servo rejected: {ack.status}')
+                        return
+                    if time.monotonic() >= deadline:
+                        raise RuntimeError('inspection servo ACK timeout')
+                    self._servo_ack_condition.wait(.005)
+        finally:
+            with self._servo_ack_condition:
+                self._servo_ack_sequence = None
 
     def get_action_status(self):
         with self._action_lock:
@@ -373,7 +406,7 @@ class Transport:
     def stepper_move_dual(self, m1: int, steps1: int, dir1: int,
                           m2: int, steps2: int, dir2: int,
                           m2_offset: int = 0,
-                          start_delay: int = 1000, target_delay: int = 100,
+                          start_delay: int = 1000, target_delay: int = 83,
                           accel_steps: int = 400) -> bool:
         """Launch dual-motor overlapping move."""
         from .commands import encode_stepper_move_dual
@@ -389,7 +422,7 @@ class Transport:
                            m_ph: int, steps_ph1: int, dir_ph1: int,
                            steps_ph2: int, dir_ph2: int,
                            ph2_offset: int,
-                           start_delay: int = 1000, target_delay: int = 100,
+                           start_delay: int = 1000, target_delay: int = 83,
                            accel_steps: int = 400) -> bool:
         """Launch dual-motor move with mid-move direction change."""
         from .commands import encode_stepper_move_dual2
@@ -406,7 +439,7 @@ class Transport:
             steps_lead2: int, dir_lead2: int,
             m_other: int, steps_other: int, dir_other: int,
             other_offset: int, lead2_offset: int,
-            start_delay: int = 1000, target_delay: int = 100,
+            start_delay: int = 1000, target_delay: int = 83,
             accel_steps: int = 400) -> bool:
         """Launch a cross-triggered three-segment dual-motor move."""
         return self.send(

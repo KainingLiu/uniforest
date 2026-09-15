@@ -46,6 +46,7 @@ class Task2State(Enum):
     ORANGE_SEARCH = auto()
     ORANGE_ALIGN = auto()
     ORANGE_GRAB = auto()
+    COUNT_CHECK = auto()
     POST_ORANGE_REVERSE = auto()
     POST_ORANGE_LATERAL = auto()
     FINAL_TURN = auto()
@@ -705,6 +706,33 @@ class Task2Program(CompetitionProgram):
         )
         self._recalibrate_heading_zero()
 
+    def _grab_task2_orange(self):
+        cfg = self.config
+        while True:
+            self.state = Task2State.ORANGE_SEARCH
+            block = self._find_cube(
+                color_name='orange', min_confidence=cfg.orange_min_confidence,
+                search_direction=1.0,
+                lock_x_jump_mm=cfg.orange_search_lock_x_jump_mm,
+                ambiguity_margin_mm=cfg.orange_track_ambiguity_margin_mm)
+            self.state = Task2State.ORANGE_ALIGN
+            if self._align_cube(
+                    block, color_name='orange',
+                    min_confidence=cfg.orange_min_confidence,
+                    align_min_x_mm=cfg.orange_align_min_x_mm,
+                    align_max_x_mm=cfg.orange_align_max_x_mm,
+                    align_target_x_mm=cfg.orange_align_target_x_mm,
+                    ambiguity_margin_mm=cfg.orange_track_ambiguity_margin_mm):
+                if self._fine_align_orange(block):
+                    break
+        self.state = Task2State.WALL_APPROACH
+        self._press_wall_before_grab(recalibrate_heading_zero=True)
+        self.state = Task2State.ORANGE_GRAB
+        print('[Task2] Orange aligned; running Grap1')
+        self.robot.actions.grap1()
+        self.robot.reset_vision_filter()
+        time.sleep(cfg.post_grab_settle_s)
+
     def _run_partial_task(self):
         cfg = self.config
 
@@ -788,49 +816,8 @@ class Task2Program(CompetitionProgram):
             self._orange_recovery = OrangeSearchRecovery(origin=orange_lateral_origin)
             orange_target_count = self._orange_target_count_for_run(
                 purple_grabbed)
-            for cube_index in range(1, orange_target_count + 1):
-                print(f'[Task2] Orange cube {cube_index}/'
-                      f'{orange_target_count}')
-                while True:
-                    self.state = Task2State.ORANGE_SEARCH
-                    try:
-                        block = self._find_cube(
-                            color_name='orange',
-                            min_confidence=cfg.orange_min_confidence,
-                            search_direction=1.0,
-                            lock_x_jump_mm=cfg.orange_search_lock_x_jump_mm,
-                            ambiguity_margin_mm=cfg.orange_track_ambiguity_margin_mm,
-                        )
-                    except SearchRangeExhausted:
-                        print(f'[{self.TASK_LABEL}] Orange search exhausted at '
-                              f'{cfg.search_max_distance_mm:.0f} mm; collected '
-                              f'{cube_index - 1}/{orange_target_count}, '
-                              'continuing Build route')
-                        break
-                    self.state = Task2State.ORANGE_ALIGN
-                    if self._align_cube(
-                            block, color_name='orange',
-                            min_confidence=cfg.orange_min_confidence,
-                            align_min_x_mm=cfg.orange_align_min_x_mm,
-                            align_max_x_mm=cfg.orange_align_max_x_mm,
-                            align_target_x_mm=cfg.orange_align_target_x_mm,
-                            ambiguity_margin_mm=cfg.orange_track_ambiguity_margin_mm):
-                        if self._fine_align_orange(block):
-                            break
-                if self.state == Task2State.ORANGE_SEARCH:
-                    break
-
-                self.state = Task2State.WALL_APPROACH
-                self._press_wall_before_grab(recalibrate_heading_zero=True)
-
-                self.state = Task2State.ORANGE_GRAB
-                print(f'[Task2] Orange {cube_index}/'
-                      f'{orange_target_count} aligned; running Grap1')
-                self.robot.actions.grap1()
-                print(f'[Task2] Grap1 {cube_index}/'
-                      f'{orange_target_count} complete')
-                self.robot.reset_vision_filter()
-                time.sleep(cfg.post_grab_settle_s)
+            self._collect_orange_with_count_check(
+                orange_target_count, self._grab_task2_orange)
         finally:
             if set_profile is not None:
                 set_profile('default')

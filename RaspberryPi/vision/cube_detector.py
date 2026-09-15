@@ -745,6 +745,7 @@ class CubeDetector:
         # Thread-safe result
         self._result_lock = threading.Lock()
         self._result: Optional[VisionResult] = None
+        self._raw_frame = None
 
         # Camera handle (opened in start)
         self._cap: Optional[cv2.VideoCapture] = None
@@ -831,6 +832,15 @@ class CubeDetector:
             return self._result
 
     @property
+    def raw_frame(self):
+        """Latest unprocessed camera frame and monotonic capture timestamp."""
+        with self._result_lock:
+            if self._raw_frame is None:
+                return None
+            frame, captured_at = self._raw_frame
+            return frame.copy(), captured_at
+
+    @property
     def calibrated(self) -> bool:
         return self._state["calibrated"]
 
@@ -865,6 +875,13 @@ class CubeDetector:
         self._state["history"].clear()
         print("[视觉] EMA 滤波器已重置")
 
+    def reset_after_inspection(self):
+        """Discard stored/in-flight detections from the storage-facing pose."""
+        with self._profile_lock:
+            self._profile_generation += 1
+            with self._result_lock:
+                self._result = None
+
     # ================== Background Loop =====================================
 
     def _capture_loop(self):
@@ -880,6 +897,9 @@ class CubeDetector:
             if not ret:
                 time.sleep(0.01)
                 continue
+
+            with self._result_lock:
+                self._raw_frame = (frame.copy(), time.monotonic())
 
             h, w = frame.shape[:2]
             state["cx"] = w / 2.0

@@ -145,16 +145,16 @@ void Actions_Update(void)
             __disable_irq();
             switch (s->op) {
             case MOVE:
-                Stepper_StartMove(p[0], p[1], p[2], 1000, 100, 400); break;
+                Stepper_StartMove(p[0], p[1], p[2], 1000, 83, 400); break;
             case DUAL:
                 Stepper_StartMoveOverlap(p[0],p[1],p[2],p[3],p[4],p[5],p[6],
-                                        1000,100,400); break;
+                                        1000,83,400); break;
             case DUAL2:
                 Stepper_StartMoveOverlap2(p[0],p[1],p[2],p[3],p[4],p[5],p[6],
-                                         p[7],p[8],1000,100,400); break;
+                                         p[7],p[8],1000,83,400); break;
             case DUAL3:
                 Stepper_StartMoveOverlap3(p[0],p[1],p[2],p[3],p[4],p[5],p[6],
-                                         p[7],p[8],p[9],1000,100,400); break;
+                                         p[7],p[8],p[9],1000,83,400); break;
             }
             __set_PRIMASK(irq);
             waiting_move = 1; move_started = now; return;

@@ -11,14 +11,14 @@ class StepperDual3ProtocolTests(unittest.TestCase):
             4400, 1,
             0, 8800, 1,
             2000, 6800,
-            1000, 100, 400,
+            1000, 83, 400,
         )
 
         self.assertEqual(len(payload), 31)
         self.assertEqual(
             struct.unpack('>BIBIBBIBII3H', payload),
             (1, 4000, 0, 4400, 1, 0, 8800, 1,
-             2000, 6800, 1000, 100, 400),
+             2000, 6800, 1000, 83, 400),
         )
 
 

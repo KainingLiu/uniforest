@@ -136,6 +136,8 @@ class Robot:
         self._telem: Optional[TelemBatch] = None
         self._telem_received_at: Optional[float] = None
         self._telem_lock = threading.Lock()
+        self._inspection_link_generation = 0
+        self._pong_received_at = 0.0
         self._pong_event = threading.Event()
         # The A-board's 200 ms watchdog needs traffic even while an action is
         # waiting for a motor/servo operation to finish.
@@ -244,8 +246,14 @@ class Robot:
 
     def _on_telem(self, telem: TelemBatch):
         with self._telem_lock:
+            now = time.monotonic()
+            if self._telem is not None and (
+                    (self._telem_received_at is not None
+                     and now - self._telem_received_at > .15)
+                    or ((telem.uptime_ms - self._telem.uptime_ms) & 0xffffffff) > 0x7fffffff):
+                self._inspection_link_generation += 1
             self._telem = telem
-            self._telem_received_at = time.monotonic()
+            self._telem_received_at = now
             # Forward to chassis for position tracking
             self.chassis.update_telem(telem)
 
@@ -255,6 +263,11 @@ class Robot:
 
     def _on_pong(self, uptime_ms: int):
         self._pong_event.set()
+        with self._telem_lock:
+            now = time.monotonic()
+            if self._pong_received_at and now - self._pong_received_at > .15:
+                self._inspection_link_generation += 1
+            self._pong_received_at = now
         # Heartbeat runs at 20 Hz to satisfy the A-board watchdog. Keep the
         # console readable by reporting a healthy link only periodically.
         now = time.monotonic()
@@ -268,6 +281,19 @@ class Robot:
     def telem(self) -> Optional[TelemBatch]:
         with self._telem_lock:
             return self._telem
+
+    def inspection_link_snapshot(self):
+        with self._telem_lock:
+            return (self._telem, self._telem_received_at, self._pong_received_at,
+                    self._inspection_link_generation)
+
+    @property
+    def cube_raw_frame(self):
+        return self._vision.raw_frame if self.has_vision else None
+
+    def check_carried_cube_count(self):
+        from control.carried_cube_inspection import inspect_carried_cubes
+        return inspect_carried_cubes(self)
 
     def hardware_preflight(self, timeout_s: float = 2.0,
                            max_telem_age_s: float = 0.3
@@ -332,10 +358,13 @@ class Robot:
             return self._vision.result
         return None
 
-    def reset_vision_filter(self):
+    def reset_vision_filter(self, *, after_inspection=False):
         """Clear stale temporal tracking before a new vision task."""
         if self._vision is not None:
-            self._vision.reset_filter()
+            if after_inspection:
+                self._vision.reset_after_inspection()
+            else:
+                self._vision.reset_filter()
 
     def set_cube_detection_profile(self, profile_name: str):
         """Select task-specific cube HSV parameters at runtime."""
