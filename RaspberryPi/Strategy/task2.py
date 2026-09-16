@@ -599,12 +599,9 @@ class Task2Program(CompetitionProgram):
         if not self._search_and_align_purple():
             return False
 
-        self.state = Task2State.WALL_APPROACH
-        self._press_wall_before_grab()
-
         self.state = Task2State.GRAB
-        print('[Task2] Purple aligned; running Grap2')
-        self.robot.actions.grap2()
+        print('[Task2] Purple aligned; running Grap2 with short wall press')
+        self._grab_with_wall_press(self.robot.actions.grap2)
         print('[Task2] Grap2 complete')
         return True
 
@@ -725,11 +722,10 @@ class Task2Program(CompetitionProgram):
                     ambiguity_margin_mm=cfg.orange_track_ambiguity_margin_mm):
                 if self._fine_align_orange(block):
                     break
-        self.state = Task2State.WALL_APPROACH
-        self._press_wall_before_grab(recalibrate_heading_zero=True)
         self.state = Task2State.ORANGE_GRAB
-        print('[Task2] Orange aligned; running Grap1')
-        self.robot.actions.grap1()
+        print('[Task2] Orange aligned; running Grap1 with short wall press')
+        self._grab_with_wall_press(
+            self.robot.actions.grap1, recalibrate_heading_zero=True)
         self.robot.reset_vision_filter()
         time.sleep(cfg.post_grab_settle_s)
 

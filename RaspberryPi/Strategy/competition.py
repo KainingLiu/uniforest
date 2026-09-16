@@ -59,7 +59,7 @@ class CompetitionState(Enum):
 @dataclass(frozen=True)
 class FirstTaskConfig:
     target_cube_count: int = 3
-    far_wall_speed_mm_s: float = 200.0
+    far_wall_speed_mm_s: float = 250.0
     far_wall_timeout_s: float = 4.0
     near_wall_speed_mm_s: float = 150.0
     near_wall_timeout_s: float = 1.0
@@ -356,19 +356,59 @@ class CompetitionProgram:
               f'{self._heading_zero_deg:+.1f} deg '
               f'(correction {correction:+.1f} deg)')
 
-    def _press_wall_before_grab(self, *, recalibrate_heading_zero=False):
+    def _grab_with_wall_press(self, grab, *, recalibrate_heading_zero=False):
+        """Start the short press with Grap; poll both on the action wait loop."""
         cfg = self.config
-        print(f'[{self.TASK_LABEL}] Press wall before grab')
-        self._drive_until_wall(
-            timeout_s=cfg.near_wall_timeout_s,
-            speed_mm_s=cfg.near_wall_speed_mm_s,
-            startup_grace_s=cfg.pre_grab_stall_startup_grace_s,
-            confirm_s=cfg.pre_grab_stall_confirm_s,
-            context='Pre-grab wall contact',
-        )
-        time.sleep(cfg.pre_grab_wall_settle_s)
-        if recalibrate_heading_zero:
-            self._recalibrate_heading_zero()
+        rpm = self.robot.chassis.mecanum_rpm(
+            cfg.near_wall_speed_mm_s / 10.0, 0.0, 0.0)
+        tracker = StallConfirmation()
+        initial = self.robot.telem
+        last_uptime = initial.uptime_ms if initial is not None else None
+        started = last_telem_time = finished_at = None
+
+        def press_step():
+            nonlocal started, last_telem_time, last_uptime, finished_at
+            now = time.monotonic()
+            if finished_at is not None:
+                return now - finished_at >= cfg.pre_grab_wall_settle_s
+            if started is None:
+                started = last_telem_time = now
+                print(f'[{self.TASK_LABEL}] Grab started; short wall press '
+                      f'at {cfg.near_wall_speed_mm_s:.0f} mm/s')
+            telem = self.robot.telem
+            contact = False
+            if telem is not None and telem.uptime_ms != last_uptime:
+                last_uptime = telem.uptime_ms
+                last_telem_time = now
+                stalled = (now - started >= cfg.pre_grab_stall_startup_grace_s
+                           and self._stall_sample(telem, cfg))
+                contact = tracker.update(
+                    stalled, now, cfg.pre_grab_stall_confirm_s)
+            if now - last_telem_time > cfg.telemetry_stale_s:
+                raise RuntimeError('telemetry lost during grab wall press')
+            timed_out = now - started >= cfg.near_wall_timeout_s
+            if contact or timed_out:
+                if not self.robot.chassis.set_speeds([0, 0, 0, 0]):
+                    raise RuntimeError('failed to stop grab wall press')
+                if timed_out and not contact and not cfg.wall_timeout_is_success:
+                    raise RuntimeError('grab wall contact timed out')
+                finished_at = now
+                outcome = 'confirmed' if contact else 'timeout accepted'
+                print(f'[{self.TASK_LABEL}] Grab wall press {outcome}; '
+                      'chassis stopped')
+                if recalibrate_heading_zero:
+                    self._recalibrate_heading_zero()
+                return cfg.pre_grab_wall_settle_s <= 0.0
+            if not self.robot.chassis.set_speeds(rpm):
+                raise RuntimeError('failed to send grab wall press speed')
+            return False
+
+        try:
+            grab(parallel_step=press_step)
+        finally:
+            # Zero speed leaves the mechanism alone; Actions handles emergency
+            # cancellation on errors. No worker may re-send motion afterward.
+            self.robot.chassis.set_speeds([0, 0, 0, 0])
 
     def _checked_move(self, direction: str, distance_mm: float,
                       speed_mm_s: float):
@@ -803,11 +843,10 @@ class CompetitionProgram:
             self.state = CompetitionState.ORANGE_ALIGN
             if self._align_orange(block):
                 break
-        self.state = CompetitionState.WALL_APPROACH
-        self._press_wall_before_grab(recalibrate_heading_zero=True)
         self.state = CompetitionState.GRAB
-        print('[Task1] Orange aligned; running Grap3')
-        self.robot.actions.grap3()
+        print('[Task1] Orange aligned; running Grap3 with short wall press')
+        self._grab_with_wall_press(
+            self.robot.actions.grap3, recalibrate_heading_zero=True)
         self.robot.reset_vision_filter()
         time.sleep(cfg.post_grab_settle_s)
 

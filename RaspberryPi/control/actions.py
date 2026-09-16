@@ -48,7 +48,13 @@ class Actions:
         if not self._t.query_action_status():
             raise RuntimeError('failed to query A-board action status')
 
-    def _run_action(self, action_id, test_mode=False):
+    def _run_action(self, action_id, test_mode=False, *, parallel_step=None):
+        """Poll the action and optional nonblocking companion until both finish.
+
+        parallel_step runs after ACTION_START is sent, then at each poll until
+        it returns True. It must not wait or sleep; errors use the action's
+        existing emergency-stop path. The caller owns companion cleanup.
+        """
         if not self._action_lock.acquire(blocking=False):
             raise RuntimeError('another mechanical action is running')
         try:
@@ -78,9 +84,11 @@ class Actions:
             last_progress = started
             last_uptime = None
             accepted = False
+            parallel_done = parallel_step is None
             while True:
                 self._check_cancelled()
                 now = time.monotonic()
+                action_done = False
                 sample = self._t.get_action_status()
                 if sample is not None:
                     status, received_at = sample
@@ -98,11 +106,10 @@ class Actions:
                         if now - last_progress > ACTION_STALE_S:
                             raise RuntimeError('A-board action clock stopped')
                         accepted = True
-                        if status.state == ACTION_DONE:
-                            return
+                        action_done = status.state == ACTION_DONE
                         if status.state == ACTION_CANCELLED:
                             raise ActionCancelled('A-board cancelled mechanical action')
-                        if status.state != ACTION_RUNNING:
+                        if status.state not in (ACTION_RUNNING, ACTION_DONE):
                             raise RuntimeError(
                                 f'A-board action failed: state={status.state}, stage={status.stage}')
                 if not accepted and now - started >= ACTION_START_TIMEOUT_S:
@@ -111,6 +118,10 @@ class Actions:
                     raise RuntimeError('A-board action telemetry lost')
                 if now - started >= ACTION_TIMEOUT_S:
                     raise RuntimeError('A-board mechanical action timed out')
+                if not parallel_done:
+                    parallel_done = bool(parallel_step())
+                if action_done and parallel_done:
+                    return
                 self._wait(ACTION_POLL_MS)
                 self._query()  # Also keeps the 200 ms communication watchdog alive.
         except BaseException:
@@ -119,14 +130,14 @@ class Actions:
         finally:
             self._action_lock.release()
 
-    def grap1(self, test_mode=False):
-        self._run_action(ACTION_GRAP1, test_mode)
+    def grap1(self, test_mode=False, *, parallel_step=None):
+        self._run_action(ACTION_GRAP1, test_mode, parallel_step=parallel_step)
 
-    def grap2(self, test_mode=False):
-        self._run_action(ACTION_GRAP2, test_mode)
+    def grap2(self, test_mode=False, *, parallel_step=None):
+        self._run_action(ACTION_GRAP2, test_mode, parallel_step=parallel_step)
 
-    def grap3(self, test_mode=False):
-        self._run_action(ACTION_GRAP3, test_mode)
+    def grap3(self, test_mode=False, *, parallel_step=None):
+        self._run_action(ACTION_GRAP3, test_mode, parallel_step=parallel_step)
 
     def build(self):
         self._run_action(ACTION_BUILD)
