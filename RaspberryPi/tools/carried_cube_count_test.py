@@ -18,7 +18,9 @@ sys.path.insert(0, str(ROOT))
 
 import cv2
 
-from protocol.commands import ACK_OK, CMD_SERVO_ANGLE, ACTION_RUNNING, TELEM_ACK
+from protocol.commands import (
+    ACK_OK, CMD_SERVO_ANGLE, ACTION_RUNNING, ACTION_CHASSIS_READY, TELEM_ACK,
+)
 from protocol.transport import Transport
 from robot import default_serial_port
 from vision.camera_devices import resolve_camera_source
@@ -134,7 +136,7 @@ class CheckedLink:
             if time.monotonic() >= deadline:
                 raise LinkFault('A-board action status unavailable')
             time.sleep(.005)
-        if self.transport.get_action_status()[0].state == ACTION_RUNNING:
+        if self.transport.get_action_status()[0].state in (ACTION_RUNNING, ACTION_CHASSIS_READY):
             raise LinkFault('A-board composite action is running')
 
     def check(self):

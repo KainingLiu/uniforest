@@ -36,6 +36,12 @@ class ProtocolSchemaTests(unittest.TestCase):
         self.assertEqual(status, commands.ActionStatus(0x12345678,3,2,17,0x23456789))
         transport._dispatch(commands.TELEM_ACTION, 7, payload[:-1])
         self.assertEqual(transport.get_action_status()[0], status)
+        ready = struct.pack('>IBBBI', 0x12345678, commands.ACTION_GRAP2,
+                            commands.ACTION_CHASSIS_READY, 6, 0x23456790)
+        transport._dispatch(commands.TELEM_ACTION, 8, ready)
+        self.assertEqual(transport.get_action_status()[0].state,
+                         commands.ACTION_CHASSIS_READY)
+        self.assertNotEqual(commands.ACTION_CHASSIS_READY, commands.ACTION_DONE)
 
     def test_firmware_ids_match_schema(self):
         root = Path(__file__).resolve().parents[2] / 'Uniforest_A/Core'
@@ -43,6 +49,11 @@ class ProtocolSchemaTests(unittest.TestCase):
         ids = {name: int(value, 16) for name, value in re.findall(
             r'#define\s+((?:CMD|TELEM)_\w+)\s+(0x[0-9A-Fa-f]+)', header)}
         schema = load_schema()
+        action_header = (root / 'Inc/actions.h').read_text(encoding='utf-8')
+        states = {name: int(value) for name, value in re.findall(
+            r'#define\s+(ACTION_\w+)\s+(\d+)u', action_header)}
+        for name, value in schema['action_states'].items():
+            self.assertEqual(states[name], value, name)
         for group in ('commands', 'telemetry'):
             for name, entry in schema[group].items():
                 if name != 'full_fields':

@@ -1,5 +1,14 @@
 {
-  "version": 2,
+  "version": 3,
+  "action_states": {
+    "ACTION_IDLE": 0,
+    "ACTION_RUNNING": 1,
+    "ACTION_DONE": 2,
+    "ACTION_CANCELLED": 3,
+    "ACTION_TIMEOUT": 4,
+    "ACTION_REJECTED": 5,
+    "ACTION_CHASSIS_READY": 6
+  },
   "frame": {
     "sync": 170,
     "max_data_length": 80,

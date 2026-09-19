@@ -15,6 +15,7 @@ from __future__ import annotations
 import math
 import time
 from dataclasses import dataclass
+from contextlib import contextmanager
 from typing import TYPE_CHECKING, List, Optional, Tuple
 
 from protocol.commands import (
@@ -184,6 +185,7 @@ class Chassis:
             raise ValueError('lateral_distance_scale must be positive')
         self._t = transport
         self._telem: Optional[TelemBatch] = None
+        self._telem_received_at = 0.0
         self.lateral_distance_scale = lateral_distance_scale
 
         # Position PID controllers (one per motor)
@@ -200,6 +202,7 @@ class Chassis:
         # State
         self._yaw_offset = 0.0
         self._motor_signs = [-1, 1, 1, -1]  # fwd sign per motor
+        self._action_monitor = None
 
     # ==================== Telemetry ===========================================
 
@@ -210,6 +213,7 @@ class Chassis:
     def update_telem(self, telem: TelemBatch):
         """Called by main loop when new telemetry arrives."""
         self._telem = telem
+        self._telem_received_at = time.monotonic()
 
     def has_telem(self) -> bool:
         return self._telem is not None
@@ -297,9 +301,32 @@ class Chassis:
 
     # ==================== Low-Level Control ===================================
 
+    @contextmanager
+    def monitor_action(self, check):
+        """Keep a mechanism action supervised throughout a chassis-only route."""
+        if self._action_monitor is not None:
+            raise RuntimeError('a chassis action monitor is already installed')
+        self._action_monitor = check
+        try:
+            self._check_action()
+            yield
+            self._check_action()
+        finally:
+            self._action_monitor = None
+
+    def _check_action(self):
+        if self._action_monitor is not None:
+            self._action_monitor()
+            if self._telem is None or time.monotonic() - self._telem_received_at > 0.5:
+                raise RuntimeError('chassis telemetry stale during action overlap')
+
     def set_speeds(self, rpm: List[float]):
         """Send 4×RPM targets to STM32 speed PID."""
-        return self._t.set_chassis_speed([int(round(r)) for r in rpm[:4]])
+        self._check_action()
+        sent = self._t.set_chassis_speed([int(round(r)) for r in rpm[:4]])
+        if not sent and self._action_monitor is not None:
+            raise RuntimeError('chassis speed send failed during action overlap')
+        return sent
 
     def set_torques(self, torque: List[int]):
         """Send 4×raw torque commands (bypasses PID)."""
@@ -425,6 +452,7 @@ class Chassis:
 
         while True:
             t0 = time.monotonic()
+            self._check_action()
 
             if cancel_event is not None and cancel_event.is_set():
                 cancelled = True
@@ -490,7 +518,9 @@ class Chassis:
             if cancel_event is not None and cancel_event.is_set():
                 cancelled = True
                 break
-            t.set_chassis_speed([int(round(r)) for r in rpm])
+            self._check_action()
+            if not t.set_chassis_speed([int(round(r)) for r in rpm]) and self._action_monitor is not None:
+                raise RuntimeError('chassis speed send failed during action overlap')
 
             # Settle → hold
             elapsed = (time.monotonic() - t_start) * 1000.0
@@ -523,7 +553,9 @@ class Chassis:
             if elapsed_loop < control_period:
                 sleep_fn(control_period - elapsed_loop)
 
-        t.set_chassis_speed([0, 0, 0, 0])
+        if not t.set_chassis_speed([0, 0, 0, 0]) and self._action_monitor is not None:
+            raise RuntimeError('chassis stop failed during action overlap')
+        self._check_action()
         elapsed_ms = (time.monotonic() - t_start) * 1000.0
         return LinearMoveResult(
             requested_mm=requested_mm,
@@ -617,6 +649,7 @@ class Chassis:
         hold_start = 0.0
 
         while True:
+            self._check_action()
             telem = self._telem
             if telem is None:
                 time.sleep(dt)
@@ -666,10 +699,13 @@ class Chassis:
             rot_deg_s = ff_deg_s * sign_dir + pid_deg_s
 
             rot_rpm = rot_deg_s * TURN_DEG_S_TO_RPM
-            self._t.set_chassis_speed([int(round(-rot_rpm))] * 4)
+            if not self.set_speeds([int(round(-rot_rpm))] * 4) and self._action_monitor is not None:
+                raise RuntimeError('turn speed send failed during action overlap')
 
             elapsed_ms = (time.time() - t_start) * 1000.0
             if elapsed_ms >= TURN_TIMEOUT_MS:
+                if self._action_monitor is not None:
+                    raise RuntimeError('turn timed out during action overlap')
                 break
 
             if hold_active and (elapsed_ms - hold_start) >= hold_ms:
@@ -677,4 +713,11 @@ class Chassis:
 
             time.sleep(dt)
 
-        self.stop()
+        if self._action_monitor is not None:
+            if not self.set_speeds([0, 0, 0, 0]):
+                raise RuntimeError('turn stop failed during action overlap')
+            for pid in self.pos_pid:
+                pid.reset()
+            self.yaw_pid.reset()
+        else:
+            self.stop()

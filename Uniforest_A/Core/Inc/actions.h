@@ -14,6 +14,8 @@
 #define ACTION_CANCELLED 3u
 #define ACTION_TIMEOUT 4u
 #define ACTION_REJECTED 5u
+/* Still owns the mechanism; the chassis may start its following route. */
+#define ACTION_CHASSIS_READY 6u
 
 typedef struct {
     uint32_t token;

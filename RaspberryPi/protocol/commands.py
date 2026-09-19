@@ -59,6 +59,7 @@ ACTION_DONE = 2
 ACTION_CANCELLED = 3
 ACTION_TIMEOUT = 4
 ACTION_REJECTED = 5
+ACTION_CHASSIS_READY = 6  # still busy; chassis follow-up may overlap the tail
 
 
 @dataclass(frozen=True)

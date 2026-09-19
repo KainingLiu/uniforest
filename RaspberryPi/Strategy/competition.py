@@ -59,7 +59,7 @@ class CompetitionState(Enum):
 @dataclass(frozen=True)
 class FirstTaskConfig:
     target_cube_count: int = 3
-    far_wall_speed_mm_s: float = 250.0
+    far_wall_speed_mm_s: float = 300.0
     far_wall_timeout_s: float = 4.0
     near_wall_speed_mm_s: float = 150.0
     near_wall_timeout_s: float = 1.0
@@ -356,7 +356,15 @@ class CompetitionProgram:
               f'{self._heading_zero_deg:+.1f} deg '
               f'(correction {correction:+.1f} deg)')
 
-    def _grab_with_wall_press(self, grab, *, recalibrate_heading_zero=False):
+    def _chassis_followup(self, route):
+        """Adapt a chassis-only route to the action client's cooperative check."""
+        def followup(check):
+            with self.robot.chassis.monitor_action(check):
+                route()
+        return followup
+
+    def _grab_with_wall_press(self, grab, *, recalibrate_heading_zero=False,
+                              chassis_followup=None):
         """Start the short press with Grap; poll both on the action wait loop."""
         cfg = self.config
         rpm = self.robot.chassis.mecanum_rpm(
@@ -404,7 +412,10 @@ class CompetitionProgram:
             return False
 
         try:
-            grab(parallel_step=press_step)
+            kwargs = {'parallel_step': press_step}
+            if chassis_followup is not None:
+                kwargs['chassis_followup'] = self._chassis_followup(chassis_followup)
+            grab(**kwargs)
         finally:
             # Zero speed leaves the mechanism alone; Actions handles emergency
             # cancellation on errors. No worker may re-send motion afterward.
@@ -1219,12 +1230,12 @@ class CompetitionProgram:
 
         self.state = CompetitionState.UNLOAD
         print('[Task1] Unload: open hatches')
-        self.robot.actions.hatch_open()
+        self.robot.actions.hatch_open(settle_ms=300)
         self._checked_move(
             'backward', cfg.unload_reverse_mm,
             cfg.unload_reverse_speed_mm_s)
         print('[Task1] Unload: close hatches')
-        self.robot.actions.hatch_close()
+        self.robot.actions.hatch_close(settle_ms=0)
         if cfg.pre_final_turn_lateral_left_mm > 0.0:
             self.state = CompetitionState.PRE_FINAL_TURN_LATERAL
             print(f'[Task1] Move left '

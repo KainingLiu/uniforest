@@ -595,17 +595,54 @@ class Task2Program(CompetitionProgram):
             return 'left', -correction_mm
         return None, 0.0
 
-    def _try_grab_purple(self) -> bool:
+    def _run_post_purple_route(self, purple_lateral_origin):
+        cfg = self.config
+        print(f'[{self.TASK_LABEL}] Starting post-purple chassis route')
+        purple_lateral_mm = self._measure_lateral_displacement_mm(
+            purple_lateral_origin)
+        print('[Task2] Encoder-measured purple lateral displacement: '
+              f'{purple_lateral_mm:+.0f} mm (right positive)')
+
+        self.state = Task2State.POST_GRAB_REVERSE
+        print(f'[Task2] Reverse {cfg.post_grab_reverse_mm:.0f} mm')
+        self._checked_move(
+            'backward', cfg.post_grab_reverse_mm,
+            cfg.post_grab_reverse_speed_mm_s)
+
+        self.state = Task2State.TURN_RIGHT
+        self._turn_to_heading(cfg.post_grab_heading_target_cw_deg)
+
+        return_distance_mm = (
+            cfg.post_grab_forward_base_mm - purple_lateral_mm)
+        if return_distance_mm <= 0.0:
+            raise RuntimeError(
+                'post-purple forward distance is not positive: '
+                f'{cfg.post_grab_forward_base_mm:.0f} - '
+                f'({purple_lateral_mm:.0f}) = '
+                f'{return_distance_mm:.0f} mm')
+        self.state = Task2State.RETURN_MOVE
+        print(f'[Task2] Forward {return_distance_mm:.0f} mm at '
+              f'{cfg.post_grab_forward_speed_mm_s:.0f} mm/s '
+              f'({cfg.post_grab_forward_base_mm:.0f} - encoder lateral '
+              f'{purple_lateral_mm:.0f} mm)')
+        self._checked_move(
+            'forward', return_distance_mm,
+            cfg.post_grab_forward_speed_mm_s)
+
+        self._run_post_return_wall_approach()
+
+    def _try_grab_purple(self, *, chassis_followup=None) -> bool:
         if not self._search_and_align_purple():
             return False
 
         self.state = Task2State.GRAB
         print('[Task2] Purple aligned; running Grap2 with short wall press')
-        self._grab_with_wall_press(self.robot.actions.grap2)
+        self._grab_with_wall_press(
+            self.robot.actions.grap2, chassis_followup=chassis_followup)
         print('[Task2] Grap2 complete')
         return True
 
-    def _run_build_alignment_and_action(self):
+    def _run_build_alignment_and_action(self, *, chassis_followup=None):
         """Run the Tag6-to-Build segment shared with the standalone test."""
         cfg = self.config
         if cfg.post_tag6_lateral_right_mm > 0.0:
@@ -627,17 +664,23 @@ class Task2Program(CompetitionProgram):
         else:
             print(f'[{self.TASK_LABEL}] Building alignment skipped; '
                   'running Build')
-        self.robot.actions.build()
+        followup = (None if chassis_followup is None
+                    else self._chassis_followup(chassis_followup))
+        self.robot.actions.build(chassis_followup=followup)
         print(f'[{self.TASK_LABEL}] Build complete')
 
     def _run_build_phase(self):
         cfg = self.config
-        self._run_build_alignment_and_action()
+        self._run_build_alignment_and_action(
+            chassis_followup=None if cfg.finish_after_build else self._run_post_build_route)
 
         if cfg.finish_after_build:
             print(f'[{self.TASK_LABEL}] Round complete after Build')
             return
 
+    def _run_post_build_route(self):
+        cfg = self.config
+        print(f'[{self.TASK_LABEL}] Build released; starting chassis route')
         self.state = Task2State.POST_BUILD_REVERSE
         print(f'[Task2] Reverse {cfg.post_build_reverse_mm:.0f} mm '
               'after Build')
@@ -765,40 +808,13 @@ class Task2Program(CompetitionProgram):
         self.robot.reset_vision_filter()
         self._search_position_mm = 0.0
         purple_lateral_origin = self._capture_lateral_origin()
-        purple_grabbed = self._try_grab_purple()
 
-        purple_lateral_mm = self._measure_lateral_displacement_mm(
-            purple_lateral_origin)
-        print('[Task2] Encoder-measured purple lateral displacement: '
-              f'{purple_lateral_mm:+.0f} mm (right positive)')
+        def post_purple_route():
+            self._run_post_purple_route(purple_lateral_origin)
 
-        self.state = Task2State.POST_GRAB_REVERSE
-        print(f'[Task2] Reverse {cfg.post_grab_reverse_mm:.0f} mm')
-        self._checked_move(
-            'backward', cfg.post_grab_reverse_mm,
-            cfg.post_grab_reverse_speed_mm_s)
-
-        self.state = Task2State.TURN_RIGHT
-        self._turn_to_heading(cfg.post_grab_heading_target_cw_deg)
-
-        return_distance_mm = (
-            cfg.post_grab_forward_base_mm - purple_lateral_mm)
-        if return_distance_mm <= 0.0:
-            raise RuntimeError(
-                'post-purple forward distance is not positive: '
-                f'{cfg.post_grab_forward_base_mm:.0f} - '
-                f'({purple_lateral_mm:.0f}) = '
-                f'{return_distance_mm:.0f} mm')
-        self.state = Task2State.RETURN_MOVE
-        print(f'[Task2] Forward {return_distance_mm:.0f} mm at '
-              f'{cfg.post_grab_forward_speed_mm_s:.0f} mm/s '
-              f'({cfg.post_grab_forward_base_mm:.0f} - encoder lateral '
-              f'{purple_lateral_mm:.0f} mm)')
-        self._checked_move(
-            'forward', return_distance_mm,
-            cfg.post_grab_forward_speed_mm_s)
-
-        self._run_post_return_wall_approach()
+        purple_grabbed = self._try_grab_purple(chassis_followup=post_purple_route)
+        if not purple_grabbed:
+            post_purple_route()
 
         set_profile = getattr(
             self.robot, 'set_cube_detection_profile', None)

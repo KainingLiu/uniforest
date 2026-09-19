@@ -6,7 +6,7 @@ import time
 
 from protocol.commands import (
     ACTION_GRAP1, ACTION_GRAP2, ACTION_GRAP3, ACTION_BUILD,
-    ACTION_RUNNING, ACTION_DONE, ACTION_CANCELLED,
+    ACTION_RUNNING, ACTION_DONE, ACTION_CANCELLED, ACTION_CHASSIS_READY,
 )
 from .servo import (
     ANGLE_HATCH_A_OPEN, ANGLE_HATCH_B_OPEN,
@@ -48,12 +48,16 @@ class Actions:
         if not self._t.query_action_status():
             raise RuntimeError('failed to query A-board action status')
 
-    def _run_action(self, action_id, test_mode=False, *, parallel_step=None):
+    def _run_action(self, action_id, test_mode=False, *, parallel_step=None,
+                    chassis_followup=None):
         """Poll the action and optional nonblocking companion until both finish.
 
         parallel_step runs after ACTION_START is sent, then at each poll until
         it returns True. It must not wait or sleep; errors use the action's
         existing emergency-stop path. The caller owns companion cleanup.
+        chassis_followup(check) starts once the chassis-ready milestone and
+        companion are complete. Its chassis loop must call check continuously.
+        The lock stays held until both mechanism and follow-up have finished.
         """
         if not self._action_lock.acquire(blocking=False):
             raise RuntimeError('another mechanical action is running')
@@ -66,7 +70,7 @@ class Actions:
                 self._check_cancelled()
                 sample = self._t.get_action_status()
                 if sample is not None and sample[1] >= probe_at:
-                    if sample[0].state == ACTION_RUNNING:
+                    if sample[0].state in (ACTION_RUNNING, ACTION_CHASSIS_READY):
                         raise RuntimeError('A-board is already executing an action')
                     break
                 if time.monotonic() - probe_at >= ACTION_START_TIMEOUT_S:
@@ -83,12 +87,20 @@ class Actions:
                 raise RuntimeError('failed to send A-board action command')
             last_progress = started
             last_uptime = None
-            accepted = False
-            parallel_done = parallel_step is None
-            while True:
+            last_query = 0.0
+            accepted = action_done = chassis_ready = False
+            stop_generation = self._t.emergency_stop_generation
+
+            def check():
+                nonlocal last_progress, last_uptime, last_query
+                nonlocal accepted, action_done, chassis_ready
                 self._check_cancelled()
+                if self._t.emergency_stop_generation != stop_generation:
+                    raise ActionCancelled('emergency stop during mechanical action/route')
                 now = time.monotonic()
-                action_done = False
+                if now - last_query >= ACTION_POLL_MS / 1000.0:
+                    self._query()
+                    last_query = now
                 sample = self._t.get_action_status()
                 if sample is not None:
                     status, received_at = sample
@@ -109,21 +121,32 @@ class Actions:
                         action_done = status.state == ACTION_DONE
                         if status.state == ACTION_CANCELLED:
                             raise ActionCancelled('A-board cancelled mechanical action')
-                        if status.state not in (ACTION_RUNNING, ACTION_DONE):
+                        if status.state not in (ACTION_RUNNING, ACTION_CHASSIS_READY, ACTION_DONE):
                             raise RuntimeError(
                                 f'A-board action failed: state={status.state}, stage={status.stage}')
+                        chassis_ready = chassis_ready or status.state in (
+                            ACTION_CHASSIS_READY, ACTION_DONE)
                 if not accepted and now - started >= ACTION_START_TIMEOUT_S:
                     raise RuntimeError('A-board did not accept mechanical action')
                 if accepted and now - last_progress > ACTION_STALE_S:
                     raise RuntimeError('A-board action telemetry lost')
-                if now - started >= ACTION_TIMEOUT_S:
+                if not action_done and now - started >= ACTION_TIMEOUT_S:
                     raise RuntimeError('A-board mechanical action timed out')
+
+            parallel_done = parallel_step is None
+            followup_done = chassis_followup is None
+            while True:
+                check()
                 if not parallel_done:
                     parallel_done = bool(parallel_step())
-                if action_done and parallel_done:
+                if chassis_ready and parallel_done and not followup_done:
+                    # Cooperative monitoring: no background motion sender.
+                    chassis_followup(check)
+                    followup_done = True
+                    check()
+                if action_done and parallel_done and followup_done:
                     return
                 self._wait(ACTION_POLL_MS)
-                self._query()  # Also keeps the 200 ms communication watchdog alive.
         except BaseException:
             self._t.emergency_stop()
             raise
@@ -133,14 +156,15 @@ class Actions:
     def grap1(self, test_mode=False, *, parallel_step=None):
         self._run_action(ACTION_GRAP1, test_mode, parallel_step=parallel_step)
 
-    def grap2(self, test_mode=False, *, parallel_step=None):
-        self._run_action(ACTION_GRAP2, test_mode, parallel_step=parallel_step)
+    def grap2(self, test_mode=False, *, parallel_step=None, chassis_followup=None):
+        self._run_action(ACTION_GRAP2, test_mode, parallel_step=parallel_step,
+                         chassis_followup=chassis_followup)
 
     def grap3(self, test_mode=False, *, parallel_step=None):
         self._run_action(ACTION_GRAP3, test_mode, parallel_step=parallel_step)
 
-    def build(self):
-        self._run_action(ACTION_BUILD)
+    def build(self, *, chassis_followup=None):
+        self._run_action(ACTION_BUILD, chassis_followup=chassis_followup)
 
     def servo_home(self, settle_ms=300):
         self._check_cancelled()
@@ -155,8 +179,9 @@ class Actions:
         if settle_ms > 0:
             self._wait(settle_ms)
 
-    def hatch_close(self):
+    def hatch_close(self, settle_ms=500):
         self._check_cancelled()
         self.servo.set_angle(2, ANGLE_HATCH_A_CLOSED)
         self.servo.set_angle(3, ANGLE_HATCH_B_CLOSED)
-        self._wait(500)
+        if settle_ms > 0:
+            self._wait(settle_ms)
