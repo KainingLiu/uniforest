@@ -422,11 +422,12 @@ class CompetitionProgram:
             self.robot.chassis.set_speeds([0, 0, 0, 0])
 
     def _checked_move(self, direction: str, distance_mm: float,
-                      speed_mm_s: float):
-        accel_ms = self.config.delivery_linear_accel_ms
-        if (direction.casefold() in ('forward', 'left')
-                and abs(speed_mm_s - LONG_DISTANCE_MOVE_SPEED_MM_S) < 1e-6):
-            accel_ms = self.config.long_distance_forward_accel_ms
+                      speed_mm_s: float, *, accel_ms: Optional[int] = None):
+        if accel_ms is None:
+            accel_ms = self.config.delivery_linear_accel_ms
+            if (direction.casefold() in ('forward', 'left')
+                    and abs(speed_mm_s - LONG_DISTANCE_MOVE_SPEED_MM_S) < 1e-6):
+                accel_ms = self.config.long_distance_forward_accel_ms
         result = self.robot.move_chassis(
             direction, distance_mm, speed_mm_s,
             hold_ms=0, accel_ms=accel_ms)

@@ -66,7 +66,7 @@ class Task2State(Enum):
 @dataclass(frozen=True)
 class Task2Config(FirstTaskConfig):
     initial_distance_mm: float = 2350.0
-    initial_speed_mm_s: float = LONG_DISTANCE_MOVE_SPEED_MM_S
+    initial_speed_mm_s: float = 800.0  # Task2 ramp approach, independent of cruise speed.
     delivery_heading_target_cw_deg: float = -90.0
     delivery_tag_id: int = 3
     delivery_tag_distance_mm: float = 250.0
@@ -110,7 +110,7 @@ class Task2Config(FirstTaskConfig):
     post_orange_lateral_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
     final_turn_target_cw_deg: float = 180.0
     build_route_distance_mm: float = 2100.0
-    build_route_speed_mm_s: float = LONG_DISTANCE_MOVE_SPEED_MM_S
+    build_route_speed_mm_s: float = 800.0  # Task2 second ramp section.
     build_tag_id: int = 6
     build_tag_distance_mm: float = FirstTaskConfig().delivery_tag_distance_mm
     build_tag_heading_target_cw_deg: float = 180.0
@@ -779,7 +779,8 @@ class Task2Program(CompetitionProgram):
         print(f'[Task2] Forward {cfg.initial_distance_mm:.0f} mm at '
               f'{cfg.initial_speed_mm_s:.0f} mm/s')
         self._checked_move(
-            'forward', cfg.initial_distance_mm, cfg.initial_speed_mm_s)
+            'forward', cfg.initial_distance_mm, cfg.initial_speed_mm_s,
+            accel_ms=cfg.long_distance_forward_accel_ms)
 
         self.state = Task2State.TURN_LEFT
         self._turn_to_heading(cfg.delivery_heading_target_cw_deg)
@@ -870,7 +871,8 @@ class Task2Program(CompetitionProgram):
               f'{cfg.build_route_speed_mm_s:.0f} mm/s before Build')
         self._checked_move(
             'forward', cfg.build_route_distance_mm,
-            cfg.build_route_speed_mm_s)
+            cfg.build_route_speed_mm_s,
+            accel_ms=cfg.long_distance_forward_accel_ms)
 
         self.state = Task2State.TAG6_ALIGN
         self.robot.reset_field_localization_filter()
