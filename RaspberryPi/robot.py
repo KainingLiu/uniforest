@@ -236,11 +236,21 @@ class Robot:
     def _heartbeat_loop(self):
         """Keep the A-board watchdog alive during blocking action waits."""
         period_s = 0.05
+        started = time.monotonic()
+        warned = False
         while not self._heartbeat_stop.wait(period_s):
-            if not self.transport.ping():
-                # The A-board will enter its existing fail-safe stop path if
-                # the serial link really is unavailable.
-                continue
+            sent = self.transport.ping()
+            now = time.monotonic()
+            with self._telem_lock:
+                pong_at = self._pong_received_at
+            # Allow the streaming heartbeat to take over from connect's PONG.
+            # This controls logging only; existing watchdogs remain unchanged.
+            missing = now - started >= .3 and now - pong_at > .2
+            lost = not sent or missing
+            if lost and not warned:
+                reason = '心跳发送失败' if not sent else '超过 200 ms 未收到心跳响应'
+                print(f'[Robot] 通信异常：{reason}，请检查 A 板连接。', flush=True)
+            warned = lost
 
     # ==================== Telemetry Callbacks ================================
 
@@ -268,14 +278,6 @@ class Robot:
             if self._pong_received_at and now - self._pong_received_at > .15:
                 self._inspection_link_generation += 1
             self._pong_received_at = now
-        # Heartbeat runs at 20 Hz to satisfy the A-board watchdog. Keep the
-        # console readable by reporting a healthy link only periodically.
-        now = time.monotonic()
-        if (not hasattr(self, '_last_pong_log_at')
-                or now - self._last_pong_log_at >= 5.0):
-            print(f"[Robot] PONG — STM32 uptime: {uptime_ms} ms "
-                  "(link healthy)")
-            self._last_pong_log_at = now
 
     @property
     def telem(self) -> Optional[TelemBatch]:

@@ -62,6 +62,11 @@ extern "C" {
 #define SERVO3_HOME                 63      /* hatch A closed */
 #define SERVO4_HOME                 117     /* hatch B closed */
 
+/* Logical angles keep the original arm convention (home = 90 degrees).
+ * Set to (replacement servo home degrees - 90) * 10 after calibration.
+ * Applied once at PWM output, including actions and startup homing. */
+#define SERVO_ARM_FRONT_OFFSET_TENTH 120    /* 2026-09-23: logical 90 -> output 102 degrees */
+
 /* ======================== Angle Limits ==================================== */
 
 #define SERVO_ANGLE_MIN             0
@@ -97,11 +102,11 @@ void Servo_Init(void);
  * @param  servo_id   SERVO_GRIPPER (0) … SERVO_HATCH_B (3)
  * @param  angle_deg  0–180 degrees
  * @note   Linear mapping: pulse = MIN + (angle * (MAX-MIN)) / 180
- *         Clamped to [SERVO_ANGLE_MIN, SERVO_ANGLE_MAX].
+ *         Front-arm offset is applied at output; PWM angle clamped to 0..180.
  */
 void Servo_SetAngle(uint8_t servo_id, uint8_t angle_deg);
 
-/* Set a servo angle in 0.1° units, for example 522 = 52.2°. */
+/* Set a logical angle in 0.1 degree units; applies the front-arm offset once. */
 void Servo_SetAngleTenth(uint8_t servo_id, uint16_t angle_tenth);
 
 /**

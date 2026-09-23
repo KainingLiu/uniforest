@@ -32,8 +32,14 @@ void Servo_SetAngleTenth(uint8_t servo_id, uint16_t angle_tenth)
 {
     if (servo_id >= SERVO_COUNT) return;
     if (angle_tenth > 1800u) angle_tenth = 1800u;
+    int32_t output_tenth = (int32_t)angle_tenth;
+    if (servo_id == SERVO_ARM_FRONT) {
+        output_tenth += SERVO_ARM_FRONT_OFFSET_TENTH;
+    }
+    if (output_tenth < 0) output_tenth = 0;
+    if (output_tenth > 1800) output_tenth = 1800;
     uint32_t pulse = SERVO_PULSE_MIN
-                   + ((uint32_t)angle_tenth
+                   + ((uint32_t)output_tenth
                       * (SERVO_PULSE_MAX - SERVO_PULSE_MIN)) / 1800u;
     const ServoEntry_t *s = &servo_table[servo_id];
     __HAL_TIM_SET_COMPARE(s->htim, s->channel, pulse);
@@ -123,15 +129,7 @@ void Servo_Init(void)
  */
 void Servo_SetAngle(uint8_t servo_id, uint8_t angle_deg)
 {
-    if (servo_id >= SERVO_COUNT) return;
-    if (angle_deg > SERVO_ANGLE_MAX) angle_deg = SERVO_ANGLE_MAX;
-
-    /* Linear mapping: 0°→250, 180°→1250 */
-    uint32_t pulse = SERVO_PULSE_MIN
-                   + ((uint32_t)angle_deg * (SERVO_PULSE_MAX - SERVO_PULSE_MIN)) / 180;
-
-    const ServoEntry_t *s = &servo_table[servo_id];
-    __HAL_TIM_SET_COMPARE(s->htim, s->channel, pulse);
+    Servo_SetAngleTenth(servo_id, (uint16_t)angle_deg * 10u);
 }
 
 /**

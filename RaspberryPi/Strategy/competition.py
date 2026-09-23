@@ -94,16 +94,13 @@ class FirstTaskConfig:
     orange_edge_stop_s: float = 0.10
     orange_edge_origin_margin_mm: float = 10.0
     orange_edge_retry_spacing_mm: float = 100.0
-    # Relative to the Task1 calibrated target X=-1.0 mm: [-20, +3] mm.
+    # Absolute camera-X windows are maintained in vision_targets.py.
     align_min_x_mm: float = TASK1_ORANGE.align_min_x_mm
     align_max_x_mm: float = TASK1_ORANGE.align_max_x_mm
-    # Task1 calibration frame: the selected middle orange cube measured
-    # X=-1.0 mm, so use that measured center as the coarse target.
     align_target_x_mm: float = TASK1_ORANGE.target_x_mm
-    align_confirm_frames: int = 3
-    orange_fine_align_timeout_s: float = 1.0
+    align_confirm_frames: int = 2
+    orange_fine_align_timeout_s: float = 0.5
     orange_fine_timeout_retry_count: int = 2
-    # Relative to X=-1.0 mm: [-2.5, +2.5] mm.
     orange_fine_min_x_mm: float = TASK1_ORANGE.fine_min_x_mm
     orange_fine_max_x_mm: float = TASK1_ORANGE.fine_max_x_mm
     align_kp: float = 1.5
@@ -114,14 +111,13 @@ class FirstTaskConfig:
     align_integral_limit: float = 300.0
     align_min_speed_mm_s: float = 100.0
     align_creep_min_speed_mm_s: float = 100.0
-    align_start_speed_mm_s: float = 40.0
+    align_start_speed_mm_s: float = 80.0
     align_max_speed_mm_s: float = 250.0
-    align_fast_speed_mm_s: float = 420.0
-    # Begin braking well before the narrow pickup window; the breakout speed
-    # remains unchanged so the chassis still overcomes static friction.
-    align_slowdown_start_mm: float = 180.0
+    align_fast_speed_mm_s: float = 500.0
+    # Shorter approach ramp; retain the near-target breakout speed.
+    align_slowdown_start_mm: float = 120.0
     align_creep_start_mm: float = 30.0
-    align_accel_mm_s2: float = 300.0
+    align_accel_mm_s2: float = 800.0
     # One-frame control feedback avoids commanding motion from an old median
     # while preserving target confirmation in the search tracker.
     align_filter_frames: int = 1
@@ -139,7 +135,7 @@ class FirstTaskConfig:
     delivery_reverse_mm: float = 400.0
     delivery_reverse_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
     delivery_turn_deg: float = 90.0
-    delivery_turn_speed_deg_s: float = 90.0
+    delivery_turn_speed_deg_s: float = 120.0
     delivery_turn_heading_hold_ms: int = 0
     delivery_forward_base_mm: float = 2800.0
     delivery_forward_speed_mm_s: float = LONG_DISTANCE_MOVE_SPEED_MM_S
@@ -218,6 +214,7 @@ class CompetitionProgram:
         # The fine-align stage must inherit the target observed at the end of
         # coarse alignment, rather than the stale search acquisition sample.
         self._last_alignment_block = None
+        self._last_alignment_frame_timestamp = None
         self._last_alignment_timed_out = False
         self._alignment_valid_frames = 0
 
@@ -594,6 +591,9 @@ class CompetitionProgram:
         if (self._last_alignment_timed_out
                 and self._alignment_valid_frames > 0
                 and last_block is not None
+                and self._last_alignment_frame_timestamp is not None
+                and 0.0 <= time.time() - self._last_alignment_frame_timestamp
+                < cfg.vision_stale_s
                 and coarse_min <= last_block.x <= coarse_max):
             print(f'[{self.TASK_LABEL}] Fine alignment timed out; '
                   f'coarse position x={last_block.x:+.0f} mm is acceptable')
@@ -614,6 +614,7 @@ class CompetitionProgram:
         cfg = self.config
         self._last_alignment_timed_out = False
         self._alignment_valid_frames = 0
+        self._last_alignment_frame_timestamp = None
         if initial_reference_x is None:
             # Start a fresh target session for coarse acquisition.  The fine
             # stage deliberately keeps the block recorded by this session.
@@ -657,18 +658,24 @@ class CompetitionProgram:
                 now = time.monotonic()
                 result = self.robot.vision_result
                 frame_timestamp = result.timestamp if result is not None else None
-                # The camera thread publishes a snapshot faster than this
-                # control loop consumes it.  Reusing the same frame must not
-                # count as a visual miss or reset alignment confirmation.
-                if (frame_timestamp is not None
-                        and frame_timestamp == last_frame_timestamp):
+                frame_fresh = (frame_timestamp is not None
+                               and 0.0 <= time.time() - frame_timestamp
+                               < cfg.vision_stale_s)
+                repeated_frame = (frame_timestamp is not None
+                                  and frame_timestamp == last_frame_timestamp)
+                # A duplicate fresh frame neither confirms nor loses a target.
+                # Once stale (or no valid target for the loss timeout), it must
+                # enter the same stop path as a missing frame.
+                if (repeated_frame and frame_fresh
+                        and now - last_seen < cfg.align_lost_timeout_s):
                     time.sleep(cfg.align_control_period_s)
                     continue
-                block = tracker.update(
+                block = (tracker.update(
                     result, color_name=color_name,
                     min_confidence=min_confidence,
                     max_age_s=cfg.vision_stale_s,
                     reference_x=reference_x, reference_z=reference_z)
+                    if frame_fresh and not repeated_frame else None)
                 if frame_timestamp is not None:
                     last_frame_timestamp = frame_timestamp
 
@@ -677,6 +684,13 @@ class CompetitionProgram:
                     integral = 0.0
                     previous_error = None
                     self.robot.chassis.set_speeds([0, 0, 0, 0])
+                    commanded_speed = 0.0
+                    last_update = now
+                    alignment_window_latched = False
+                    alignment_edge_since = None
+                    x_samples.clear()
+                    self._last_alignment_block = None
+                    self._last_alignment_frame_timestamp = None
                     if now - last_seen >= cfg.align_lost_timeout_s:
                         print(f'[{self.TASK_LABEL}] {display_color} lost; '
                               'resume search')
@@ -686,6 +700,7 @@ class CompetitionProgram:
 
                 last_seen = now
                 self._last_alignment_block = block
+                self._last_alignment_frame_timestamp = frame_timestamp
                 self._alignment_valid_frames += 1
                 x_samples.append(block.x)
                 filtered_x = median(x_samples)
@@ -921,7 +936,8 @@ class CompetitionProgram:
             heading_tolerance_deg: Optional[float] = None,
             fine_gain_scale: Optional[float] = None,
             vision_stale_s: Optional[float] = None,
-            lost_timeout_s: Optional[float] = None):
+            lost_timeout_s: Optional[float] = None,
+            fine_align_enabled: bool = True):
         """Use a tag for translation while holding startup-relative yaw."""
         cfg = self.config
         tag_id = cfg.delivery_tag_id if tag_id is None else tag_id
@@ -1069,6 +1085,22 @@ class CompetitionProgram:
                               <= heading_tolerance_deg)
 
                 within_tolerance = distance_ok and lateral_ok and heading_ok
+                if within_tolerance and not fine_align_enabled:
+                    # Coarse-only alignment stops at the accepted pose, then
+                    # confirms distinct frames without chasing the fine deadband.
+                    self.robot.chassis.set_speeds([0, 0, 0, 0])
+                    vx = vy = wz = 0.0
+                    pids.reset()
+                    confirmed += 1
+                    print(f'[{self.TASK_LABEL}] Tag {tag_id} aligned '
+                          f'{confirmed}/{cfg.delivery_tag_confirm_frames}: '
+                          f'd={distance_mm:.0f} mm, x={lateral_mm:+.0f} mm, '
+                          f'gyro={heading_error_deg:+.1f} deg')
+                    if confirmed >= cfg.delivery_tag_confirm_frames:
+                        return
+                    last_update = now
+                    time.sleep(cfg.delivery_tag_control_period_s)
+                    continue
                 precision_ok = (
                     abs(distance_error)
                     <= cfg.delivery_tag_distance_deadband_mm
@@ -1103,8 +1135,8 @@ class CompetitionProgram:
                 else:
                     confirmed = 0
 
-                if (abs(distance_error)
-                        <= cfg.delivery_tag_distance_deadband_mm):
+                if ((not fine_align_enabled and distance_ok)
+                        or abs(distance_error) <= cfg.delivery_tag_distance_deadband_mm):
                     distance_pid.reset()
                     desired_vx = 0.0
                 else:
@@ -1121,8 +1153,8 @@ class CompetitionProgram:
                         fast_speed=cfg.delivery_tag_fast_forward_mm_s,
                         max_speed=cfg.delivery_tag_fast_forward_mm_s,
                         min_speed=cfg.delivery_tag_min_linear_mm_s)
-                if (abs(lateral_mm)
-                        <= cfg.delivery_tag_lateral_deadband_mm):
+                if ((not fine_align_enabled and lateral_ok)
+                        or abs(lateral_mm) <= cfg.delivery_tag_lateral_deadband_mm):
                     lateral_pid.reset()
                     desired_vy = 0.0
                 else:
@@ -1139,8 +1171,8 @@ class CompetitionProgram:
                         fast_speed=cfg.delivery_tag_fast_lateral_mm_s,
                         max_speed=cfg.delivery_tag_fast_lateral_mm_s,
                         min_speed=cfg.delivery_tag_min_linear_mm_s)
-                if (abs(heading_error_deg)
-                        <= cfg.delivery_heading_deadband_deg):
+                if ((not fine_align_enabled and heading_ok)
+                        or abs(heading_error_deg) <= cfg.delivery_heading_deadband_deg):
                     heading_pid.reset()
                     desired_wz = 0.0
                 else:

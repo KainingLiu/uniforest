@@ -65,13 +65,15 @@ class Task2State(Enum):
 
 @dataclass(frozen=True)
 class Task2Config(FirstTaskConfig):
-    initial_distance_mm: float = 2350.0
+    initial_distance_mm: float = 2500.0
     initial_speed_mm_s: float = 800.0  # Task2 ramp approach, independent of cruise speed.
     delivery_heading_target_cw_deg: float = -90.0
     delivery_tag_id: int = 3
+    # Temporary route: skip Tag3 and its post-alignment lateral move together.
+    tag3_alignment_enabled: bool = False
     delivery_tag_distance_mm: float = 250.0
-    delivery_tag_distance_tolerance_mm: float = 30.0 * TAG_FOV_RETUNE_SCALE
-    delivery_tag_lateral_tolerance_mm: float = 25.0 * TAG_FOV_RETUNE_SCALE
+    delivery_tag_distance_tolerance_mm: float = 10.0
+    delivery_tag_lateral_tolerance_mm: float = 10.0
     delivery_heading_tolerance_deg: float = 3.0
     delivery_tag_fine_gain_scale: float = 1.5
     # Task2 tags use the wide-angle, uncalibrated tag camera.  Keep the
@@ -80,7 +82,7 @@ class Task2Config(FirstTaskConfig):
     delivery_tag_lost_timeout_s: float = 2.0
     post_tag_lateral_mm: float = 100.0
     post_tag_lateral_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
-    wall_premove_mm: float = 250.0
+    wall_premove_mm: float = 300.0
     wall_premove_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
     purple_min_confidence: float = 25.0
     purple_search_max_distance_mm: float = 750.0
@@ -104,20 +106,18 @@ class Task2Config(FirstTaskConfig):
     orange_align_max_x_mm: float = TASK2_ORANGE.align_max_x_mm
     orange_align_target_x_mm: float = TASK2_ORANGE.target_x_mm
     orange_track_ambiguity_margin_mm: float = 18.0
-    post_orange_reverse_mm: float = 500.0
+    post_orange_reverse_mm: float = 100.0
     post_orange_reverse_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
-    post_orange_lateral_base_mm: float = 700.0
+    post_orange_lateral_base_mm: float = 550.0
     post_orange_lateral_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
     final_turn_target_cw_deg: float = 180.0
-    build_route_distance_mm: float = 2100.0
+    build_route_distance_mm: float = 2800.0
     build_route_speed_mm_s: float = 800.0  # Task2 second ramp section.
     build_tag_id: int = 6
     build_tag_distance_mm: float = FirstTaskConfig().delivery_tag_distance_mm
     build_tag_heading_target_cw_deg: float = 180.0
-    build_tag_distance_tolerance_mm: float = (
-        FirstTaskConfig().delivery_tag_distance_tolerance_mm)
-    build_tag_lateral_tolerance_mm: float = (
-        FirstTaskConfig().delivery_tag_lateral_tolerance_mm)
+    build_tag_distance_tolerance_mm: float = 10.0
+    build_tag_lateral_tolerance_mm: float = 10.0
     build_tag_heading_tolerance_deg: float = (
         FirstTaskConfig().delivery_heading_tolerance_deg)
     build_tag_fine_gain_scale: float = (
@@ -128,6 +128,7 @@ class Task2Config(FirstTaskConfig):
     # profile and enter deceleration earlier without changing final tolerances.
     delivery_tag_fast_forward_mm_s: float = 260.0
     delivery_tag_fast_lateral_mm_s: float = 200.0
+    delivery_tag_min_linear_mm_s: float = 80.0
     delivery_tag_slowdown_distance_mm: float = 140.0
     delivery_tag_slowdown_lateral_mm: float = 100.0
     delivery_tag_creep_distance_mm: float = 35.0
@@ -210,6 +211,7 @@ class Task2Config(FirstTaskConfig):
 
 @dataclass(frozen=True)
 class Task2Round2Config(Task2Config):
+    initial_distance_mm: float = 2350.0
     purple_search_max_distance_mm: float = 650.0
     post_tag_lateral_mm: float = 0.0
     post_tag6_lateral_right_mm: float = 400.0
@@ -785,11 +787,13 @@ class Task2Program(CompetitionProgram):
         self.state = Task2State.TURN_LEFT
         self._turn_to_heading(cfg.delivery_heading_target_cw_deg)
 
-        self.state = Task2State.TAG_ALIGN
-        self.robot.reset_field_localization_filter()
-        self._align_delivery_tag()
-
-        self._run_post_tag3_lateral()
+        if cfg.tag3_alignment_enabled:
+            self.state = Task2State.TAG_ALIGN
+            self.robot.reset_field_localization_filter()
+            self._align_delivery_tag(fine_align_enabled=False)
+            self._run_post_tag3_lateral()
+        else:
+            print(f'[{self.TASK_LABEL}] Tag3 alignment and lateral move skipped')
 
         self.state = Task2State.WALL_PREMOVE
         print(f'[Task2] Forward {cfg.wall_premove_mm:.0f} mm at '
@@ -886,6 +890,7 @@ class Task2Program(CompetitionProgram):
             fine_gain_scale=cfg.build_tag_fine_gain_scale,
             vision_stale_s=cfg.build_tag_vision_stale_s,
             lost_timeout_s=cfg.build_tag_lost_timeout_s,
+            fine_align_enabled=False,
         )
 
         self._run_build_phase()
