@@ -103,9 +103,10 @@ TURN_ACCEL_MS        = 600
 TURN_BASE_DECEL_DEG  = 30.0
 TURN_BASE_PID_LIMIT  = 60.0
 TURN_HOLD_MS         = 500
-TURN_TIMEOUT_MS      = 5000
+TURN_TIMEOUT_MARGIN_MS = 1500
 TURN_SETTLE_DEG      = 1.5
 TURN_SETTLE_CYCLES   = 30
+TURN_MIN_SPEED_DEG_S = 8.0
 
 
 @dataclass(frozen=True)
@@ -618,106 +619,109 @@ class Chassis:
         """
         Turn by target_deg degrees (+ = CW, - = CCW) at speed_deg_s (blocking).
 
-        Uses IMU yaw for feedback. Speed PID on STM32; position PID here.
+        Uses IMU yaw for feedback. Healthy timeouts stop and continue the route;
+        link, telemetry, cancellation and mechanism faults still abort.
         """
+        if (not math.isfinite(target_deg) or not math.isfinite(speed_deg_s)
+                or speed_deg_s <= 0):
+            raise ValueError('turn requires a finite target and positive speed')
         # Internal convention: + = CCW. Flip user convention.
         target = -target_deg
-
-        telem = self._telem
-        if telem is None:
-            return
-
         dt = 0.02
-        sign_dir = 1 if target >= 0 else -1
         scale = speed_deg_s / TURN_BASE_SPEED_DEG_S
         decel_deg = TURN_BASE_DECEL_DEG * scale
         pid_limit = TURN_BASE_PID_LIMIT * scale
-
-        self.yaw_pid.reset()
-        self.yaw_pid.output_limit = 0.0
-
-        # Integrate adjacent yaw samples so crossing +/-180 degrees does not
-        # turn a small overshoot into an apparent full-revolution error.
-        previous_yaw = telem.yaw_deg
-        accumulated_yaw = 0.0
-
+        timeout_ms = (abs(target_deg) / speed_deg_s * 1000.0
+                      + TURN_ACCEL_MS + max(0, hold_ms) + TURN_TIMEOUT_MARGIN_MS)
         pos_pid = PID(3.0, 0.15, 0.0, pid_limit, pid_limit)
-
-        t_start = time.time()
+        stop_generation = self._t.emergency_stop_generation
+        t_start = time.monotonic()
         settle_cnt = 0
-        hold_active = False
-        hold_start = 0.0
+        hold_start = None
+        last_output = 0.0
+        timed_out = False
 
-        while True:
+        def check_turn():
             self._check_action()
+            if (not self._t.connected
+                    or self._t.emergency_stop_generation != stop_generation):
+                raise RuntimeError('turn communication/cancellation fault')
             telem = self._telem
-            if telem is None:
-                time.sleep(dt)
-                continue
+            if telem is None or time.monotonic() - self._telem_received_at > 0.5:
+                raise RuntimeError('turn telemetry unavailable or stale')
+            if not math.isfinite(telem.yaw_deg):
+                raise RuntimeError('turn yaw invalid')
+            return telem
 
-            current_yaw = telem.yaw_deg
-            yaw_delta = current_yaw - previous_yaw
-            while yaw_delta > 180:
-                yaw_delta -= 360
-            while yaw_delta < -180:
-                yaw_delta += 360
-            accumulated_yaw += yaw_delta
-            previous_yaw = current_yaw
-            yaw = accumulated_yaw
+        try:
+            previous_yaw = check_turn().yaw_deg
+            yaw = 0.0
+            previous_error = target
+            while True:
+                telem = check_turn()
+                # Integrate adjacent samples across the +/-180 degree wrap.
+                yaw_delta = telem.yaw_deg - previous_yaw
+                while yaw_delta > 180:
+                    yaw_delta -= 360
+                while yaw_delta < -180:
+                    yaw_delta += 360
+                yaw += yaw_delta
+                previous_yaw = telem.yaw_deg
+                err = target - yaw
+                remaining = abs(err)
+                elapsed_ms = (time.monotonic() - t_start) * 1000.0
 
-            err = target - yaw
-            remaining = abs(err)
-
-            elapsed_ms = (time.time() - t_start) * 1000.0
-
-            if not hold_active:
                 if remaining <= TURN_SETTLE_DEG:
+                    # Stop immediately in tolerance, including confirmation.
+                    rot_deg_s = 0.0
+                    pos_pid.reset()
                     settle_cnt += 1
-                    if settle_cnt >= settle_cycles:
-                        hold_active = True
+                    if settle_cnt >= settle_cycles and hold_start is None:
                         hold_start = elapsed_ms
-                        pos_pid.reset()
                 else:
                     settle_cnt = 0
+                    hold_start = None
+                    if err * previous_error < 0:
+                        pos_pid.reset()
+                    # Brake by current distance even while accelerating; once
+                    # past the target, both feedforward and minimum reverse.
+                    ramp = min(1.0, elapsed_ms / TURN_ACCEL_MS)
+                    pos_pid.output_limit = pid_limit * ramp
+                    distance_ratio = min(1.0, remaining / decel_deg)
+                    ff_deg_s = speed_deg_s * min(
+                        self._smoothstep(ramp), self._smoothstep(distance_ratio))
+                    sign_dir = 1 if err > 0 else -1
+                    pid_deg_s = pos_pid.compute(target, yaw, dt)
+                    toward_target = ff_deg_s + sign_dir * pid_deg_s
+                    rot_deg_s = sign_dir * max(
+                        min(TURN_MIN_SPEED_DEG_S, speed_deg_s), toward_target)
+                previous_error = err
 
-            if hold_active:
-                pos_pid.output_limit = pid_limit
-                ff_deg_s = 0.0
-            elif elapsed_ms < TURN_ACCEL_MS:
-                r = elapsed_ms / TURN_ACCEL_MS
-                pos_pid.output_limit = pid_limit * r
-                ff_deg_s = speed_deg_s * self._smoothstep(r)
-            else:
-                pos_pid.output_limit = pid_limit
-                if remaining > decel_deg:
-                    ff_deg_s = speed_deg_s
-                else:
-                    ff_deg_s = speed_deg_s * self._smoothstep(
-                        remaining / decel_deg if decel_deg > 0 else 1.0)
+                if hold_start is not None and elapsed_ms - hold_start >= hold_ms:
+                    break
+                if elapsed_ms >= timeout_ms:
+                    timed_out = True
+                    break
+                check_turn()
+                rot_rpm = rot_deg_s * TURN_DEG_S_TO_RPM
+                if not self.set_speeds([int(round(-rot_rpm))] * 4):
+                    raise RuntimeError('turn speed send failed')
+                last_output = rot_deg_s
+                time.sleep(dt)
 
-            pid_deg_s = pos_pid.compute(target, yaw, dt)
-            rot_deg_s = ff_deg_s * sign_dir + pid_deg_s
-
-            rot_rpm = rot_deg_s * TURN_DEG_S_TO_RPM
-            if not self.set_speeds([int(round(-rot_rpm))] * 4) and self._action_monitor is not None:
-                raise RuntimeError('turn speed send failed during action overlap')
-
-            elapsed_ms = (time.time() - t_start) * 1000.0
-            if elapsed_ms >= TURN_TIMEOUT_MS:
-                if self._action_monitor is not None:
-                    raise RuntimeError('turn timed out during action overlap')
-                break
-
-            if hold_active and (elapsed_ms - hold_start) >= hold_ms:
-                break
-
-            time.sleep(dt)
-
-        if self._action_monitor is not None:
+            check_turn()
             if not self.set_speeds([0, 0, 0, 0]):
-                raise RuntimeError('turn stop failed during action overlap')
+                raise RuntimeError('turn stop failed')
+            check_turn()
+            if timed_out:
+                print('[Chassis] Warning: turn timeout accepted (degraded): '
+                      f'target={target_deg:+.1f} deg CW, turned={-yaw:+.1f} deg CW, '
+                      f'remaining={-err:+.1f} deg, last_output={-last_output:+.1f} deg/s, '
+                      f'time={elapsed_ms:.0f}/{timeout_ms:.0f} ms', flush=True)
+        except BaseException:
+            self._t.emergency_stop()
+            raise
+        finally:
             for pid in self.pos_pid:
                 pid.reset()
             self.yaw_pid.reset()
-        else:
-            self.stop()

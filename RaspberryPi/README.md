@@ -11,7 +11,7 @@
 | `main.py` | 比赛统一入口和轮次选择 |
 | `robot.py` | 通信生命周期、设备聚合、预检与调试交互 |
 | `Strategy/` | Task0/Task1/Task2、视觉对准、目标跟踪、顶墙与路线编排 |
-| `control/` | 底盘位置外环、舵机/步进调试、A 板动作客户端、键盘控制 |
+| `control/` | 底盘位置外环、舵机/步进调试、A 板动作客户端 |
 | `protocol/` | 帧编解码、传输和 schema v3 契约 |
 | `vision/` | cube/tag 相机、方块检测、AprilTag 定位和标定配置 |
 | `sensors/`、`utils/` | 传感器封装和通用辅助 |
@@ -48,13 +48,15 @@ Task2 100 mm，两轮均适用），200 ms 复位等待和翻转复位与后退�
 
 截至 2026-09-24，已定向上传 Task2 路线、紫色抓取前进 250 mm、两任务两轮
 Tag6 ±8 mm/最低平移 80 mm/s/单轴停车、常规转向前馈 120°/s，以及数量检查
-200/300/200 ms 与复位重叠。远端 69 文件语法、导入和协议检查通过。
-最新橙色粗对准超时直接抓取尚未上传树莓派；不自动启动实机任务。
+200/300/200 ms 与复位重叠。橙色/紫色 5 秒超时抓取、常规转向末段修复与
+1500 ms 超时余量均已同步。清理键盘及重复临时入口后，远端最新 63 文件语法、
+导入和协议检查通过；不自动启动实机任务。
 
 | 项目 | 当前源码 / 已知部署状态 |
 | --- | --- |
 | 上位机路线、Tag6、数量检查 | 上述参数已定向上传，两轮入口已核对；现场效果待复测 |
-| 橙色粗对准超时直接抓取 | 两任务两轮源码已改，尚未同步树莓派或现场验证 |
+| 方块粗对准 5 秒超时直接抓取 | 两任务两轮橙色、两轮 Task2 紫色均已同步树莓派，远端检查通过，现场效果待确认 |
+| 常规转向末段与超时降级 | 最低 8°/s、容差内零速、超调反向；超时按预计匀速时间＋加速/保持时间＋1500 ms 计算，停车后继续；现场效果待确认 |
 | A 板前臂零点 | 源码 +12°，逻辑 90°→输出 102°；须 CLion 烧录，尚未收到现场确认 |
 | A 板 Grap1/2 行程 | 源码垂直下降/上升各 18.5 cm；须 CLion 烧录，尚未收到现场确认 |
 | A 板 Grap3 收尾与吸气关阀 | 上升 5 cm 复位前臂、PumpOn 明确关阀；源码已改，固件版本由现场确认 |
@@ -85,7 +87,7 @@ py -3 -m venv .venv
 .\.venv\Scripts\python.exe tests\import_smoke.py
 ```
 
-实际运行解释器需有 pyserial、NumPy、OpenCV contrib 和 pynput。Linux 无桌面的 SSH 环境中，pynput 的 X 后端可能无法初始化；导入检查通过包元数据检查安装情况。
+实际运行解释器需有 pyserial、NumPy 和 OpenCV contrib。键盘遥控已移除，不再依赖 pynput 或桌面键盘后端。
 
 ## 验证与启动顺序
 
@@ -140,8 +142,8 @@ python robot.py --preflight --vision --localization
 ```
 
 预检读取通信、遥测和已启用的视觉状态，不执行比赛动作。Windows 调试可显式指定 `--port COM5 --camera 1`。Tag 标定文件当前为 `calibrated=false`，估算内参不等价于完成实测标定。
-仅排查相机映射时使用 `python tools/camera_roles_test.py`；`task2_main.py` 和
-`building_build_test.py` 的 `--preflight-only` 保留为对应独立入口的可选检查，
+仅排查相机映射时使用 `python tools/camera_roles_test.py`；`task2_main.py`
+的 `--preflight-only` 保留为独立任务入口的可选检查，
 无需每次重复执行全部预检。正常顺序是无硬件检查、一次设备预检、一个单动作、完整任务。
 
 ### 比赛入口
@@ -202,12 +204,21 @@ python main.py --task all --diagnostics-log /tmp/uniforest-run.jsonl
 | Task2 标签对准 | 前后最高 260，左右最高 200；容差外非零期望最低 80 mm/s | 300 mm/s² |
 | Build 前建筑对准 | 最高 250；近距离前后 60–90 mm/s | 1000 mm/s² |
 
-键盘三挡为 250/600/1000 mm/s，线加速度 2000 mm/s²、减速度 2600 mm/s²。旋转参数不随普通平移参数改变。上述为软件目标值，实际速度受位置 PID、剩余距离、负载和地面影响。
+旋转参数不随普通平移参数改变。上述为软件目标值，实际速度受位置 PID、剩余距离、负载和地面影响。
 
 ### 位置环与停止条件
 
 A 板以 1 kHz 运行四轮速度环并上报累计编码器；树莓派根据遥测运行位置外环、S 曲线速度规划和 IMU 航向保持。
 
+- 常规路线转向：前馈 120°/s、600 ms 加速、40° 减速区、位置 PID 3.0/0.15/0、
+  修正限幅 ±80°/s。容差外最低期望转速 8°/s（若调用指定更低速度，以指定速度为限），
+  进入 ±1.5° 即发零速；越过目标按当前误差反向修正，清除旧积分。
+  两任务路线使用 1 次到位确认、额外保持 0 ms。总超时为
+  `abs(转角)/指定速度×1000 + 600 + hold_ms + 1500` ms，最后 1500 ms 为额外余量；
+  120°/s 时转 90° 上限 2.85 秒，转 180° 上限 3.60 秒，到位即可提前结束。
+  超时仍未完成则先停底盘，打印
+  已转角度、剩余角度与末次输出，按降级成功继续路线，不取消并行 Grap2/Build。
+  失联、遥测陈旧、急停、发送失败和机构故障仍中止；8°/s 的现场效果待确认。
 - `move_forward()`、`move_right()` 支持正负距离，返回 `LinearMoveResult`。
 - 到位窗口：位置误差不超过 1000 counts（约 3 mm），四轮转速绝对值均不超过 50 RPM，连续满足 50 ms。
 - 到位后关闭速度前馈，由位置 PID 锁定；路线动作使用 `hold_ms=0`，不增加额外保持。
@@ -347,7 +358,7 @@ Grap1、Grap2、Grap3 和 Build 的步进电机默认巡航速度约为 **5020 �
 
 完整步骤见[机械动作流程](../Uniforest_A/ACTIONS.md)。`control/actions.py` 请求整套动作、监督状态与故障，并在指定节点协调后续底盘路线；机构时序位于 `Uniforest_A/Core/Src/actions.c`。
 
-- Grap1/2/3 均无动作内固定等待，仍等步进运动完成；独立测试末尾保留 1000 ms。
+- Grap1/2/3 均无动作内固定等待，仍等步进运动完成；`robot.py --action` 使用正式动作，不追加测试等待。
 - Grap1/2 的垂直下降和回程上升均为 18.5 cm；水平行程及交叉触发位置不变，须重新烧录 A 板后生效。
 - Grap3 释放后的收尾段同时上升 9 cm、水平回收 5 cm；本段上升到 5 cm 时前臂先复位到逻辑 90°，两轴完成后全部舵机复位，无新增等待，须重新烧录 A 板后生效。
 - Build 仅保留两次取件等待和三次分段抬臂等待，指令合计 2500 ms，第三次抬臂与上升重叠。
@@ -360,21 +371,15 @@ Grap1、Grap2、Grap3 和 Build 的步进电机默认巡航速度约为 **5020 �
 单动作测试，选择一条运行：
 
 ```bash
-python action_test.py grap1
-python action_test.py grap2
-python action_test.py grap3
-python action_test.py build
+python robot.py --action grap1
+python robot.py --action grap2
+python robot.py --action grap3
+python robot.py --action build
 ```
 
-不传动作名默认 Grap3；Grap 测试模式结束后额外等待 1000 ms。Build 不使用该标志。每次测试前确认起始位置和运动空间。
+必须显式指定动作；入口等待整套动作完成，不追加后续底盘路线。每次测试前确认起始位置和运动空间。
 
-建筑对准 + Build 单项入口：
-
-```bash
-python building_build_test.py
-```
-
-该入口不执行 Task2 路线或 Tag6 横移，只在建筑连续对准后执行 Build。正式 Task2 对建筑目标丢失/对准超时会先停车告警后继续 Build；底盘通信等其他异常仍终止任务。
+正式 Task2 对建筑目标丢失/对准超时会先停车告警后继续 Build；底盘通信等其他异常仍终止任务。
 
 ### 协议与中止
 
@@ -432,8 +437,9 @@ ID 1/2/3/4 对应 Grap1/Grap2/Grap3/Build；状态 0/1/2/3/4/5 为 idle/running/
 - 橙色粗对准后执行最长 0.5 s 的 ±5 mm 微调，使用同一速度规则。微调超时、
   本阶段有有效样本且最后记录位置仍新鲜并在粗窗口内时允许抓取；不保证每次达到 ±5 mm。
 - 新画面中目标无效时先停车，持续丢失 0.5 s 返回搜索。两任务两轮橙色粗对准
-  达到 10 s 上限后停车，跳过精对准，直接执行 Grap3（Task1）或 Grap1（Task2）
-  与短压墙；正常粗对准完成仍进行精对准。紫色对准超时处理不变。
+  达到 5 s 上限后停车，跳过精对准，直接执行 Grap3（Task1）或 Grap1（Task2）
+  与短压墙；正常粗对准完成仍进行精对准。两轮 Task2 紫色对准同样采用独立
+  5 s 上限，超时停车后直接执行 Grap2 与短压墙，紫色没有精对准阶段。
   对准成功后，Grap3（Task1 橙色）、Grap1（Task2 橙色）或 Grap2（紫色）
   与 150 mm/s 短压墙同时启动。
 
@@ -478,15 +484,15 @@ python tools/cube_profile_probe.py IMAGE --profile task2_purple
 python tools/building_vision_probe.py --profile building
 python vision/camera_tuner.py --camera cube
 python vision/field_localizer.py --camera tag --duration 15
-python tools/vision_subsystems_test.py --duration 10
 ```
 
-调试控制台和底盘定距工具会根据操作者命令驱动机器人：
+调试控制台会根据操作者输入的完整命令驱动机器人；不提供连续按键遥控：
 
 ```bash
-python tools/debug_console.py --port COM5
-python tools/chassis_distance_test.py --port COM5
+python robot.py --port COM5
 python tools/vofa_bridge.py --help
 ```
+
+维护工具保留设备预检、前臂调零、携带数量标定、视觉采样/离线分析、相机调参和 VOFA 遥测。一次性部署、回退与标定修订脚本已清理；既有标定文件、实拍图片、日志和备份保留。
 
 调参记录应包含日期、参数、适用轮次、测试入口和现场结果；协议变化必须同步双方代码和 schema。每天结束由用户另存历史快照，不覆盖旧备份。

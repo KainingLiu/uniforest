@@ -99,6 +99,7 @@ class FirstTaskConfig:
     align_max_x_mm: float = TASK1_ORANGE.align_max_x_mm
     align_target_x_mm: float = TASK1_ORANGE.target_x_mm
     align_confirm_frames: int = 2
+    orange_coarse_align_timeout_s: float = 5.0
     orange_fine_align_timeout_s: float = 0.5
     orange_fine_timeout_retry_count: int = 2
     orange_fine_min_x_mm: float = TASK1_ORANGE.fine_min_x_mm
@@ -555,6 +556,7 @@ class CompetitionProgram:
         if not self._align_cube(
             initial_block, color_name='orange',
             min_confidence=self.config.orange_min_confidence,
+            timeout_s=self.config.orange_coarse_align_timeout_s,
             timeout_is_success=True):
             return False
         if self._last_alignment_timed_out:

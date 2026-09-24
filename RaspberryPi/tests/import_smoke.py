@@ -30,14 +30,6 @@ try:
     import cv2; print(f'  opencv {cv2.__version__:21s} OK')
 except Exception as e:
     print(f'  opencv {"":21s} FAIL: {e}'); errors.append('opencv')
-try:
-    # Importing pynput opens the X backend on Linux and fails in a headless SSH
-    # session even when the package is installed. Check package metadata here;
-    # control.keyboard_control is imported below for the real code-path check.
-    from importlib.metadata import version
-    print(f'  pynput {version("pynput"):21s} OK')
-except Exception as e:
-    print(f'  pynput {"":21s} FAIL: {e}'); errors.append('pynput')
 
 # Utils
 print('\n=== Utils ===')
@@ -54,7 +46,6 @@ test('control.chassis', 'control.chassis')
 test('control.servo', 'control.servo')
 test('control.stepper', 'control.stepper')
 test('control.actions', 'control.actions')
-test('control.keyboard_control', 'control.keyboard_control')
 
 # Vision
 print('\n=== Vision ===')

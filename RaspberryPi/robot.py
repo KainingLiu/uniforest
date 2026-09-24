@@ -17,8 +17,8 @@ Architecture:
     - Stepper pulse generation (non-blocking, TIM7 @ 100 kHz)
     - IMU / RC data acquisition & telemetry
 
-The official competition entry is main.py. This module also retains the
-manual diagnostic console used by tools/debug_console.py.
+The official competition entry is main.py. Run this module directly for
+hardware preflight, individual actions, and the manual diagnostic console.
 """
 
 import sys
@@ -611,8 +611,6 @@ def debug_main():
                             'grap1, grap2, grap3, build')
     parser.add_argument('--telemetry-only', action='store_true',
                        help='Display telemetry stream')
-    parser.add_argument('--keyboard', action='store_true',
-                       help='Real-time keyboard teleoperation')
     parser.add_argument('--telem-rate', type=int, default=50,
                        help='Telemetry rate in Hz (default: 50)')
     parser.add_argument('--duration', type=float, default=0,
@@ -678,26 +676,6 @@ def debug_main():
 
         elif args.telemetry_only:
             robot.telemetry_monitor(args.duration)
-
-        elif args.keyboard:
-            from control.keyboard_control import KeyboardController
-
-            key_actions = {
-                '1': lambda: robot.run_action('grap1'),
-                '2': lambda: robot.run_action('grap2'),
-                '3': lambda: robot.run_action('grap3'),
-                '4': lambda: robot.run_action('build'),
-                'h': lambda: robot.run_action('home'),
-                'o': lambda: robot.run_action('hatch_open'),
-                'p': lambda: robot.run_action('hatch_close'),
-                'z': robot.servo.gripper_open,
-                'x': robot.servo.gripper_close,
-                'r': robot.servo.arm_front_up,
-                'f': robot.servo.arm_front_down,
-            }
-            KeyboardController(
-                robot.transport, robot.chassis, robot.actions,
-                key_actions).run()
 
         else:
             # Interactive mode

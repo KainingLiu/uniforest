@@ -85,6 +85,7 @@ class Task2Config(FirstTaskConfig):
     wall_premove_mm: float = 250.0
     wall_premove_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
     purple_min_confidence: float = 25.0
+    purple_align_timeout_s: float = 5.0
     purple_search_max_distance_mm: float = 750.0
     align_min_x_mm: float = TASK2_PURPLE.align_min_x_mm
     align_max_x_mm: float = TASK2_PURPLE.align_max_x_mm
@@ -576,7 +577,9 @@ class Task2Program(CompetitionProgram):
                 self.state = Task2State.PURPLE_ALIGN
                 if self._align_cube(
                         block, color_name='purple',
-                        min_confidence=cfg.purple_min_confidence):
+                        min_confidence=cfg.purple_min_confidence,
+                        timeout_s=cfg.purple_align_timeout_s,
+                        timeout_is_success=True):
                     return True
         finally:
             if set_profile is not None:
@@ -645,7 +648,7 @@ class Task2Program(CompetitionProgram):
         return True
 
     def _run_build_alignment_and_action(self, *, chassis_followup=None):
-        """Run the Tag6-to-Build segment shared with the standalone test."""
+        """Run the Tag6-to-Build segment of Task2."""
         cfg = self.config
         if cfg.post_tag6_lateral_right_mm > 0.0:
             self.state = Task2State.POST_TAG6_LATERAL
@@ -765,6 +768,7 @@ class Task2Program(CompetitionProgram):
                     align_max_x_mm=cfg.orange_align_max_x_mm,
                     align_target_x_mm=cfg.orange_align_target_x_mm,
                     ambiguity_margin_mm=cfg.orange_track_ambiguity_margin_mm,
+                    timeout_s=cfg.orange_coarse_align_timeout_s,
                     timeout_is_success=True):
                 if self._last_alignment_timed_out or self._fine_align_orange(block):
                     break
