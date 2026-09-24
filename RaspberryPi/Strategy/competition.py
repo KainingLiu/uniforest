@@ -17,7 +17,7 @@ from control.chassis import (
 )
 from .common import minimum_command, slew_command, wrap_angle
 from .tag_alignment import median_translation, translation_jump
-from .tag_controller import PID as _Pid, TagPidSet, profiled_command
+from .tag_controller import PID as _Pid, TagPidSet, AxisToleranceHold, profiled_command
 from .cube_tracker import CubeTargetTracker, select_tracked_block
 from .wall_approach import velocity_for_direction
 from .wall_controller import StallConfirmation
@@ -141,8 +141,8 @@ class FirstTaskConfig:
     delivery_forward_speed_mm_s: float = LONG_DISTANCE_MOVE_SPEED_MM_S
     delivery_tag_id: int = 6
     delivery_tag_distance_mm: float = 425.0
-    delivery_tag_distance_tolerance_mm: float = 30.0 * TAG_FOV_RETUNE_SCALE
-    delivery_tag_lateral_tolerance_mm: float = 25.0 * TAG_FOV_RETUNE_SCALE
+    delivery_tag_distance_tolerance_mm: float = 8.0
+    delivery_tag_lateral_tolerance_mm: float = 8.0
     delivery_tag_distance_deadband_mm: float = 5.0 * TAG_FOV_RETUNE_SCALE
     delivery_tag_lateral_deadband_mm: float = 5.0 * TAG_FOV_RETUNE_SCALE
     delivery_heading_target_cw_deg: float = 180.0
@@ -179,7 +179,7 @@ class FirstTaskConfig:
     delivery_tag_creep_distance_mm: float = 25.0
     delivery_tag_creep_lateral_mm: float = 20.0
     delivery_heading_max_yaw_deg_s: float = 45.0
-    delivery_tag_min_linear_mm_s: float = 50.0
+    delivery_tag_min_linear_mm_s: float = 80.0
     delivery_heading_min_yaw_deg_s: float = 8.0
     delivery_tag_linear_accel_mm_s2: float = 300.0
     delivery_heading_yaw_accel_deg_s2: float = 90.0
@@ -554,8 +554,11 @@ class CompetitionProgram:
     def _align_orange(self, initial_block: 'BlockInfo') -> bool:
         if not self._align_cube(
             initial_block, color_name='orange',
-            min_confidence=self.config.orange_min_confidence):
+            min_confidence=self.config.orange_min_confidence,
+            timeout_is_success=True):
             return False
+        if self._last_alignment_timed_out:
+            return True
         return self._fine_align_orange(initial_block)
 
     def _fine_align_orange(self, initial_block: 'BlockInfo') -> bool:
@@ -808,7 +811,8 @@ class CompetitionProgram:
                   'resume search')
             return False
         if timeout_is_success:
-            print(f'[{self.TASK_LABEL}] {display_color} fine alignment '
+            self._last_alignment_timed_out = True
+            print(f'[{self.TASK_LABEL}] {display_color} alignment '
                   f'time reached; accepting position')
             return True
         raise RuntimeError(f'{color_name} visual alignment timed out')
@@ -831,16 +835,32 @@ class CompetitionProgram:
         self._search_position_mm = 0.0
         lateral_origin = self._capture_lateral_origin()
         self._orange_recovery = OrangeSearchRecovery(origin=lateral_origin)
-        self._collect_orange_with_count_check(
-            cfg.target_cube_count, self._grab_task1_orange)
+        reverse_done = False
 
-        self._cube_lateral_displacement_mm = (
-            self._measure_lateral_displacement_mm(lateral_origin))
+        def start_delivery():
+            nonlocal reverse_done
+            # Freeze the search measurement before any delivery movement.
+            self._cube_lateral_displacement_mm = (
+                self._measure_lateral_displacement_mm(lateral_origin))
+            if cfg.delivery_forward_base_mm <= self._cube_lateral_displacement_mm:
+                raise RuntimeError('delivery forward distance must be positive')
+            self._run_delivery_reverse()
+            reverse_done = True
+
+        self._collect_orange_with_count_check(
+            cfg.target_cube_count, self._grab_task1_orange,
+            chassis_followup=start_delivery)
+
+        if not reverse_done:
+            self._cube_lateral_displacement_mm = (
+                self._measure_lateral_displacement_mm(lateral_origin))
         print('[Task1] Encoder-measured cube lateral displacement: '
               f'{self._cube_lateral_displacement_mm:+.0f} mm '
               '(right positive)')
+        return reverse_done
 
-    def _collect_orange_with_count_check(self, initial_target, grab_one):
+    def _collect_orange_with_count_check(self, initial_target, grab_one,
+                                       *, chassis_followup=None):
         """Keep one search budget/origin across initial collection and refill."""
         remaining = initial_target
         while True:
@@ -853,7 +873,8 @@ class CompetitionProgram:
                           'skip count inspection and continue route')
                     return
             self.state = type(self.state).COUNT_CHECK
-            count = self.robot.check_carried_cube_count()
+            count = self.robot.check_carried_cube_count(
+                chassis_followup=chassis_followup)
             if count is None or count == 3:
                 print(f'[{self.TASK_LABEL}] Carried count={count}; continue route')
                 return
@@ -937,7 +958,8 @@ class CompetitionProgram:
             fine_gain_scale: Optional[float] = None,
             vision_stale_s: Optional[float] = None,
             lost_timeout_s: Optional[float] = None,
-            fine_align_enabled: bool = True):
+            fine_align_enabled: bool = True,
+            stop_axes_in_tolerance: bool = False):
         """Use a tag for translation while holding startup-relative yaw."""
         cfg = self.config
         tag_id = cfg.delivery_tag_id if tag_id is None else tag_id
@@ -981,6 +1003,8 @@ class CompetitionProgram:
             cfg.delivery_heading_integral_limit,
             cfg.delivery_heading_max_yaw_deg_s)
         pids = TagPidSet(distance_pid, lateral_pid, heading_pid)
+        axis_holds = [AxisToleranceHold() for _ in range(3)]
+        hold_axes = stop_axes_in_tolerance and not fine_align_enabled
         started = time.monotonic()
         first_valid_frame_after = time.time()
         last_seen = started
@@ -1018,6 +1042,10 @@ class CompetitionProgram:
                 if observation is None:
                     confirmed = 0
                     fine_started = None
+                    for axis in axis_holds:
+                        axis.interrupt_confirmation()
+                    if hold_axes:
+                        last_update = now
                     translation_samples.clear()
                     vx = vy = wz = 0.0
                     pids.reset()
@@ -1040,6 +1068,10 @@ class CompetitionProgram:
                         cfg.delivery_tag_max_lateral_jump_mm)
                     if jump is not None:
                         distance_jump, lateral_jump = jump
+                        for axis in axis_holds:
+                            axis.interrupt_confirmation()
+                        if hold_axes:
+                            last_update = now
                         confirmed = 0
                         vx = vy = wz = 0.0
                         pids.reset()
@@ -1083,6 +1115,20 @@ class CompetitionProgram:
                               <= lateral_tolerance_mm)
                 heading_ok = (abs(heading_error_deg)
                               <= heading_tolerance_deg)
+
+                stop_distance = stop_lateral = stop_heading = False
+                if hold_axes:
+                    # Only accepted, distinct frames reach this point. Keep the
+                    # final confirmation based on measured tolerances, not holds.
+                    stop_distance, stop_lateral, stop_heading = (
+                        axis.update(ok) for axis, ok in zip(
+                            axis_holds, (distance_ok, lateral_ok, heading_ok)))
+                    if stop_distance:
+                        vx = 0.0
+                    if stop_lateral:
+                        vy = 0.0
+                    if stop_heading:
+                        wz = 0.0
 
                 within_tolerance = distance_ok and lateral_ok and heading_ok
                 if within_tolerance and not fine_align_enabled:
@@ -1135,7 +1181,7 @@ class CompetitionProgram:
                 else:
                     confirmed = 0
 
-                if ((not fine_align_enabled and distance_ok)
+                if (stop_distance or (not fine_align_enabled and distance_ok)
                         or abs(distance_error) <= cfg.delivery_tag_distance_deadband_mm):
                     distance_pid.reset()
                     desired_vx = 0.0
@@ -1153,7 +1199,7 @@ class CompetitionProgram:
                         fast_speed=cfg.delivery_tag_fast_forward_mm_s,
                         max_speed=cfg.delivery_tag_fast_forward_mm_s,
                         min_speed=cfg.delivery_tag_min_linear_mm_s)
-                if ((not fine_align_enabled and lateral_ok)
+                if (stop_lateral or (not fine_align_enabled and lateral_ok)
                         or abs(lateral_mm) <= cfg.delivery_tag_lateral_deadband_mm):
                     lateral_pid.reset()
                     desired_vy = 0.0
@@ -1171,7 +1217,7 @@ class CompetitionProgram:
                         fast_speed=cfg.delivery_tag_fast_lateral_mm_s,
                         max_speed=cfg.delivery_tag_fast_lateral_mm_s,
                         min_speed=cfg.delivery_tag_min_linear_mm_s)
-                if ((not fine_align_enabled and heading_ok)
+                if (stop_heading or (not fine_align_enabled and heading_ok)
                         or abs(heading_error_deg) <= cfg.delivery_heading_deadband_deg):
                     heading_pid.reset()
                     desired_wz = 0.0
@@ -1206,7 +1252,15 @@ class CompetitionProgram:
             self.robot.chassis.set_speeds([0, 0, 0, 0])
         raise RuntimeError(f'tag {tag_id} alignment timed out')
 
-    def _run_delivery_route(self):
+    def _run_delivery_reverse(self):
+        cfg = self.config
+        self.state = CompetitionState.DELIVERY_ROUTE
+        print(f'[Task1] Delivery: reverse {cfg.delivery_reverse_mm:.0f} mm')
+        self._checked_move(
+            'backward', cfg.delivery_reverse_mm,
+            cfg.delivery_reverse_speed_mm_s)
+
+    def _run_delivery_route(self, *, reverse_done=False):
         cfg = self.config
         self.state = CompetitionState.DELIVERY_ROUTE
         if self._cube_lateral_displacement_mm is None:
@@ -1221,10 +1275,8 @@ class CompetitionProgram:
                 f'{self._cube_lateral_displacement_mm:.0f} = '
                 f'{delivery_forward_mm:.0f} mm')
 
-        print(f'[Task1] Delivery: reverse {cfg.delivery_reverse_mm:.0f} mm')
-        self._checked_move(
-            'backward', cfg.delivery_reverse_mm,
-            cfg.delivery_reverse_speed_mm_s)
+        if not reverse_done:
+            self._run_delivery_reverse()
 
         self._turn_to_heading(
             cfg.delivery_turn_deg,
@@ -1242,7 +1294,8 @@ class CompetitionProgram:
 
         self.state = CompetitionState.DELIVERY_TAG_ALIGN
         self.robot.reset_field_localization_filter()
-        self._align_delivery_tag()
+        self._align_delivery_tag(
+            fine_align_enabled=False, stop_axes_in_tolerance=True)
 
         if cfg.post_tag_lateral_right_mm > 0.0:
             self.state = CompetitionState.POST_TAG_LATERAL
@@ -1284,8 +1337,8 @@ class CompetitionProgram:
             hold_ms=cfg.unload_final_heading_hold_ms)
 
     def _run_mission(self):
-        self._run_first_task()
-        self._run_delivery_route()
+        reverse_done = self._run_first_task()
+        self._run_delivery_route(reverse_done=reverse_done)
 
     def run(self) -> int:
         try:

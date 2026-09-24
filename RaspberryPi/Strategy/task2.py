@@ -82,7 +82,7 @@ class Task2Config(FirstTaskConfig):
     delivery_tag_lost_timeout_s: float = 2.0
     post_tag_lateral_mm: float = 100.0
     post_tag_lateral_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
-    wall_premove_mm: float = 300.0
+    wall_premove_mm: float = 250.0
     wall_premove_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
     purple_min_confidence: float = 25.0
     purple_search_max_distance_mm: float = 750.0
@@ -116,8 +116,8 @@ class Task2Config(FirstTaskConfig):
     build_tag_id: int = 6
     build_tag_distance_mm: float = FirstTaskConfig().delivery_tag_distance_mm
     build_tag_heading_target_cw_deg: float = 180.0
-    build_tag_distance_tolerance_mm: float = 10.0
-    build_tag_lateral_tolerance_mm: float = 10.0
+    build_tag_distance_tolerance_mm: float = 8.0
+    build_tag_lateral_tolerance_mm: float = 8.0
     build_tag_heading_tolerance_deg: float = (
         FirstTaskConfig().delivery_heading_tolerance_deg)
     build_tag_fine_gain_scale: float = (
@@ -764,8 +764,9 @@ class Task2Program(CompetitionProgram):
                     align_min_x_mm=cfg.orange_align_min_x_mm,
                     align_max_x_mm=cfg.orange_align_max_x_mm,
                     align_target_x_mm=cfg.orange_align_target_x_mm,
-                    ambiguity_margin_mm=cfg.orange_track_ambiguity_margin_mm):
-                if self._fine_align_orange(block):
+                    ambiguity_margin_mm=cfg.orange_track_ambiguity_margin_mm,
+                    timeout_is_success=True):
+                if self._last_alignment_timed_out or self._fine_align_orange(block):
                     break
         self.state = Task2State.ORANGE_GRAB
         print('[Task2] Orange aligned; running Grap1 with short wall press')
@@ -825,6 +826,20 @@ class Task2Program(CompetitionProgram):
             self.robot, 'set_cube_detection_profile', None)
         if set_profile is not None:
             set_profile('task2_orange')
+        orange_lateral_mm = None
+        reverse_done = False
+
+        def start_orange_exit():
+            nonlocal orange_lateral_mm, reverse_done
+            orange_lateral_mm = self._measure_lateral_displacement_mm(
+                orange_lateral_origin)
+            self.state = Task2State.POST_ORANGE_REVERSE
+            print(f'[Task2] Reverse {cfg.post_orange_reverse_mm:.0f} mm')
+            self._checked_move(
+                'backward', cfg.post_orange_reverse_mm,
+                cfg.post_orange_reverse_speed_mm_s)
+            reverse_done = True
+
         try:
             self.robot.reset_vision_filter()
             self._search_position_mm = 0.0
@@ -834,21 +849,16 @@ class Task2Program(CompetitionProgram):
             orange_target_count = self._orange_target_count_for_run(
                 purple_grabbed)
             self._collect_orange_with_count_check(
-                orange_target_count, self._grab_task2_orange)
+                orange_target_count, self._grab_task2_orange,
+                chassis_followup=start_orange_exit)
         finally:
             if set_profile is not None:
                 set_profile('default')
 
-        orange_lateral_mm = self._measure_lateral_displacement_mm(
-            orange_lateral_origin)
+        if not reverse_done:
+            start_orange_exit()
         print('[Task2] Encoder-measured orange lateral displacement: '
               f'{orange_lateral_mm:+.0f} mm (right positive)')
-
-        self.state = Task2State.POST_ORANGE_REVERSE
-        print(f'[Task2] Reverse {cfg.post_orange_reverse_mm:.0f} mm')
-        self._checked_move(
-            'backward', cfg.post_orange_reverse_mm,
-            cfg.post_orange_reverse_speed_mm_s)
 
         lateral_direction, lateral_distance_mm = (
             self._lateral_correction_command(
@@ -891,6 +901,7 @@ class Task2Program(CompetitionProgram):
             vision_stale_s=cfg.build_tag_vision_stale_s,
             lost_timeout_s=cfg.build_tag_lost_timeout_s,
             fine_align_enabled=False,
+            stop_axes_in_tolerance=True,
         )
 
         self._run_build_phase()

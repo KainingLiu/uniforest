@@ -52,6 +52,10 @@ void Suction_PumpOn(void)
     g_pump_on = 1;
     g_valve_on = 0;
     g_valve_off_at = 0;
+    /* A new pickup can start before the previous release timer expires.
+     * Close the physical valve as well as cancelling its software timer. */
+    __HAL_TIM_SET_COMPARE(&htim4_suction, TIM_CHANNEL_2,
+                          SUCTION_PWM_OFF_PULSE);
     __HAL_TIM_SET_COMPARE(&htim4_suction, TIM_CHANNEL_1,
                           SUCTION_PWM_ON_PULSE);
 }

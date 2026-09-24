@@ -293,9 +293,9 @@ class Robot:
     def cube_raw_frame(self):
         return self._vision.raw_frame if self.has_vision else None
 
-    def check_carried_cube_count(self):
+    def check_carried_cube_count(self, *, chassis_followup=None):
         from control.carried_cube_inspection import inspect_carried_cubes
-        return inspect_carried_cubes(self)
+        return inspect_carried_cubes(self, chassis_followup=chassis_followup)
 
     def hardware_preflight(self, timeout_s: float = 2.0,
                            max_telem_age_s: float = 0.3

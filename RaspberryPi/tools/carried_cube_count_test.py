@@ -29,7 +29,7 @@ from vision.carried_cube_count import observe, classify
 
 POSE = {'flip_inspect_deg': 37.2, 'arm_inspect_deg': 120,
         'arm_home_deg': 90, 'flip_home_deg': 97.2,
-        'flip_wait_ms': 300, 'arm_wait_ms': 500, 'return_wait_ms': 200}
+        'flip_wait_ms': 200, 'arm_wait_ms': 300, 'return_wait_ms': 200}
 
 
 class LinkFault(RuntimeError):

@@ -10,8 +10,12 @@ from vision.carried_cube_count import observe, classify
 CONFIG_PATH = Path(__file__).resolve().parents[1] / 'tools/carried_cube_count_config.json'
 
 
-def inspect_carried_cubes(robot):
-    """Return 0..3/None; hardware/cancellation failures always propagate."""
+def inspect_carried_cubes(robot, *, chassis_followup=None):
+    """Return 0..3/None; optionally overlap the next chassis move with restore.
+
+    Only successful counts (3/None) run the chassis-only callback. Refill must
+    wait for restore and fresh vision. Hardware/cancellation failures propagate.
+    """
     config = json.loads(CONFIG_PATH.read_text(encoding='utf-8'))
     transport = robot.transport
     actions = robot.actions
@@ -96,9 +100,9 @@ def inspect_carried_cubes(robot):
             raise RuntimeError('inspection camera frame unavailable')
         classify([observe(sample[0], config)[0]], config)
         servo(0, 37.2)
-        wait(.300)
+        wait(.200)
         servo(1, 120)
-        wait(.500)
+        wait(.300)
         first_after = time.monotonic()
         last_timestamp = first_after
         skipped = 0
@@ -117,15 +121,36 @@ def inspect_carried_cubes(robot):
             wait(.005)
         result = classify(observations, config)
         check()
+        count = result['count']
+        if count not in (None, 0, 1, 2, 3):
+            raise RuntimeError(f'invalid carried cube count: {count}')
         servo(1, 90)
-        wait(.200)
-        servo(0, 97.2)
+        restore_at = time.monotonic() + .200
+        restored = False
+
+        def advance_restore():
+            nonlocal restored
+            check()
+            if not restored and time.monotonic() >= restore_at:
+                servo(0, 97.2)
+                check()
+                robot.reset_vision_filter(after_inspection=True)
+                restored = True
+
+        if chassis_followup is not None and count in (None, 3):
+            # Chassis loops supervise both the link and timed servo restore.
+            # No detached worker can outlive cancellation or start a later grab.
+            with robot.chassis.monitor_action(advance_restore):
+                chassis_followup()
+        while not restored:
+            advance_restore()
+            if not restored:
+                wait(.005)
         check()
-        robot.reset_vision_filter(after_inspection=True)
         robot.diagnostics.write('carried_cube_count', result=result,
                                 observations=observations, feature_version=config['feature_version'])
         print(f'[Count] {result}', flush=True)
-        return result['count']
+        return count
     except BaseException:
         # Do not turn a hardware/pose failure into the user's null-success path.
         # After cancellation/fault no further servo commands are sent.

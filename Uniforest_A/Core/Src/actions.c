@@ -43,7 +43,9 @@ static const ActionStep grap2[] = {
 static const ActionStep grap3[] = {
     {PUMP,{0}}, {HOME,{0}}, A(1,450), A(0,522), {HATCH,{0}},
     D(H,27,F,V,9,R,17), D3(V,9,F,9,R,H,22,R,5,14),
-    DROP, D(V,9,F,H,5,R,0), {HOME,{0}}, {END,{0}}
+    DROP, D_OP(DUAL_ASYNC,V,9,F,H,5,R,0),
+    {WAIT_PROGRESS,{V,S(5),F}}, A(1,900), {JOIN,{0}},
+    {HOME,{0}}, {END,{0}}
 };
 static const ActionStep build[] = {
     /* Only pickup-pose and LIFT waits remain; no post-stepper settle. */

@@ -55,6 +55,28 @@ class PID:
 
 
 @dataclass
+class AxisToleranceHold:
+    """Hold an accepted axis until two consecutive valid new frames disagree."""
+
+    stopped: bool = False
+    outside_frames: int = 0
+
+    def interrupt_confirmation(self):
+        self.outside_frames = 0
+
+    def update(self, within_tolerance: bool) -> bool:
+        if within_tolerance:
+            self.stopped = True
+            self.outside_frames = 0
+        elif self.stopped:
+            self.outside_frames += 1
+            if self.outside_frames >= 2:
+                self.stopped = False
+                self.outside_frames = 0
+        return self.stopped
+
+
+@dataclass
 class TagPidSet:
     distance: PID
     lateral: PID
@@ -66,4 +88,4 @@ class TagPidSet:
         self.heading.reset()
 
 
-__all__ = ['PID', 'TagPidSet', 'profiled_command']
+__all__ = ['PID', 'TagPidSet', 'AxisToleranceHold', 'profiled_command']
