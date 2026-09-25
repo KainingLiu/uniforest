@@ -42,8 +42,8 @@ static const ActionStep grap2[] = {
 };
 static const ActionStep grap3[] = {
     {PUMP,{0}}, {HOME,{0}}, A(1,450), A(0,522), {HATCH,{0}},
-    D(H,27,F,V,9,R,17), D3(V,9,F,9,R,H,22,R,5,14),
-    DROP, D_OP(DUAL_ASYNC,V,9,F,H,5,R,0),
+    D(H,27,F,V,9,R,17), D3(V,9,F,9,R,H,21.5,R,5,15),
+    DROP, D_OP(DUAL_ASYNC,V,9,F,H,5.5,R,0),
     {WAIT_PROGRESS,{V,S(5),F}}, A(1,900), {JOIN,{0}},
     {HOME,{0}}, {END,{0}}
 };
@@ -180,16 +180,16 @@ void Actions_Update(void)
             move_origin[V] = Stepper_GetPosition(V);
             switch (s->op) {
             case MOVE:
-                Stepper_StartMove(p[0], p[1], p[2], 1000, 83, 400); break;
+                Stepper_StartMove(p[0], p[1], p[2], 400, 60, 400); break;
             case DUAL: case DUAL_ASYNC:
                 Stepper_StartMoveOverlap(p[0],p[1],p[2],p[3],p[4],p[5],p[6],
-                                        1000,83,400); break;
+                                        400,60,400); break;
             case DUAL2:
                 Stepper_StartMoveOverlap2(p[0],p[1],p[2],p[3],p[4],p[5],p[6],
-                                         p[7],p[8],1000,83,400); break;
+                                         p[7],p[8],400,60,400); break;
             case DUAL3: case DUAL3_ASYNC:
                 Stepper_StartMoveOverlap3(p[0],p[1],p[2],p[3],p[4],p[5],p[6],
-                                         p[7],p[8],p[9],1000,83,400); break;
+                                         p[7],p[8],p[9],400,60,400); break;
             }
             __set_PRIMASK(irq);
             waiting_move = 1; move_started = now;

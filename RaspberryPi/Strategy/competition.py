@@ -156,15 +156,15 @@ class FirstTaskConfig:
     delivery_tag_lost_timeout_s: float = 1.0
     delivery_tag_align_timeout_s: float = 12.0
     delivery_tag_control_period_s: float = 0.05
-    delivery_tag_translation_median_frames: int = 5
+    delivery_tag_translation_median_frames: int = 3
     delivery_tag_max_distance_jump_mm: float = 250.0 * TAG_FOV_RETUNE_SCALE
     delivery_tag_max_lateral_jump_mm: float = 250.0 * TAG_FOV_RETUNE_SCALE
     delivery_tag_distance_kp: float = 0.8 / TAG_FOV_RETUNE_SCALE
-    delivery_tag_distance_ki: float = 0.02 / TAG_FOV_RETUNE_SCALE
-    delivery_tag_distance_kd: float = 0.03 / TAG_FOV_RETUNE_SCALE
+    delivery_tag_distance_ki: float = 0.0
+    delivery_tag_distance_kd: float = 0.0
     delivery_tag_lateral_kp: float = 1.2 / TAG_FOV_RETUNE_SCALE
-    delivery_tag_lateral_ki: float = 0.02 / TAG_FOV_RETUNE_SCALE
-    delivery_tag_lateral_kd: float = 0.03 / TAG_FOV_RETUNE_SCALE
+    delivery_tag_lateral_ki: float = 0.0
+    delivery_tag_lateral_kd: float = 0.0
     delivery_heading_kp: float = 1.5
     delivery_heading_ki: float = 0.02
     delivery_heading_kd: float = 0.03
@@ -342,17 +342,22 @@ class CompetitionProgram:
             return
         raise RuntimeError('wall contact was not detected before timeout')
 
-    def _recalibrate_heading_zero(self):
+    def _recalibrate_heading_zero(self, reference_cw_deg: float = 0.0):
+        """Assign the current gyro reading to a known clockwise task heading."""
         telem = self.robot.telem
         if telem is None:
             raise RuntimeError('telemetry unavailable for heading recalibration')
         previous_zero = self._heading_zero_deg
-        self._heading_zero_deg = telem.yaw_deg
+        # Task heading is clockwise-positive; gyro yaw is CCW-positive.
+        # yaw(reference) = zero - reference, hence zero = yaw + reference.
+        self._heading_zero_deg = self._wrap_angle(
+            telem.yaw_deg + reference_cw_deg)
         correction = (0.0 if previous_zero is None else
                       self._wrap_angle(self._heading_zero_deg - previous_zero))
         print(f'[{self.TASK_LABEL}] Heading zero recalibrated: '
               f'{self._heading_zero_deg:+.1f} deg '
-              f'(correction {correction:+.1f} deg)')
+              f'(reference {reference_cw_deg:.1f} deg CW, '
+              f'correction {correction:+.1f} deg)')
 
     def _chassis_followup(self, route):
         """Adapt a chassis-only route to the action client's cooperative check."""
@@ -1315,6 +1320,8 @@ class CompetitionProgram:
             speed_mm_s=cfg.far_wall_speed_mm_s,
             context='Unload wall contact',
         )
+        self._recalibrate_heading_zero(
+            reference_cw_deg=cfg.delivery_heading_target_cw_deg)
 
         self.state = CompetitionState.UNLOAD
         print('[Task1] Unload: open hatches')

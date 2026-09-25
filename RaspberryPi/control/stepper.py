@@ -18,9 +18,9 @@ STEPS_PER_CM = 400
 
 # Default trapezoidal parameters (µs)
 # STM32 applies a small 6/5 half-cycle safety scale, giving approximately
-# 417 Hz at start and about 5020 Hz at cruise while preserving these wire values.
-DEFAULT_START_DELAY  = 1000
-DEFAULT_TARGET_DELAY = 83
+# 1042 Hz at start; TIM7 rounds the cruise half-cycle to 7 ticks (~7143 pulses/s).
+DEFAULT_START_DELAY  = 400
+DEFAULT_TARGET_DELAY = 60
 DEFAULT_ACCEL_STEPS  = 400
 
 
@@ -47,9 +47,9 @@ class Stepper:
             motor: STEPPER_HORIZ or STEPPER_VERT
             direction: STEP_DIR_FORWARD or STEP_DIR_REVERSE
             steps: total step count
-            start_delay: legacy half-cycle parameter (0=default 1000)
-            target_delay: legacy half-cycle parameter (0=default 83)
-            accel_steps: ramp length (0=default 400)
+            start_delay: legacy half-cycle parameter (0=default 400)
+            target_delay: legacy half-cycle parameter (0=default 60)
+            accel_steps: accel/decel ramp length (0=default 400, 1 cm)
 
         Returns immediately. Use is_busy() to poll completion.
         """

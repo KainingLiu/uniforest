@@ -48,9 +48,9 @@ extern "C" {
 
 /* ======================= Speed Profile Parameters ========================= */
 
-#define STEP_START_DELAY_US         1000    /* actual start ~417 Hz after safety scale */
-#define STEP_TARGET_DELAY_US        83      /* actual cruise ~5.02 kHz after safety scale */
-#define STEP_ACCEL_STEPS            400     /* accel / decel ramp length */
+#define STEP_START_DELAY_US         400     /* actual start ~1042 Hz after safety scale */
+#define STEP_TARGET_DELAY_US        60      /* 6/5 scale, rounded to 7 ticks: ~7143 pulses/s */
+#define STEP_ACCEL_STEPS            400     /* accel / decel ramp length: 1 cm */
 
 /*
  * TIM7 makes the 0810 timing more exact than the old busy-loop implementation.
