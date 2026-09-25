@@ -30,7 +30,7 @@ cmake --build build/Debug
 ```
 
 也可在上位机目录执行 `python tools/check.py --firmware`，同时检查 Python 语法、
-导入和协议格式。当前正式工程不包含虚拟机器人或动作轨迹测试。
+导入、协议格式及数据采集。当前正式工程不包含虚拟机器人或动作轨迹测试。
 
 统一通过 **CLion 的 OpenOCD + DAPLink** 调试、烧录，不使用命令行直接烧录。
 产物 `build/Debug/Uniforest_A_0628.elf` 与 `.ioc` 的 `0628` 为历史名称。

@@ -1,0 +1,13 @@
+{
+  "enabled": true,
+  "data_dir": "vision/yolo/data/collection",
+  "sample_hz": 2.0,
+  "static_keep_seconds": 5.0,
+  "dedup_mean_abs_diff": 2.0,
+  "jpeg_quality": 95,
+  "queue_size": 4,
+  "max_images_gb": 8.0,
+  "min_free_gb": 2.0,
+  "max_session_images": 5000,
+  "batch_tag": ""
+}

@@ -7,6 +7,7 @@ import sys
 from robot import Robot
 from Strategy.task2 import Task2DebugProgram, Task2Program
 from vision import default_camera_selector
+from vision.yolo.collector import add_collection_arguments
 
 
 def parse_args():
@@ -25,6 +26,7 @@ def parse_args():
     parser.add_argument('--preflight-only', action='store_true',
                         help='Check hardware without commanding motion')
     parser.add_argument('--debug', action='store_true')
+    add_collection_arguments(parser)
     return parser.parse_args()
 
 
@@ -40,6 +42,8 @@ def main() -> int:
         localization_camera=args.tag_camera,
         localization_gui=args.localization_gui,
         debug=args.debug,
+        collect_data=False if args.no_collect_data else None,
+        dataset_dir=args.dataset_dir,
     )
 
     try:

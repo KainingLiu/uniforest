@@ -13,6 +13,8 @@ Raspberry Pi 5 上位机负责视觉、比赛策略和底盘位置外环；DJI R
 | [机械动作流程](Uniforest_A/ACTIONS.md) | Grap1/2/3、Build 的角度、距离、等待和并行节点 |
 | [下位机技术说明](Uniforest_A/PROJECT.md) | 实时控制、步进参数、通信协议与硬件排障 |
 | [数量检查与标定](RaspberryPi/tools/carried_cube_count_test.md) | 检查时序、宽度判别、紫色规则、实拍采样和补抓 |
+| [自然语言 Agent](RaspberryPi/agent/README.md) | 自然语言、本地直控及 API 中转 |
+| [自动原图采集](RaspberryPi/vision/yolo/docs/DATA_COLLECTION.md) | 数据目录、采样与存储上限、独立补拍 |
 | [前臂零点调整](RaspberryPi/tools/arm_zero_adjust.md) | 调零入口、逻辑角度与 +12° 固定偏置 |
 | [变更与验证记录](RaspberryPi/CHANGELOG.md) | 日期、历史参数、部署备份、检查及现场验证结果 |
 | [协作约定](AGENTS.md) | 修改范围、协议核对、实机操作与备份规则 |
@@ -31,7 +33,7 @@ cd /home/uniforest/Uniforest/RaspberryPi && .venv/bin/python -u main.py --task a
 `task1-r2`、`task2-r2` 只运行指定任务。程序会驱动整车，按 Ctrl+C 停止。
 
 无硬件检查在 `RaspberryPi/` 执行 `python tools/check.py`；开发机加 `--firmware`
-可同时配置、编译 A 板，不烧录。固件烧录统一使用 CLion 的 OpenOCD + DAPLink。
+可同时配置、编译 A 板，不烧录。检查包含协议和数据采集功能。固件烧录统一使用 CLion 的 OpenOCD + DAPLink。
 通过软件检查不代表动作、视觉或场地参数已经实机验证。
 
 ## 源码与部署边界

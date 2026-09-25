@@ -13,12 +13,21 @@
 | `Strategy/` | Task0/Task1/Task2、视觉对准、目标跟踪、顶墙与路线编排 |
 | `control/` | 底盘位置外环、舵机/步进调试、A 板动作客户端 |
 | `protocol/` | 帧编解码、传输和 schema v3 契约 |
-| `vision/` | cube/tag 相机、方块检测、AprilTag 定位和标定配置 |
+| `vision/opencv/` | 当前 OpenCV 方块检测、AprilTag 定位、相机与标定；旧模块路径保留兼容入口 |
+| `vision/yolo/` | 自动原图采集；训练、分割推理和 hybrid 接入尚未实现 |
+| `agent/` | 自然语言控制、本地直控和 API 中转 |
 | `sensors/`、`utils/` | 传感器封装和通用辅助 |
-| `tools/`、`tests/` | 实机/图像调试工具；少量协议格式和导入检查 |
+| `tools/`、`tests/` | 实机/图像调试、协议格式、Agent 与数据采集检查 |
 
 依赖方向为 `main.py → Strategy → robot → control/protocol/vision`。比赛代码不导入
 `tools/` 或 `tests/`，历史备份不属于当前实现。
+
+自然语言 Agent 的部署、API 中转和命令行使用见 [`agent/README.md`](agent/README.md)。
+
+启用 Robot 方块视觉后默认自动采集原图，保存到本机 `vision/yolo/data/collection/`，
+按运行批次记录任务阶段、相机设置并建立 SQLite 索引。`python tools/collect_cube_data.py stats`
+查看数量；本轮加 `--no-collect-data` 可停用，`--dataset-dir` 可更换目录。
+采样、存储上限、独立补拍和标注要求见 [自动采集说明](vision/yolo/docs/DATA_COLLECTION.md)。
 
 维护入口：[前臂零点调整](tools/arm_zero_adjust.md)、
 [携带数量检查与标定](tools/carried_cube_count_test.md)、
@@ -37,7 +46,8 @@
 | A 板动作及步进 | 当前 Grap3 回收 21.5+5.5 cm、下降触发 15 cm；步进 400/60/400。源码编译通过，须 CLion 烧录，现场效果待确认 |
 | 橙色搜索 | 仓库包含左边缘回找，树莓派保留既有旧实现；未整体覆盖 |
 | 独立步进调试默认值 | 仓库起步/巡航/加减速为 400/60/400；尚未同步，远端此前巡航为 100 μs，不能据此推断板上整套动作速度 |
-| Robot 兼容接口 | 树莓派保留 `quiet_heartbeat` 参数；正常心跳已静默，失联保护保留 |
+| Agent、视觉目录拆分和自动采集 | 已合并 GitHub 的 590dca2；此次未同步树莓派，远端部署需另行核对 |
+| Robot 兼容接口 | 仓库已合并 `quiet_heartbeat` 参数；远端具体版本与新增采集接口仍需核对 |
 
 未由助手执行实机任务。详细备份与各次验证结果见 [CHANGELOG.md](CHANGELOG.md)。
 
@@ -49,7 +59,7 @@ Linux：
 cd /home/uniforest/Uniforest/RaspberryPi
 python3 -m venv --system-site-packages .venv
 source .venv/bin/activate
-python -m pip install -r requirements.txt -r vision/requirements.txt
+python -m pip install -r requirements.txt -r vision/opencv/requirements.txt
 ```
 
 Windows，在工作区根目录执行：
@@ -57,11 +67,16 @@ Windows，在工作区根目录执行：
 ```powershell
 cd RaspberryPi
 py -3 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -r requirements.txt -r vision\requirements.txt
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt -r vision\opencv\requirements.txt
 .\.venv\Scripts\python.exe tests\import_smoke.py
 ```
 
 实际运行解释器需有 pyserial、NumPy 和 OpenCV contrib。键盘遥控已移除，不再依赖 pynput 或桌面键盘后端。
+
+### 自然语言 Agent
+
+部署、API 中转、直控和自然语言入口统一见 [Agent 使用说明](agent/README.md)。
+Agent 复用现有机器人接口；API 密钥通过私有配置或环境变量提供，不提交仓库。
 
 ## 验证与启动顺序
 
@@ -84,13 +99,13 @@ py -3 -m venv .venv
 python tools/check.py
 ```
 
-这个入口只检查 Python 语法、依赖导入和 6 项通信协议格式，成功时只显示简短
-汇总，失败时显示错误。不打开串口或相机，不模拟机器人，不代表动作、视觉
+这个入口检查 Python 语法、依赖导入、6 项通信协议格式和数据采集功能，成功时显示简短
+汇总，失败时显示错误。不打开串口或相机，不执行实机动作，不代表动作、视觉
 准确率或现场标定通过。`import_smoke.py` 仍可独立使用。
 
 | 场景 | 命令 |
 | --- | --- |
-| 语法、导入、协议格式 | `python tools/check.py` |
+| 语法、导入、协议格式与数据采集 | `python tools/check.py` |
 | 同时编译 A 板 | `python tools/check.py --firmware` |
 
 `--firmware` 需要 CMake、Ninja 和 ARM GCC 已在 PATH 中，执行 Debug 配置和构建，
@@ -102,7 +117,7 @@ python tools/check.py
 
 串口优先采用 CMSIS-DAP 的 `/dev/serial/by-id/...` 路径；没有对应设备时依次回退到 `/dev/ttyACM0`、`/dev/serial0`。UART 参数为 115200、8N1。
 
-相机角色由 `vision/camera_devices.json` 的 USB 序列号路径决定：
+相机角色由 `vision/opencv/camera_devices.json` 的 USB 序列号路径决定：
 
 | 角色 | 设备 | 图像节点 |
 | --- | --- | --- |
@@ -387,9 +402,9 @@ python robot.py --action build
 | Task2 紫色 | 0.0 | [-5, 5] | 不执行独立微调阶段 |
 | Task2 橙色 | 0.0 | [-20, 5] | [-5, 5] |
 
-橙色使用 `orange_cluster.py` 识别顶面簇左首方块，通过 `orange_fixed_geometry.py` 内嵌的 Task1/Task2 独立固定平面投影定位；不会每帧重新估计整个平面。两份 `task*_orange_fixed_calibration.json` 记录标定资料，运行时矩阵以 Python 常量为准。
+橙色使用 `vision/opencv/orange_cluster.py` 识别顶面簇左首方块，通过 `vision/opencv/orange_fixed_geometry.py` 内嵌的 Task1/Task2 独立固定平面投影定位；不会每帧重新估计整个平面。`vision/opencv/` 中两份 `task*_orange_fixed_calibration.json` 记录标定资料，运行时矩阵以 Python 常量为准。
 
-`orange_config.py` 管理 HSV、面积、形态学和两任务独立 X 偏置；当前两个偏置均为 +5.0 mm，仅影响橙色返回值。`default` 对应 Task1，`task2_orange` 对应 Task2。固定置信度 80 只代表通过几何门槛，不代表测量准确率；视角改变、遮挡或图像裁边后需复测。
+`vision/opencv/orange_config.py` 管理 HSV、面积、形态学和两任务独立 X 偏置；当前两个偏置均为 +5.0 mm，仅影响橙色返回值。`default` 对应 Task1，`task2_orange` 对应 Task2。固定置信度 80 只代表通过几何门槛，不代表测量准确率；视角改变、遮挡或图像裁边后需复测。
 
 `cube_tracker.py` 管理连续确认、X/Z 跳变拒绝、丢帧保持、候选歧义和位置平滑。
 对准时 X/Z 跳变门槛为 45/80 mm，置信度至少 25%，位置滤波窗口为 1 帧。
@@ -435,7 +450,7 @@ python robot.py --action build
 重新计算中心。成功、搜索耗尽或异常退出后恢复 `default`，切换时清除旧检测结果。
 `task2_orange` 仍屏蔽上方 50%，`default`/`building` 不屏蔽。紫色色带未调整。
 
-cube Linux 曝光配置为 `exposure=312`、`gain=32`、自动白平衡，保存于 `vision/camera_settings.json`。光照、镜头、相机位置或曝光改变后须重新核对色带与平面标定；软件配置不等于已验证的硬件事实。
+cube Linux 曝光配置为 `exposure=312`、`gain=32`、自动白平衡，保存于 `vision/opencv/camera_settings.json`。光照、镜头、相机位置或曝光改变后须重新核对色带与平面标定；软件配置不等于已验证的硬件事实。
 
 ### 建筑
 
@@ -445,7 +460,7 @@ cube Linux 曝光配置为 `exposure=312`、`gain=32`、自动白平衡，保存
 
 ### AprilTag
 
-`field_localizer.py` 仅使用 tag 相机图像，解析 AprilTag 36h11，以 IPPE 平面位姿候选和场地约束定位；不读取 IMU。比赛对准另由 IMU 保持航向。场地与标签参数在 `vision/field_map.json`，标签边长配置为 0.15 m。
+`field_localizer.py` 仅使用 tag 相机图像，解析 AprilTag 36h11，以 IPPE 平面位姿候选和场地约束定位；不读取 IMU。比赛对准另由 IMU 保持航向。场地与标签参数在 `vision/opencv/field_map.json`，标签边长配置为 0.15 m。
 
 `tag_camera_calib.json` 当前使用 125° 水平视场估算内参，`calibrated=false`，未提供实测广角畸变参数。场地标签坐标、高度、相机高度和安装偏移也需现场复核，不能将配置值当作实测结论。
 

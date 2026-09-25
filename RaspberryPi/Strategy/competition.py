@@ -15,7 +15,7 @@ from control.chassis import (
     NORMAL_DISTANCE_MOVE_SPEED_MM_S,
     NORMAL_DISTANCE_MOVE_ACCEL_MS,
 )
-from .common import minimum_command, slew_command, wrap_angle
+from .common import TaskStateReporting, minimum_command, slew_command, wrap_angle
 from .tag_alignment import median_translation, translation_jump
 from .tag_controller import PID as _Pid, TagPidSet, AxisToleranceHold, profiled_command
 from .cube_tracker import CubeTargetTracker, select_tracked_block
@@ -196,7 +196,7 @@ class FirstTaskConfig:
     long_distance_forward_accel_ms: int = LONG_DISTANCE_FORWARD_ACCEL_MS
 
 
-class CompetitionProgram:
+class CompetitionProgram(TaskStateReporting):
     """Owns competition flow; hardware details stay in Robot/control modules."""
 
     TELEMETRY_WAIT_S = 2.0

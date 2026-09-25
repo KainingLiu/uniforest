@@ -3,6 +3,21 @@
 from __future__ import annotations
 
 
+class TaskStateReporting:
+    """Mirror existing state assignments into optional dataset metadata."""
+
+    @property
+    def state(self):
+        return self._state
+
+    @state.setter
+    def state(self, value):
+        self._state = value
+        report = getattr(self.robot, 'set_collection_context', None)
+        if report is not None:
+            report(task=self.TASK_LABEL, phase=value.name)
+
+
 def wrap_angle(angle_deg: float) -> float:
     """Normalize an angle to [-180, 180)."""
     return (angle_deg + 180.0) % 360.0 - 180.0
@@ -23,4 +38,4 @@ def slew_command(target: float, current: float,
     return current + delta
 
 
-__all__ = ['minimum_command', 'slew_command', 'wrap_angle']
+__all__ = ['TaskStateReporting', 'minimum_command', 'slew_command', 'wrap_angle']

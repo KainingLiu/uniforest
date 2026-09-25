@@ -51,6 +51,7 @@ test('control.actions', 'control.actions')
 print('\n=== Vision ===')
 test('vision.cube_detector', 'vision.cube_detector')
 test('vision.field_localizer', 'vision.field_localizer')
+test('vision.yolo.collector', 'vision.yolo.collector')
 
 # Competition architecture
 print('\n=== Competition ===')

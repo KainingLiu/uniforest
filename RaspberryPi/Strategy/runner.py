@@ -1,5 +1,7 @@
 """Task selection and sequencing for the official competition entry."""
 
+import uuid
+
 from .task0 import Task0Program
 from .task1 import Task1Program, Task1Round2Program
 from .task2 import Task2Program, Task2Round2Program
@@ -49,17 +51,28 @@ def run_tasks(robot, selection='all', *,
     }
     sequence = selections[selection]
 
+    report = getattr(robot, 'set_collection_context', None)
+    if report is not None:
+        report(flow_id=uuid.uuid4().hex, task=selection, phase='STARTUP')
+
     for label, factory in sequence:
         print(f'[Competition] Starting {label}')
         diagnostics = getattr(robot, 'diagnostics', None)
         if diagnostics is not None:
             diagnostics.write('task_start', task=label,
                               selection=selection)
-        raw_result = factory(robot).run()
+        try:
+            raw_result = factory(robot).run()
+        except BaseException:
+            if report is not None:
+                report(phase='INTERRUPTED_OR_FAILED')
+            raise
         outcome = (raw_result if isinstance(raw_result, TaskResult)
                    else TaskResult.from_code(int(raw_result), task=label))
         result = outcome.code
         if not outcome.ok:
+            if report is not None:
+                report(phase='FAILED')
             print(f'[Competition] {label} failed with code {result} '
                   f'({outcome.status.value})')
             if diagnostics is not None:
@@ -72,6 +85,8 @@ def run_tasks(robot, selection='all', *,
         if diagnostics is not None:
             diagnostics.write('task_complete', task=label,
                               status=outcome.status.value)
+    if report is not None:
+        report(task=selection, phase='FINISHED')
     return 0
 
 
