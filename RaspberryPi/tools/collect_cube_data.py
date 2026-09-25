@@ -43,7 +43,7 @@ def library_stats(directory):
 def capture(args, config):
     config = replace(config, enabled=True,
                      sample_hz=args.hz if args.hz is not None else config.sample_hz)
-    collector = CubeDataCollector(config)
+    collector = CubeDataCollector(config, manual_capture=True)
     collector.set_context(task='manual_capture', phase='capture', scene_note=args.scene)
     detector = CubeDetector(camera_id=args.camera, show_gui=args.gui)
     detector.set_detection_profile(args.profile)

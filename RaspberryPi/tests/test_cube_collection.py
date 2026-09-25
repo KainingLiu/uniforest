@@ -15,7 +15,7 @@ import cv2
 import numpy as np
 
 from vision.yolo.collector import CollectionConfig, CubeDataCollector, create_collector
-from vision.opencv.cube_detector import CubeDetector
+from vision import CubeDetector
 from tools.collect_cube_data import library_stats
 
 
@@ -34,6 +34,7 @@ class CollectionTests(unittest.TestCase):
 
     def collector(self, **changes):
         collector = CubeDataCollector(replace(self.config, **changes))
+        collector.set_context(task='Task1', phase='ORANGE_SEARCH')
         self.addCleanup(collector.stop)
         collector.start()
         return collector
@@ -85,15 +86,60 @@ class CollectionTests(unittest.TestCase):
     def test_phase_and_profile_changes_keep_first_frame_even_if_identical(self):
         collector = self.collector()
         self.offer(collector, 0.0)
-        collector.set_context(task='Task2', phase='BUILDING_ALIGN')
+        collector.set_context(task='Task2', phase='ORANGE_ALIGN')
         self.offer(collector, 0.1)
-        self.offer(collector, 0.2, profile='building')
+        self.offer(collector, 0.2, profile='task2_orange')
         collector.stop()
         records = self.frames()
         self.assertEqual(len(records), 3)
         self.assertEqual([r['phase'] for r in records],
-                         ['idle', 'BUILDING_ALIGN', 'BUILDING_ALIGN'])
-        self.assertEqual(records[-1]['profile'], 'building')
+                         ['ORANGE_SEARCH', 'ORANGE_ALIGN', 'ORANGE_ALIGN'])
+        self.assertEqual(records[-1]['profile'], 'task2_orange')
+
+    def test_automatic_collection_only_saves_pre_grab_search_and_alignment(self):
+        collector = self.collector()
+        states = [
+            ('STARTUP', 'default'), ('INITIAL_MOVE', 'default'),
+            ('ORANGE_SEARCH', 'default'), ('ORANGE_ALIGN', 'task2_orange'),
+            ('GRAB', 'default'), ('ORANGE_GRAB', 'task2_orange'),
+            ('COUNT_CHECK', 'default'), ('DELIVERY_TAG_ALIGN', 'default'),
+            ('PURPLE_SEARCH', 'default'),  # wrong profile at a transition
+            ('PURPLE_SEARCH', 'task2_purple'), ('PURPLE_ALIGN', 'task2_purple'),
+            ('TAG6_ALIGN', 'default'), ('BUILDING_ALIGN', 'building'),
+            ('BUILD', 'building'), ('UNLOAD', 'default'),
+            ('FINISHED', 'default'), ('FAULT', 'default'),
+        ]
+        for at, (phase, profile) in enumerate(states):
+            collector.set_context(phase=phase)
+            self.offer(collector, float(at), profile=profile)
+        collector.stop()
+        self.assertEqual([r['phase'] for r in self.frames()],
+                         ['ORANGE_SEARCH', 'ORANGE_ALIGN',
+                          'PURPLE_SEARCH', 'PURPLE_ALIGN'])
+
+    def test_same_search_after_grab_keeps_first_frame(self):
+        collector = self.collector()
+        self.offer(collector, 0.0)
+        collector.set_context(phase='GRAB')
+        collector.set_context(phase='ORANGE_SEARCH')
+        self.offer(collector, 0.1)
+        collector.stop()
+        self.assertEqual(len(self.frames()), 2)
+
+    def test_idle_robot_does_not_save_but_explicit_capture_still_does(self):
+        collector = self.collector()
+        collector.set_context(task='manual', phase='idle')
+        self.offer(collector, 0.0)
+        collector.stop()
+        self.assertEqual(self.frames(), [])
+        manual = CubeDataCollector(self.config, manual_capture=True)
+        manual.set_context(task='manual_capture', phase='capture')
+        manual.start()
+        try:
+            self.offer(manual, 1.0, profile='building')
+        finally:
+            manual.stop()
+        self.assertEqual([r['phase'] for r in self.frames()], ['capture'])
 
     def test_small_local_colour_change_is_not_discarded_as_static_background(self):
         collector = self.collector()
@@ -113,6 +159,7 @@ class CollectionTests(unittest.TestCase):
 
     def test_full_queue_drops_frames_without_waiting_for_writer(self):
         collector = CubeDataCollector(replace(self.config, queue_size=1))
+        collector.set_context(task='Task1', phase='ORANGE_SEARCH')
         entered, release = threading.Event(), threading.Event()
         original_save = collector._save_frame
 
@@ -210,7 +257,7 @@ class CollectionTests(unittest.TestCase):
             return True, frame
 
         detector._cap = SimpleNamespace(read=read)
-        with patch('vision.opencv.cube_detector.detect_all_blocks', return_value=[]) as detect:
+        with patch(CubeDetector.__module__ + '.detect_all_blocks', return_value=[]) as detect:
             detector._capture_loop()
         return detector, detect.call_count
 

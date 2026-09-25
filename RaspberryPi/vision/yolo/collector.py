@@ -131,8 +131,9 @@ def _write_json(path, record):
 class CubeDataCollector:
     """One collection session per camera/Robot start; no hardware commands."""
 
-    def __init__(self, config: CollectionConfig):
+    def __init__(self, config: CollectionConfig, *, manual_capture=False):
         self.config = config
+        self._manual_capture = manual_capture
         self.directory = config.directory
         self.session_id = (datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%S_%fZ')
                            + '_' + uuid.uuid4().hex[:8])
@@ -143,6 +144,7 @@ class CubeDataCollector:
         self._context_lock = threading.Lock()
         self._context = {'task': 'manual', 'phase': 'idle', 'flow_id': '',
                          'scene_note': ''}
+        self._context_generation = 0
         self._next_sample = float('-inf')
         self._last_seen = float('-inf')
         self._last_offered_context = None
@@ -157,8 +159,19 @@ class CubeDataCollector:
     def set_context(self, **fields):
         allowed = {'task', 'phase', 'flow_id', 'scene_note'}
         with self._context_lock:
-            self._context.update({k: str(v) for k, v in fields.items()
-                                  if k in allowed})
+            updates = {k: str(v) for k, v in fields.items() if k in allowed}
+            if any(self._context[k] != v for k, v in updates.items()):
+                self._context_generation += 1
+                self._context.update(updates)
+
+    def _capture_allowed(self, context, profile):
+        if self._manual_capture:
+            return True  # Explicit tools/collect_cube_data.py capture only.
+        phase = context['phase']
+        if phase in ('ORANGE_SEARCH', 'ORANGE_ALIGN'):
+            return profile in ('default', 'task2_orange')
+        return (phase in ('PURPLE_SEARCH', 'PURPLE_ALIGN')
+                and profile == 'task2_purple')
 
     def start(self):
         if not self.config.enabled or self._thread is not None:
@@ -188,7 +201,12 @@ class CubeDataCollector:
         self._last_seen = captured_monotonic
         with self._context_lock:
             context = dict(self._context)
-        context_key = (profile, tuple(context.items()))
+            generation = self._context_generation
+        if not self._capture_allowed(context, profile):
+            return
+        # A refill may return to exactly the same phase/profile after a grab.
+        # Keep its first frame even if no excluded-phase frame reached us.
+        context_key = (generation, profile, tuple(context.items()))
         changed = context_key != self._last_offered_context
         if not changed and captured_monotonic < self._next_sample:
             return

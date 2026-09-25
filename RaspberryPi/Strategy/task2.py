@@ -129,7 +129,7 @@ class Task2Config(FirstTaskConfig):
     # profile and enter deceleration earlier without changing final tolerances.
     delivery_tag_fast_forward_mm_s: float = 260.0
     delivery_tag_fast_lateral_mm_s: float = 200.0
-    delivery_tag_min_linear_mm_s: float = 80.0
+    delivery_tag_min_linear_mm_s: float = 100.0
     delivery_tag_slowdown_distance_mm: float = 140.0
     delivery_tag_slowdown_lateral_mm: float = 100.0
     delivery_tag_creep_distance_mm: float = 35.0

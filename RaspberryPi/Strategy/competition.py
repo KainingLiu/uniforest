@@ -180,7 +180,7 @@ class FirstTaskConfig:
     delivery_tag_creep_distance_mm: float = 25.0
     delivery_tag_creep_lateral_mm: float = 20.0
     delivery_heading_max_yaw_deg_s: float = 45.0
-    delivery_tag_min_linear_mm_s: float = 80.0
+    delivery_tag_min_linear_mm_s: float = 100.0
     delivery_heading_min_yaw_deg_s: float = 8.0
     delivery_tag_linear_accel_mm_s2: float = 300.0
     delivery_heading_yaw_accel_deg_s2: float = 90.0
