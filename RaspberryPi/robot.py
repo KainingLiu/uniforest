@@ -103,7 +103,10 @@ class Robot:
                  localization_camera='tag',
                  localization_gui: bool = False,
                  debug: bool = False,
-                 diagnostics_path: Optional[str] = None):
+                 diagnostics_path: Optional[str] = None,
+                 quiet_heartbeat: bool = False,
+                 collect_data: Optional[bool] = None,
+                 dataset_dir: Optional[str] = None):
         if port is None:
             port = self.SERIAL_PORT
         if baud is None:
@@ -112,6 +115,7 @@ class Robot:
         # Transport layer
         self.transport = Transport(port, baud, debug=debug)
         self.diagnostics = JsonlDiagnostics(diagnostics_path)
+        self._quiet_heartbeat = quiet_heartbeat
 
         # Control subsystems
         self.chassis = Chassis(self.transport)
@@ -122,6 +126,7 @@ class Robot:
 
         # Vision subsystem (optional)
         self._vision: Optional['CubeDetector'] = None
+        self._data_collector = None
         if enable_vision and HAS_VISION:
             self._vision = CubeDetector(
                 camera_id=camera_id,
@@ -129,6 +134,11 @@ class Robot:
                 exposure=vision_exposure,
                 gain=vision_gain,
             )
+            from vision.yolo.collector import create_collector
+            self._data_collector = create_collector(
+                enabled=collect_data, data_dir=dataset_dir)
+            if self._data_collector is not None:
+                self._vision.set_frame_sink(self._data_collector.offer_frame)
         elif enable_vision and not HAS_VISION:
             print("[Robot] 视觉模块不可用（opencv-python 未安装）")
 
@@ -207,10 +217,14 @@ class Robot:
 
         # Start vision if configured
         if self._vision is not None:
+            if self._data_collector is not None:
+                self._data_collector.start()
             if self._vision.start():
                 print("[Robot] Vision subsystem active")
             else:
                 print("[Robot] Vision failed to start")
+                if self._data_collector is not None:
+                    self._data_collector.stop()
         if self._localizer is not None:
             if self._localizer.start():
                 print("[Robot] Field localization active")
@@ -231,7 +245,15 @@ class Robot:
         self.transport.emergency_stop()
         time.sleep(0.1)
         self.transport.disconnect()
+        # Disk flushing happens only after the existing hardware stop/disconnect.
+        if self._data_collector is not None:
+            self._data_collector.stop()
         print("[Robot] Disconnected")
+
+    def set_collection_context(self, **fields):
+        """Attach task/phase hints to future images; performs no I/O."""
+        if self._data_collector is not None:
+            self._data_collector.set_context(**fields)
 
     def _heartbeat_loop(self):
         """Keep the A-board watchdog alive during blocking action waits."""
@@ -635,6 +657,10 @@ def debug_main():
                        help='Show field-localization debug window')
     parser.add_argument('--debug', action='store_true',
                        help='Enable transport debug output')
+    parser.add_argument('--no-collect-data', action='store_true',
+                       help='Disable automatic cube-image collection')
+    parser.add_argument('--dataset-dir', default=None,
+                       help='Local cube image library directory')
 
     args = parser.parse_args()
 
@@ -647,7 +673,9 @@ def debug_main():
                   enable_localization=args.localization,
                   localization_camera=args.tag_camera,
                   localization_gui=args.localization_gui,
-                  debug=args.debug)
+                  debug=args.debug,
+                  collect_data=False if args.no_collect_data else None,
+                  dataset_dir=args.dataset_dir)
 
     try:
         if not robot.connect():

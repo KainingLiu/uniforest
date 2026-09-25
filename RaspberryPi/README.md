@@ -1,6 +1,6 @@
 # Raspberry Pi 上位机程序
 
-当前源码基线：2026-09-24。历史参数和验证结果集中在 [CHANGELOG.md](CHANGELOG.md)，下位机接口见 [PROJECT.md](../Uniforest_A/PROJECT.md)。
+当前源码基线：2026-09-25。历史参数和验证结果集中在 [CHANGELOG.md](CHANGELOG.md)，下位机接口见 [PROJECT.md](../Uniforest_A/PROJECT.md)。
 
 ## 环境与目录
 
@@ -17,6 +17,12 @@
 | `sensors/`、`utils/` | 传感器封装和通用辅助 |
 | `tools/`、`tests/` | 实机/图像调试工具；少量协议格式和导入检查 |
 
+自然语言 Agent 的部署、API 中转和命令行使用见 [`agent/README.md`](agent/README.md)。
+
+启用 Robot 方块视觉后默认自动采集原图，保存到本机 `vision/yolo/data/collection/`，
+按运行批次记录任务阶段、相机设置并建立 SQLite 索引。`python tools/collect_cube_data.py stats`
+查看数量；本轮加 `--no-collect-data` 可停用，`--dataset-dir` 可更换目录。
+采样、存储上限、独立补拍和标注要求见 [自动采集说明](vision/yolo/docs/DATA_COLLECTION.md)。
 更换前臂舵机后，使用独立入口 `python tools/arm_zero_adjust.py` 输入角度寻找默认姿态，
 详见[前臂零点调整](tools/arm_zero_adjust.md)。前臂角度仍沿用原坐标（默认 90°），
 固定偏置统一在 A 板输出层处理；用户确认新默认输出为 102°，源码偏置为 +12°，
@@ -88,6 +94,35 @@ py -3 -m venv .venv
 ```
 
 实际运行解释器需有 pyserial、NumPy 和 OpenCV contrib。键盘遥控已移除，不再依赖 pynput 或桌面键盘后端。
+
+### 自然语言 Agent 部署
+
+当前网络方案为“树莓派连接开发机，开发机转发 APIFUN”。开发机的 FlClash 负责访问公网，树莓派只访问开发机热点网关 `192.168.137.1`。
+
+在开发机启动中转服务：
+
+```powershell
+cd D:\PROJECTS\Uniforest\RaspberryPi
+python -m agent.relay --host 192.168.137.1 --port 8765 --profile APIFUN
+```
+
+保持这个窗口运行。中转服务会从项目根目录的 `Docs/API.md` 读取 `APIFUN gpt` 配置，并转发到 APIFUN 的 Responses 接口；日志只显示请求路径、状态码和耗时，不显示 API Key 或请求正文。
+
+然后通过 SSH 登录树莓派，在树莓派上启动 Agent：
+
+```bash
+ssh uniforest@192.168.137.50
+cd /home/uniforest/Uniforest/RaspberryPi
+source .venv/bin/activate
+export OPENAI_BASE_URL=http://192.168.137.1:8765
+python -m agent.cli --profile APIFUN --vision --localization
+```
+
+启动后在 `你 >` 提示符直接输入自然语言。工具调用默认会在树莓派终端显示，例如 `get_robot_state`、`detect_tags`、`move_chassis` 和返回摘要；使用 `--quiet-tools` 可以关闭工具痕迹。输入 `退出` 或按 `Ctrl+C` 会停止视觉、发送急停并断开机器人。
+
+Agent 模式会隐藏后台 `PONG` 心跳输出，避免它插入用户输入行；心跳线程和下位机通信看门狗仍保持运行。
+
+如果不使用本机中转，直接运行 `python -m agent.cli --vision --localization`；这要求树莓派自身能够访问 API 域名。`Docs/API.md` 含有密钥，不要提交到 Git；部署时使用树莓派上的 `/home/uniforest/.config/uniforest/API.md` 私有副本。
 
 ## 验证与启动顺序
 
@@ -459,7 +494,7 @@ ID 1/2/3/4 对应 Grap1/Grap2/Grap3/Build；状态 0/1/2/3/4/5 为 idle/running/
 重新计算中心。成功、搜索耗尽或异常退出后恢复 `default`，切换时清除旧检测结果。
 `task2_orange` 仍屏蔽上方 50%，`default`/`building` 不屏蔽。紫色色带未调整。
 
-cube Linux 曝光配置为 `exposure=312`、`gain=32`、自动白平衡，保存于 `vision/camera_settings.json`。光照、镜头、相机位置或曝光改变后须重新核对色带与平面标定；软件配置不等于已验证的硬件事实。
+cube Linux 曝光配置为 `exposure=312`、`gain=32`、自动白平衡，保存于 `vision/opencv/camera_settings.json`。光照、镜头、相机位置或曝光改变后须重新核对色带与平面标定；软件配置不等于已验证的硬件事实。
 
 ### 建筑
 
@@ -469,7 +504,7 @@ cube Linux 曝光配置为 `exposure=312`、`gain=32`、自动白平衡，保存
 
 ### AprilTag
 
-`field_localizer.py` 仅使用 tag 相机图像，解析 AprilTag 36h11，以 IPPE 平面位姿候选和场地约束定位；不读取 IMU。比赛对准另由 IMU 保持航向。场地与标签参数在 `vision/field_map.json`，标签边长配置为 0.15 m。
+`field_localizer.py` 仅使用 tag 相机图像，解析 AprilTag 36h11，以 IPPE 平面位姿候选和场地约束定位；不读取 IMU。比赛对准另由 IMU 保持航向。场地与标签参数在 `vision/opencv/field_map.json`，标签边长配置为 0.15 m。
 
 `tag_camera_calib.json` 当前使用 125° 水平视场估算内参，`calibrated=false`，未提供实测广角畸变参数。场地标签坐标、高度、相机高度和安装偏移也需现场复核，不能将配置值当作实测结论。
 

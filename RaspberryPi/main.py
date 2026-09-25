@@ -7,6 +7,7 @@ import sys
 from robot import Robot
 from Strategy.runner import TASK_CHOICES, run_tasks
 from vision import default_camera_selector
+from vision.yolo.collector import add_collection_arguments
 from utils.diagnostics import classify_failure
 
 
@@ -35,6 +36,7 @@ def parse_args():
     parser.add_argument('--debug', action='store_true')
     parser.add_argument('--diagnostics-log', default=None,
                         help='Append JSONL diagnostics to this path')
+    add_collection_arguments(parser)
     return parser.parse_args()
 
 
@@ -51,6 +53,8 @@ def main() -> int:
         localization_gui=args.localization_gui,
         debug=args.debug,
         diagnostics_path=args.diagnostics_log,
+        collect_data=False if args.no_collect_data else None,
+        dataset_dir=args.dataset_dir,
     )
 
     try:

@@ -11,6 +11,7 @@ from control.chassis import (
     LONG_DISTANCE_FORWARD_ACCEL_MS,
     LONG_DISTANCE_MOVE_SPEED_MM_S,
 )
+from .common import TaskStateReporting
 
 if TYPE_CHECKING:
     from robot import Robot
@@ -33,8 +34,10 @@ class Task0Config:
     telemetry_wait_s: float = 2.0
 
 
-class Task0Program:
+class Task0Program(TaskStateReporting):
     """Runs the first-round approach shared only by the full mission."""
+
+    TASK_LABEL = 'Task0'
 
     def __init__(self, robot: Robot, config: Task0Config = Task0Config()):
         self.robot = robot
