@@ -1,0 +1,26 @@
+{
+  "reviewer": "Codex",
+  "review_date": "2026-09-27",
+  "review_evidence": "All 27 numbered 4x4 proposal overlays visually inspected; uncertain outlines are excluded from this first training set.",
+  "source_sha256": "b9b794acd38bf2607ea9bc51b151d3eba90e8a3d908a75870a384c7b61bfd0dc",
+  "excluded_ranges": [
+    {"first": 19, "last": 24, "reason": "early adjacent orange group has inconsistent instance counts"},
+    {"first": 109, "last": 114, "reason": "distant robot and foreground cubes produce mixed small orange proposals"},
+    {"first": 132, "last": 138, "reason": "distant robot-area orange proposals require separate physical-instance verification"},
+    {"first": 193, "last": 201, "reason": "hands obscure or join visible cubes and cause false colour instances"},
+    {"first": 240, "last": 247, "reason": "distant upper orange object and main cubes need independent instance verification"},
+    {"first": 349, "last": 353, "reason": "small upper orange region overlaps a distant robot"},
+    {"first": 371, "last": 376, "reason": "person and distant upper orange object make instance identity uncertain"},
+    {"first": 391, "last": 395, "reason": "foreground robot falsely segmented as orange/purple alongside target"},
+    {"first": 414, "last": 418, "reason": "person and distant orange object complicate otherwise usable foreground cubes"}
+  ],
+  "excluded_ids": [
+    26, 43, 44, 45, 46, 53, 54, 67, 69, 81, 82, 115, 116,
+    146, 147, 168, 179, 204, 219, 259, 260, 273, 356, 398, 399
+  ],
+  "excluded_ids_reason": "visible target fragment has no reliable proposal, or a non-cube object is merged with a proposal",
+  "approved_empty_ids": [156, 186, 187, 191, 192],
+  "approved_empty_reason": "visually confirmed no identifiable cube; coloured person/robot proposal removed as a hard negative",
+  "accepted_low_fill_partial_ids": [131, 412],
+  "acceptance_rule": "Every other numbered image was visually checked on its overlay sheet. Accept only its displayed instance proposals, including an empty label when the scene truly has no visible identifiable cube."
+}
