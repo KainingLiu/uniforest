@@ -906,6 +906,7 @@ class Task2Program(CompetitionProgram):
             lost_timeout_s=cfg.build_tag_lost_timeout_s,
             fine_align_enabled=False,
             stop_axes_in_tolerance=True,
+            translation_only_completion=True,
         )
 
         self._run_build_phase()

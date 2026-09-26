@@ -433,7 +433,7 @@ class CompetitionProgram(TaskStateReporting):
                 accel_ms = self.config.long_distance_forward_accel_ms
         result = self.robot.move_chassis(
             direction, distance_mm, speed_mm_s,
-            hold_ms=0, accel_ms=accel_ms)
+            hold_ms=0, accel_ms=accel_ms, route_mode=True)
         if result.cancelled:
             raise RuntimeError(
                 f'chassis move failed: {direction} {distance_mm:.0f} mm')
@@ -966,8 +966,11 @@ class CompetitionProgram(TaskStateReporting):
             vision_stale_s: Optional[float] = None,
             lost_timeout_s: Optional[float] = None,
             fine_align_enabled: bool = True,
-            stop_axes_in_tolerance: bool = False):
-        """Use a tag for translation while holding startup-relative yaw."""
+            stop_axes_in_tolerance: bool = False,
+            translation_only_completion: bool = False):
+        """Align translation and yaw; optionally finish on translation alone."""
+        if translation_only_completion and fine_align_enabled:
+            raise ValueError('translation-only completion requires coarse alignment')
         cfg = self.config
         tag_id = cfg.delivery_tag_id if tag_id is None else tag_id
         target_distance_mm = (cfg.delivery_tag_distance_mm
@@ -1127,9 +1130,10 @@ class CompetitionProgram(TaskStateReporting):
                 if hold_axes:
                     # Only accepted, distinct frames reach this point. Keep the
                     # final confirmation based on measured tolerances, not holds.
-                    stop_distance, stop_lateral, stop_heading = (
-                        axis.update(ok) for axis, ok in zip(
-                            axis_holds, (distance_ok, lateral_ok, heading_ok)))
+                    stop_distance = axis_holds[0].update(distance_ok)
+                    stop_lateral = axis_holds[1].update(lateral_ok)
+                    if not translation_only_completion:
+                        stop_heading = axis_holds[2].update(heading_ok)
                     if stop_distance:
                         vx = 0.0
                     if stop_lateral:
@@ -1137,13 +1141,15 @@ class CompetitionProgram(TaskStateReporting):
                     if stop_heading:
                         wz = 0.0
 
-                within_tolerance = distance_ok and lateral_ok and heading_ok
+                within_tolerance = (distance_ok and lateral_ok
+                                    and (translation_only_completion or heading_ok))
                 if within_tolerance and not fine_align_enabled:
-                    # Coarse-only alignment stops at the accepted pose, then
-                    # confirms distinct frames without chasing the fine deadband.
-                    self.robot.chassis.set_speeds([0, 0, 0, 0])
-                    vx = vy = wz = 0.0
-                    pids.reset()
+                    # Tag6 keeps correcting yaw during translation confirmation.
+                    # Other coarse-only callers still stop all three axes.
+                    if not translation_only_completion:
+                        self.robot.chassis.set_speeds([0, 0, 0, 0])
+                        vx = vy = wz = 0.0
+                        pids.reset()
                     confirmed += 1
                     print(f'[{self.TASK_LABEL}] Tag {tag_id} aligned '
                           f'{confirmed}/{cfg.delivery_tag_confirm_frames}: '
@@ -1151,9 +1157,10 @@ class CompetitionProgram(TaskStateReporting):
                           f'gyro={heading_error_deg:+.1f} deg')
                     if confirmed >= cfg.delivery_tag_confirm_frames:
                         return
-                    last_update = now
-                    time.sleep(cfg.delivery_tag_control_period_s)
-                    continue
+                    if not translation_only_completion:
+                        last_update = now
+                        time.sleep(cfg.delivery_tag_control_period_s)
+                        continue
                 precision_ok = (
                     abs(distance_error)
                     <= cfg.delivery_tag_distance_deadband_mm
@@ -1161,7 +1168,7 @@ class CompetitionProgram(TaskStateReporting):
                     <= cfg.delivery_tag_lateral_deadband_mm
                     and abs(heading_error_deg)
                     <= cfg.delivery_heading_deadband_deg)
-                if within_tolerance:
+                if within_tolerance and fine_align_enabled:
                     if fine_started is None:
                         fine_started = now
                         print(f'[{self.TASK_LABEL}] Tag within tolerance; '
@@ -1185,7 +1192,7 @@ class CompetitionProgram(TaskStateReporting):
                                   'Fine alignment time reached; '
                                   'accepting position within tolerance')
                         return
-                else:
+                elif not within_tolerance:
                     confirmed = 0
 
                 if (stop_distance or (not fine_align_enabled and distance_ok)
@@ -1224,13 +1231,17 @@ class CompetitionProgram(TaskStateReporting):
                         fast_speed=cfg.delivery_tag_fast_lateral_mm_s,
                         max_speed=cfg.delivery_tag_fast_lateral_mm_s,
                         min_speed=cfg.delivery_tag_min_linear_mm_s)
-                if (stop_heading or (not fine_align_enabled and heading_ok)
-                        or abs(heading_error_deg) <= cfg.delivery_heading_deadband_deg):
+                if ((translation_only_completion and heading_error_deg == 0.0)
+                        or (not translation_only_completion and (
+                            stop_heading or (not fine_align_enabled and heading_ok)
+                            or abs(heading_error_deg) <= cfg.delivery_heading_deadband_deg))):
                     heading_pid.reset()
                     desired_wz = 0.0
+                    if translation_only_completion:
+                        wz = 0.0
                 else:
                     desired_wz = heading_pid.update(heading_error_deg, dt)
-                    if not heading_ok:
+                    if translation_only_completion or not heading_ok:
                         desired_wz = self._minimum_command(
                             desired_wz, cfg.delivery_heading_min_yaw_deg_s)
                     else:
@@ -1302,7 +1313,8 @@ class CompetitionProgram(TaskStateReporting):
         self.state = CompetitionState.DELIVERY_TAG_ALIGN
         self.robot.reset_field_localization_filter()
         self._align_delivery_tag(
-            fine_align_enabled=False, stop_axes_in_tolerance=True)
+            fine_align_enabled=False, stop_axes_in_tolerance=True,
+            translation_only_completion=True)
 
         if cfg.post_tag_lateral_right_mm > 0.0:
             self.state = CompetitionState.POST_TAG_LATERAL

@@ -478,6 +478,7 @@ class Robot:
                      speed_mm_s: float = DEFAULT_MOVE_SPEED_MM_S,
                      hold_ms: Optional[int] = None,
                      accel_ms: Optional[int] = None,
+                     route_mode: bool = False,
                      ) -> LinearMoveResult:
         """Run a blocking calibrated position-loop chassis move."""
         direction = direction.lower()
@@ -491,6 +492,8 @@ class Robot:
             move_kwargs['hold_ms'] = hold_ms
         if accel_ms is not None:
             move_kwargs['accel_ms'] = accel_ms
+        if route_mode:
+            move_kwargs['route_mode'] = True
         moves = {
             'forward': lambda: self.chassis.move_forward(
                 distance_mm, speed_mm_s, **move_kwargs),

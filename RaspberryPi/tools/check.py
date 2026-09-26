@@ -45,6 +45,10 @@ def main():
         'tests.test_stepper_dual3', '-q'])
     results['collection'] = run('Dataset collection', [
         sys.executable, '-m', 'unittest', 'tests.test_cube_collection', '-q'])
+    results['route'] = run('Route arrival control', [
+        sys.executable, '-m', 'unittest', 'tests.test_chassis_route', '-q'])
+    results['tag6'] = run('Tag6 completion control', [
+        sys.executable, '-m', 'unittest', 'tests.test_tag6_completion', '-q'])
     firmware = ROOT.parent / 'Uniforest_A'
     if args.firmware:
         configured = run('Firmware configure', ['cmake', '--preset', 'Debug'], firmware)

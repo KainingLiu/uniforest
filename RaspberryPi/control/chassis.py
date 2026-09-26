@@ -89,6 +89,9 @@ FWD_TIMEOUT_MS       = 2000
 FWD_SETTLE_COUNTS    = 1000
 FWD_SETTLE_MS        = 50
 FWD_SETTLE_SPEED_RPM = 50
+# Competition routes may stop within this chassis-distance window. Direct
+# positioning keeps the original encoder tolerance and position hold.
+ROUTE_ARRIVAL_TOLERANCE_MM = 8.0
 # Keep only a short grace period after the estimated travel time. Strategy
 # code accepts a near-complete encoder result so a final precise settle is not
 # required for competition routing.
@@ -369,7 +372,8 @@ class Chassis:
             self.set_pos_pid(i, kp, ki, kd, ilim, olim)
 
     # ==================== High-Level Move Commands =============================
-    # These replicate MoveForward/MoveRight/Turn from motor3508.c.
+    # Direct moves retain the motor3508.c positioning behaviour; route_mode
+    # opts into a wider arrival window and braking during acceleration.
     # They run BLOCKING on the Pi — call from a task thread.
     # STM32 handles the speed PID; Pi handles the position loop.
 
@@ -394,8 +398,9 @@ class Chassis:
         return wheel_counts, sum(wheel_counts) // 4
 
     @staticmethod
-    def _linear_settled(telem: TelemBatch, remaining: int) -> bool:
-        return (abs(remaining) <= FWD_SETTLE_COUNTS
+    def _linear_settled(telem: TelemBatch, remaining: int,
+                        tolerance_counts: int = FWD_SETTLE_COUNTS) -> bool:
+        return (abs(remaining) <= tolerance_counts
                 and max(abs(m.speed_rpm) for m in telem.motors)
                 <= FWD_SETTLE_SPEED_RPM)
 
@@ -406,10 +411,12 @@ class Chassis:
                      cancel_event=None,
                      distance_scale: float = 1.0,
                      hold_ms: int = FWD_HOLD_MS,
-                     accel_ms: int = FWD_ACCEL_MS) -> LinearMoveResult:
+                     accel_ms: int = FWD_ACCEL_MS,
+                     route_mode: bool = False) -> LinearMoveResult:
         """
         Blocking position-loop linear move with S-curve feedforward.
-        Matches _move_linear() in motor3508.c.
+        Direct positioning retains the motor3508.c profile. Competition routes
+        brake during acceleration and stop correcting inside an arrival window.
         """
         control_period = 0.02  # 50 Hz, matching the default telemetry rate
         scale = speed_rpm / FWD_BASE_SPEED_RPM
@@ -419,6 +426,26 @@ class Chassis:
         if target_counts <= 0 or speed_rpm <= 0.0:
             raise ValueError('distance and speed must be positive')
 
+        tolerance_counts = FWD_SETTLE_COUNTS
+        if route_mode:
+            # Apply lateral calibration to the tolerance as well as the target.
+            # Very short compensation moves must still leave their origin.
+            tolerance_counts = min(
+                int(ROUTE_ARRIVAL_TOLERANCE_MM * distance_scale
+                    * COUNTS_PER_CM / 10.0), target_counts // 2)
+        stop_generation = t.emergency_stop_generation if route_mode else None
+
+        def check_route():
+            self._check_action()
+            if route_mode and (
+                    not t.connected
+                    or t.emergency_stop_generation != stop_generation
+                    or self._telem is None
+                    or time.monotonic() - self._telem_received_at > 0.5):
+                t.emergency_stop()
+                raise RuntimeError('route move communication/cancellation/telemetry fault')
+
+        check_route()
         target_wheel_mm = target_counts * 10.0 / COUNTS_PER_CM
         wheel_speed_mm_s = speed_rpm * 10.0 / MECANUM_RPM_PER_CM_S
         timeout_ms = max(
@@ -450,10 +477,11 @@ class Chassis:
         cancelled = False
         wheel_counts = (0, 0, 0, 0)
         projected_counts = 0
+        last_settle_sample = None
 
         while True:
             t0 = time.monotonic()
-            self._check_action()
+            check_route()
 
             if cancel_event is not None and cancel_event.is_set():
                 cancelled = True
@@ -477,17 +505,33 @@ class Chassis:
             wheel_counts, projected_counts = self._project_wheel_positions(
                 telem, origin, signs)
             remaining = target_counts - projected_counts
+            in_arrival_window = route_mode and abs(remaining) <= tolerance_counts
             if remaining <= 0:
                 position_lock = True
 
             # Feedforward
             elapsed_ms = (now - t_start) * 1000.0
-            if position_lock:
+            if in_arrival_window:
+                # Brake immediately, then wait for low wheel speed. Do not
+                # keep nudging the final millimetres or yaw while confirming.
+                position_lock = True
+                for pid in self.pos_pid:
+                    pid.reset()
+                self.yaw_pid.reset()
+                ff = 0.0
+            elif position_lock:
                 # No feedforward in the position-lock phase or after an
                 # overshoot. The signed position PID must be able to reverse.
                 for pid in self.pos_pid:
                     pid.output_limit = pid_limit
                 ff = 0.0
+            elif route_mode:
+                ramp = min(1.0, elapsed_ms / accel_ms) if accel_ms > 0 else 1.0
+                distance_ratio = min(1.0, max(0.0, remaining / decel_dist))
+                for pid in self.pos_pid:
+                    pid.output_limit = pid_limit * ramp
+                ff = speed_rpm * min(self._smoothstep(ramp),
+                                     self._smoothstep(distance_ratio))
             elif accel_ms > 0 and elapsed_ms < accel_ms:
                 r = elapsed_ms / accel_ms
                 for pid in self.pos_pid:
@@ -501,8 +545,8 @@ class Chassis:
                 else:
                     ff = speed_rpm * self._smoothstep(remaining / decel_dist)
 
-            pid_corr = self.pos_pid[0].compute(
-                float(target_counts), float(projected_counts), dt)
+            pid_corr = (0.0 if in_arrival_window else self.pos_pid[0].compute(
+                float(target_counts), float(projected_counts), dt))
             speed_sp = ff + pid_corr
 
             # Match IMU_ResetYaw() in the 0714 implementation without changing
@@ -512,15 +556,20 @@ class Chassis:
                 yaw_delta -= 360.0
             while yaw_delta < -180.0:
                 yaw_delta += 360.0
-            yaw_corr = self.yaw_pid.compute(0.0, -yaw_delta, dt)
+            yaw_corr = (0.0 if in_arrival_window else
+                        self.yaw_pid.compute(0.0, -yaw_delta, dt))
 
             # Distribute to 4 wheels
             rpm = [speed_sp * signs[i] + yaw_corr for i in range(4)]
             if cancel_event is not None and cancel_event.is_set():
                 cancelled = True
                 break
-            self._check_action()
-            if not t.set_chassis_speed([int(round(r)) for r in rpm]) and self._action_monitor is not None:
+            check_route()
+            sent = t.set_chassis_speed([int(round(r)) for r in rpm])
+            if not sent and route_mode:
+                t.emergency_stop()
+                raise RuntimeError('route move speed send failed')
+            if not sent and self._action_monitor is not None:
                 raise RuntimeError('chassis speed send failed during action overlap')
 
             # Settle → hold
@@ -530,11 +579,14 @@ class Chassis:
                 timed_out = True
                 break
 
-            settled = self._linear_settled(telem, remaining)
+            settled = self._linear_settled(telem, remaining, tolerance_counts)
+            fresh_sample = telem is not last_settle_sample
+            last_settle_sample = telem
 
             if not hold_active:
                 if settled:
-                    settle_cnt += 1
+                    if not route_mode or fresh_sample:
+                        settle_cnt += 1
                     if settle_cnt >= settle_cycles:
                         hold_active = True
                         position_lock = True
@@ -546,7 +598,8 @@ class Chassis:
                 # load, inertia or floor slip moves the chassis out of bounds.
                 hold_active = False
                 settle_cnt = 0
-            elif elapsed - hold_start >= hold_ms:
+            elif (elapsed - hold_start >= hold_ms
+                  and (not route_mode or fresh_sample)):
                 break
 
             # Maintain ~50 Hz
@@ -554,9 +607,14 @@ class Chassis:
             if elapsed_loop < control_period:
                 sleep_fn(control_period - elapsed_loop)
 
-        if not t.set_chassis_speed([0, 0, 0, 0]) and self._action_monitor is not None:
+        check_route()
+        sent = t.set_chassis_speed([0, 0, 0, 0])
+        if not sent and route_mode:
+            t.emergency_stop()
+            raise RuntimeError('route move stop failed')
+        if not sent and self._action_monitor is not None:
             raise RuntimeError('chassis stop failed during action overlap')
-        self._check_action()
+        check_route()
         elapsed_ms = (time.monotonic() - t_start) * 1000.0
         return LinearMoveResult(
             requested_mm=requested_mm,
@@ -573,7 +631,8 @@ class Chassis:
                      speed_mm_s: float = DEFAULT_MOVE_SPEED_MM_S,
                      cancel_event=None,
                      hold_ms: int = FWD_HOLD_MS,
-                     accel_ms: int = FWD_ACCEL_MS) -> LinearMoveResult:
+                     accel_ms: int = FWD_ACCEL_MS,
+                     route_mode: bool = False) -> LinearMoveResult:
         """
         Move forward by distance_mm at speed_mm_s (blocking).
 
@@ -590,13 +649,14 @@ class Chassis:
                                  cancel_event=cancel_event,
                                  distance_scale=1.0,
                                  hold_ms=hold_ms,
-                                 accel_ms=accel_ms)
+                                 accel_ms=accel_ms, route_mode=route_mode)
 
     def move_right(self, distance_mm: float,
                    speed_mm_s: float = DEFAULT_MOVE_SPEED_MM_S,
                    cancel_event=None,
                    hold_ms: int = FWD_HOLD_MS,
-                   accel_ms: int = FWD_ACCEL_MS) -> LinearMoveResult:
+                   accel_ms: int = FWD_ACCEL_MS,
+                   route_mode: bool = False) -> LinearMoveResult:
         """
         Move right (lateral) by distance_mm at speed_mm_s (blocking).
         """
@@ -611,7 +671,7 @@ class Chassis:
                                  cancel_event=cancel_event,
                                  distance_scale=self.lateral_distance_scale,
                                  hold_ms=hold_ms,
-                                 accel_ms=accel_ms)
+                                 accel_ms=accel_ms, route_mode=route_mode)
 
     def turn(self, target_deg: float, speed_deg_s: float,
              hold_ms: int = TURN_HOLD_MS,

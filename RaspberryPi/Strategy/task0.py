@@ -65,7 +65,7 @@ class Task0Program(TaskStateReporting):
                   f'{cfg.speed_mm_s:.0f} mm/s')
             result = self.robot.move_chassis(
                 'forward', cfg.distance_mm, cfg.speed_mm_s,
-                hold_ms=cfg.hold_ms, accel_ms=cfg.accel_ms)
+                hold_ms=cfg.hold_ms, accel_ms=cfg.accel_ms, route_mode=True)
             if result.timed_out or result.cancelled:
                 raise RuntimeError('Task0 position move did not complete')
             self.state = Task0State.FINISHED
