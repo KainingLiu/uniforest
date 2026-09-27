@@ -7,4 +7,6 @@ Uniforest 项目内的 YOLO 视觉目录。全部方案统一维护在 [实施�
 用法、保存位置、配置和标注边界见 [数据采集说明](docs/DATA_COLLECTION.md)。
 已用第一批 418 张图完成候选标注逐图审阅、分组划分和 YOLO11n-seg 首轮离线训练。
 测试结果、权重位置及局限见 [首轮训练报告](docs/FIRST_TRAINING_REPORT.md)。
+另完成了基于四个可见参考角点的 YOLO11n-pose 几何辅助姿态模型，见
+[方块几何辅助三维姿态报告](docs/CUBOID_POSE_REPORT.md)。
 比赛程序中的分割推理与 hybrid 接入仍待实现。
