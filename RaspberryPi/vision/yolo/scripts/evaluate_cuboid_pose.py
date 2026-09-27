@@ -60,7 +60,7 @@ def match_predictions(truth, predicted, width, height):
     return pairs
 
 
-def draw_prediction(image, predictions, matrix):
+def draw_prediction(image, predictions, matrix, draw_wireframe=False):
     view = image.copy()
     colors = {0: (0, 165, 255), 1: (220, 80, 180)}
     for prediction in predictions:
@@ -70,7 +70,7 @@ def draw_prediction(image, predictions, matrix):
             cuboid, error, _, _ = fit_cuboid(prediction['keypoints'], matrix)
         except (ValueError, cv2.error):
             cuboid, error = None, float('nan')
-        if cuboid is not None:
+        if cuboid is not None and draw_wireframe:
             points = np.rint(cuboid).astype(np.int32)
             for start, end in EDGES:
                 cv2.line(view, tuple(points[start]), tuple(points[end]), color, 2,
@@ -91,6 +91,11 @@ def draw_prediction(image, predictions, matrix):
 
 
 def main():
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--wireframe', action='store_true',
+                        help='draw the experimental PnP hidden edges')
+    args = parser.parse_args()
     if not BEST.exists():
         raise FileNotFoundError(BEST)
     OUTPUT.mkdir(parents=True, exist_ok=True)
@@ -132,9 +137,11 @@ def main():
         for expected, actual in pairs:
             pixel_errors.append(float(np.sqrt(np.mean(
                 (expected['keypoints'] * [width, height] - actual['keypoints']) ** 2))))
-        cv2.imwrite(str(overlay_dir / f'{image_id:03d}.jpg'),
-                    draw_prediction(image, predicted, camera_matrix(json.loads(
-                        (RAW / item['image'].replace('.jpg', '.json')).read_text(encoding='utf-8')))),
+        matrix = camera_matrix(json.loads(
+            (RAW / item['image'].replace('.jpg', '.json')).read_text(encoding='utf-8')))
+        overlay = draw_prediction(image, predicted, matrix,
+                                  draw_wireframe=args.wireframe)
+        cv2.imwrite(str(overlay_dir / f'{image_id:03d}.jpg'), overlay,
                     [cv2.IMWRITE_JPEG_QUALITY, 92])
         truth_counts = Counter(int(entry['class_id']) for entry in truth)
         predicted_counts = Counter(entry['class_id'] for entry in predicted)
