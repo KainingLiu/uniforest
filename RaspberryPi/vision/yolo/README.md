@@ -9,4 +9,8 @@ Uniforest 项目内的 YOLO 视觉目录。全部方案统一维护在 [实施�
 测试结果、权重位置及局限见 [首轮训练报告](docs/FIRST_TRAINING_REPORT.md)。
 另保留了一个尚未通过三维线框验收的四参考角点 YOLO11n-pose 实验模型，见
 [方块几何辅助三维姿态报告](docs/CUBOID_POSE_REPORT.md)。
+针对其隐藏边交叉问题，已重新生成并审阅六个**可见轮廓**关键点标签，
+从官方预训练权重微调 YOLO11n-pose；数据划分、测试指标、权重位置和叠图限制见
+[六点重标注训练报告](docs/VISIBLE_OUTLINE_V2_REPORT.md)。
+新模型仍在本机离线验证，画面边缘的截断方块会偶发多余或缺失边线。
 比赛程序中的分割推理与 hybrid 接入仍待实现。
