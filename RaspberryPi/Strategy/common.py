@@ -1,6 +1,17 @@
-"""Pure strategy-control helpers shared by Task1 and Task2."""
+"""Strategy-control and state-reporting helpers shared by the task library."""
 
 from __future__ import annotations
+
+
+class VisualAlignmentUnavailable(RuntimeError):
+    """A visual target was lost or its alignment time budget expired."""
+
+
+def report_visual_fallback(robot, task, stage, reason):
+    print(f'[{task}] Visual fallback ({stage}): {reason}; continue mission')
+    diagnostics = getattr(robot, 'diagnostics', None)
+    if diagnostics is not None:
+        diagnostics.write('visual_fallback', task=task, stage=stage, reason=str(reason))
 
 
 class TaskStateReporting:
@@ -38,4 +49,5 @@ def slew_command(target: float, current: float,
     return current + delta
 
 
-__all__ = ['TaskStateReporting', 'minimum_command', 'slew_command', 'wrap_angle']
+__all__ = ['TaskStateReporting', 'VisualAlignmentUnavailable', 'report_visual_fallback',
+           'minimum_command', 'slew_command', 'wrap_angle']

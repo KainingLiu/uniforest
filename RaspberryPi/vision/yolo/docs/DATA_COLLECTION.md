@@ -5,12 +5,13 @@
 
 ## 正常使用
 
-在 `RaspberryPi` 目录按原来的方式启动流程即可，例如：
+2026-09-30 起，图片自动采集默认关闭，普通比赛和桌面 PlanA / PlanB 启动不保存图片。
+在树莓派的 `RaspberryPi` 目录显式开启本次采集，例如：
 
 ```bash
-python main.py --task task1-r1
-python main.py --task task2-r2
-python task2_main.py
+UNIFOREST_COLLECT_DATA=1 python main.py --task task1-1
+UNIFOREST_COLLECT_DATA=1 python main.py --task task2-2
+UNIFOREST_COLLECT_DATA=1 python task2_main.py
 ```
 
 这些入口仍执行各自原有的机器人动作。自动采集复用正在运行的 cube 摄像头，
@@ -24,7 +25,7 @@ python task2_main.py
 | 橙色搜索 `ORANGE_SEARCH`、对准 `ORANGE_ALIGN`（含精对准） | `default`、`task2_orange` |
 | 紫色搜索 `PURPLE_SEARCH`、对准 `PURPLE_ALIGN` | `task2_purple` |
 
-适用 Task1/Task2 两轮及补抓。进入抓取、数量检查、普通移动、顶墙、Tag 对准、
+开启后适用 Task1 三个变体、Task2 两个变体及补抓。进入抓取、数量检查、普通移动、顶墙、Tag 对准、
 建筑对准、Build、投放、结束或故障阶段后，不再接收新图片。阶段与 profile 不匹配
 的切换帧也不采集。阶段过滤在图像复制、入队、JPEG 编码之前进行。
 后台线程随视觉准备，其他阶段保持空闲而不反复开关相机；每次 Robot 运行仍使用
@@ -38,11 +39,11 @@ python task2_main.py
 python tools/collect_cube_data.py stats
 python tools/collect_cube_data.py stats --json
 
-# 本轮停用采集
-python main.py --task task1-r1 --no-collect-data
+# 本轮强制停用采集（也覆盖显式开启的环境变量）
+python main.py --task task1-1 --no-collect-data
 
 # 保存到已经挂载且当前用户可写的外部存储
-python main.py --task task2-r1 --dataset-dir /media/uniforest/DATA/cube_dataset
+UNIFOREST_COLLECT_DATA=1 python main.py --task task2-1 --dataset-dir /media/uniforest/DATA/cube_dataset
 python tools/collect_cube_data.py stats --dataset-dir /media/uniforest/DATA/cube_dataset
 ```
 
@@ -52,7 +53,8 @@ python tools/collect_cube_data.py stats --dataset-dir /media/uniforest/DATA/cube
 ```bash
 export UNIFOREST_DATASET_DIR=/media/uniforest/DATA/cube_dataset
 export UNIFOREST_DATASET_BATCH=20260924_roomA_layout01
-# 所有入口暂时停用：export UNIFOREST_COLLECT_DATA=0
+# 所有入口暂时开启：export UNIFOREST_COLLECT_DATA=1
+# 恢复默认：unset UNIFOREST_COLLECT_DATA
 ```
 
 环境变量只影响当前终端及其子进程。长期设置可以修改
@@ -99,7 +101,7 @@ collection/
 - 时间表示主机成功读完图像的时刻，并非传感器曝光时间。驱动报告 FPS 不作为实测帧率。
 - 自动采集只保存 `ORANGE_SEARCH`、`ORANGE_ALIGN`、`PURPLE_SEARCH`、`PURPLE_ALIGN`
   四种阶段的图片。第一轮类名记录为
-  `Task1`/`Task2`，第二轮记录为 `Task1-R2`/`Task2-R2`。
+  `task1-1`/`task2-1`，第二套记录为 `task1-2`/`task2-2`；搭建阶段记录为 `task3-1`/`task3-2`，不触发抓取前采集。历史数据保留旧标签，不重写。
 - `scene_note` 供人工补拍记录；任务/profile 仅用于筛选，不能证明图片一定包含某种颜色、
   某个数量、紧贴场景或空场景。
 - `annotation_status` 一律为 `unlabelled`，不生成训练标签或自动把无检测画面当成负样本。
@@ -113,6 +115,7 @@ profile 及完整元数据 JSON。图像路径相对数据根目录，整个目�
 
 | 配置 | 默认值 | 作用 |
 | --- | --- | --- |
+| `enabled` | false | 普通比赛默认不保存图片；环境变量或 Robot 参数可以显式开启 |
 | `enabled` | `true` | 自动采集开关 |
 | `sample_hz` | 2 | 常规抽样最高每秒约 2 帧，实际受新帧频率限制 |
 | `static_keep_seconds` | 5 | 近乎不变的画面仍约每 5 秒保留一张 |

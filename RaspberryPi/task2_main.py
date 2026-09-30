@@ -5,7 +5,8 @@ import argparse
 import sys
 
 from robot import Robot
-from Strategy.task2 import Task2DebugProgram, Task2Program
+from Strategy.task2 import Task2DebugProgram
+from Strategy.runner import run_tasks
 from vision import default_camera_selector
 from vision.yolo.collector import add_collection_arguments
 
@@ -13,7 +14,9 @@ from vision.yolo.collector import add_collection_arguments
 def parse_args():
     default_camera = default_camera_selector()
     parser = argparse.ArgumentParser(
-        description='Uniforest RoboGame Task2 program')
+        description='Task2 starts at heading 180 degrees with a backward move; '
+                    'collection and approach only (Build is Task3)')
+    parser.add_argument('--variant', choices=('1', '2'), default='1')
     parser.add_argument('--port', default=Robot.SERIAL_PORT)
     parser.add_argument('--baud', type=int, default=115200)
     parser.add_argument('--telem-rate', type=int, default=50)
@@ -52,7 +55,7 @@ def main() -> int:
         robot.start(telem_rate=args.telem_rate)
         if args.preflight_only:
             return Task2DebugProgram(robot).run()
-        return Task2Program(robot).run()
+        return run_tasks(robot, f'task2-{args.variant}')
     except KeyboardInterrupt:
         print('\n[Task2] Interrupted')
         return 130

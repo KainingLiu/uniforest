@@ -39,6 +39,8 @@ from protocol.commands import (
     encode_stepper_move_dual, encode_stepper_move_dual2, encode_stepper_set_pos,
     encode_stepper_move_dual3,
     encode_set_telem_rate,
+    STEPPER_DEFAULT_START_DELAY, STEPPER_DEFAULT_TARGET_DELAY,
+    STEPPER_DEFAULT_ACCEL_STEPS,
 )
 
 class Transport:
@@ -406,8 +408,9 @@ class Transport:
     def stepper_move_dual(self, m1: int, steps1: int, dir1: int,
                           m2: int, steps2: int, dir2: int,
                           m2_offset: int = 0,
-                          start_delay: int = 1000, target_delay: int = 83,
-                          accel_steps: int = 400) -> bool:
+                          start_delay: int = STEPPER_DEFAULT_START_DELAY,
+                          target_delay: int = STEPPER_DEFAULT_TARGET_DELAY,
+                          accel_steps: int = STEPPER_DEFAULT_ACCEL_STEPS) -> bool:
         """Launch dual-motor overlapping move."""
         from .commands import encode_stepper_move_dual
         return self.send(CMD_STEPPER_MOVE_DUAL,
@@ -422,8 +425,9 @@ class Transport:
                            m_ph: int, steps_ph1: int, dir_ph1: int,
                            steps_ph2: int, dir_ph2: int,
                            ph2_offset: int,
-                           start_delay: int = 1000, target_delay: int = 83,
-                           accel_steps: int = 400) -> bool:
+                           start_delay: int = STEPPER_DEFAULT_START_DELAY,
+                           target_delay: int = STEPPER_DEFAULT_TARGET_DELAY,
+                           accel_steps: int = STEPPER_DEFAULT_ACCEL_STEPS) -> bool:
         """Launch dual-motor move with mid-move direction change."""
         from .commands import encode_stepper_move_dual2
         return self.send(CMD_STEPPER_MOVE_DUAL2,
@@ -439,8 +443,9 @@ class Transport:
             steps_lead2: int, dir_lead2: int,
             m_other: int, steps_other: int, dir_other: int,
             other_offset: int, lead2_offset: int,
-            start_delay: int = 1000, target_delay: int = 83,
-            accel_steps: int = 400) -> bool:
+            start_delay: int = STEPPER_DEFAULT_START_DELAY,
+            target_delay: int = STEPPER_DEFAULT_TARGET_DELAY,
+            accel_steps: int = STEPPER_DEFAULT_ACCEL_STEPS) -> bool:
         """Launch a cross-triggered three-segment dual-motor move."""
         return self.send(
             CMD_STEPPER_MOVE_DUAL3,

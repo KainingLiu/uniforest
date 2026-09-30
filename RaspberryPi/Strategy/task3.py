@@ -1,0 +1,543 @@
+"""Task3: Tag6 alignment, building, and post-Build return (old steps 15-17)."""
+
+from collections import deque
+from dataclasses import dataclass
+from enum import Enum, auto
+from statistics import median
+import time
+
+from .competition import TaskControl, FirstTaskConfig, _Pid
+from .common import VisualAlignmentUnavailable, report_visual_fallback
+from control.chassis import NORMAL_DISTANCE_MOVE_SPEED_MM_S, LONG_DISTANCE_MOVE_SPEED_MM_S
+
+
+class Task3State(Enum):
+    STARTUP = auto()
+    READY = auto()
+    TAG6_ALIGN = auto()
+    POST_TAG6_LATERAL = auto()
+    BUILDING_ALIGN = auto()
+    BUILD = auto()
+    POST_BUILD_REVERSE = auto()
+    POST_BUILD_TURN = auto()
+    POST_BUILD_ROUTE = auto()
+    POST_BUILD_LEFT_WALL = auto()
+    FINISHED = auto()
+    FAULT = auto()
+
+
+@dataclass(frozen=True)
+class Task3Config(FirstTaskConfig):
+    delivery_tag_vision_stale_s: float = 0.7
+    delivery_tag_lost_timeout_s: float = 2.0
+    build_tag_id: int = 6
+    build_tag_distance_mm: float = FirstTaskConfig().delivery_tag_distance_mm
+    build_tag_heading_target_cw_deg: float = 180.0
+    build_tag_distance_tolerance_mm: float = 8.0
+    build_tag_lateral_tolerance_mm: float = 8.0
+    build_tag_heading_tolerance_deg: float = (
+        FirstTaskConfig().delivery_heading_tolerance_deg)
+    build_tag_fine_gain_scale: float = (
+        FirstTaskConfig().delivery_tag_fine_gain_scale)
+    build_tag_vision_stale_s: float = 0.7
+    build_tag_lost_timeout_s: float = 2.0
+    # Tag6 is approached after a long straight run. Slow the far-field
+    # profile and enter deceleration earlier without changing final tolerances.
+    delivery_tag_fast_forward_mm_s: float = 260.0
+    delivery_tag_fast_lateral_mm_s: float = 200.0
+    delivery_tag_min_linear_mm_s: float = 100.0
+    delivery_tag_slowdown_distance_mm: float = 140.0
+    delivery_tag_slowdown_lateral_mm: float = 100.0
+    delivery_tag_creep_distance_mm: float = 35.0
+    delivery_tag_creep_lateral_mm: float = 25.0
+    post_tag6_lateral_right_mm: float = 100.0
+    post_tag6_lateral_direction: str = 'right'
+    post_tag6_lateral_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
+    building_target_x_mm: float = 0.0
+    # Z target is the horizontal robot-to-building distance at which Build
+    # places correctly.  With the cube camera a lower top edge means nearer.
+    building_target_z_mm: float = 75.0
+    # Inverse-row Z model: z = building_z_scale / top_row.  The scale comes
+    # from one measured pose where the building top edge sat at image row 82.4
+    # while the robot was 132.8 mm away, so the scale is 132.8*82.4.  The Z
+    # target above then corresponds to the top edge around row scale/75 ~= 146,
+    # i.e. the upper-middle part of the frame.
+    building_z_scale_mm_px: float = 132.8 * 82.4
+    # Lateral pixels convert with the same calibrated focal length and optical
+    # center as camera_calib.json for the cube camera.
+    building_reference_fx_px: float = 331.93
+    building_reference_cx_px: float = 320.0
+    # Forward/back creep: inside this remaining Z error the approach slows to
+    # the creep band so the 100 mm/s static-friction floor cannot overshoot
+    # the +/-6 mm acceptance window and set up a forward/back limit cycle.
+    building_z_creep_start_mm: float = 30.0
+    building_z_creep_speed_mm_s: float = 90.0
+    building_z_creep_min_mm_s: float = 60.0
+    # Building contours vary with occlusion and camera pitch. Keep the
+    # geometric gate permissive; position and multi-frame confirmation still
+    # reject isolated orange cube candidates.
+    building_min_confidence: float = 35.0
+    building_min_height_width_ratio: float = 0.35
+    building_max_height_width_ratio: float = 2.20
+    building_x_tolerance_mm: float = 3.0
+    building_z_tolerance_mm: float = 6.0
+    building_heading_tolerance_deg: float = 2.4
+    building_x_deadband_mm: float = 1.0
+    building_z_deadband_mm: float = 2.0
+    building_heading_deadband_deg: float = 0.5
+    building_confirm_frames: int = 3
+    building_median_frames: int = 5
+    building_align_timeout_s: float = 7.0
+    building_lost_timeout_s: float = 4.0
+    building_vision_stale_s: float = 0.7
+    building_track_max_x_jump_mm: float = 50.0
+    building_track_max_z_jump_mm: float = 60.0
+    building_track_lock_frames: int = 2
+    building_control_period_s: float = 0.05
+    building_forward_kp: float = 1.5
+    building_forward_ki: float = 0.01
+    building_forward_kd: float = 0.02
+    building_lateral_kp: float = 1.8
+    building_lateral_ki: float = 0.01
+    building_lateral_kd: float = 0.02
+    building_heading_kp: float = 1.5
+    building_heading_ki: float = 0.02
+    building_heading_kd: float = 0.03
+    building_linear_integral_limit: float = 150.0
+    building_heading_integral_limit: float = 100.0
+    building_max_forward_mm_s: float = 250.0
+    building_max_lateral_mm_s: float = 250.0
+    building_max_yaw_deg_s: float = 30.0
+    # Static-friction floor for starting motion. Required for pure lateral
+    # commands (mecanum rollers) and far forward/back approach; once the
+    # chassis is rolling the building_z_* creep band lets forward speed drop
+    # near the target instead of slamming every frame and overshooting.
+    building_min_linear_mm_s: float = 100.0
+    building_far_linear_mm_s: float = 150.0
+    building_min_yaw_deg_s: float = 6.0
+    # Soften command changes; the accel limiter still allows a smooth stop as
+    # an axis enters its acceptance window.
+    building_linear_accel_mm_s2: float = 1000.0
+    building_yaw_accel_deg_s2: float = 60.0
+    post_build_reverse_mm: float = 100.0
+    post_build_reverse_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
+    post_build_turn_cw_deg: float = 180.0
+    post_build_route_distance_mm: float = 2500.0
+    post_build_route_speed_mm_s: float = LONG_DISTANCE_MOVE_SPEED_MM_S
+
+@dataclass(frozen=True)
+class Task3_2Config(Task3Config):
+    post_tag6_lateral_right_mm: float = 400.0
+    post_build_route_distance_mm: float = 2200.0
+
+
+@dataclass(frozen=True)
+class Task3_3Config(Task3Config):
+    post_tag6_lateral_right_mm: float = 500.0
+    post_tag6_lateral_direction: str = 'left'
+    post_build_route_distance_mm: float = 3000.0
+
+
+class Task3Program(TaskControl):
+    TASK_LABEL = 'task3-1'
+
+    def __init__(self, robot, config: Task3Config = Task3Config(), *, context=None):
+        super().__init__(robot, config, context=context)
+        self.state = Task3State.STARTUP
+
+    def _preflight(self):
+        self._wait_ready()
+        if self.context is None:
+            raise RuntimeError('Task3 requires a TaskContext with build-approach heading')
+        handoff = self.context.take_build_approach()
+        self._heading_zero_deg = handoff.heading_zero_deg
+        self.state = Task3State.READY
+        print(f'[{self.TASK_LABEL}] Heading zero inherited from {handoff.source_task}: '
+              f'{self._heading_zero_deg:+.1f} deg')
+
+    def _run_build_phase(self):
+        self._check_active()
+        self._run_build_alignment_and_action(chassis_followup=self._run_post_build_route)
+
+    def _run_mission(self):
+        cfg = self.config
+        self.state = Task3State.TAG6_ALIGN
+        self.robot.reset_field_localization_filter()
+        self._align_delivery_tag_or_continue(
+            tag_id=cfg.build_tag_id,
+            target_distance_mm=cfg.build_tag_distance_mm,
+            heading_target_cw_deg=cfg.build_tag_heading_target_cw_deg,
+            distance_tolerance_mm=cfg.build_tag_distance_tolerance_mm,
+            lateral_tolerance_mm=cfg.build_tag_lateral_tolerance_mm,
+            heading_tolerance_deg=cfg.build_tag_heading_tolerance_deg,
+            fine_gain_scale=cfg.build_tag_fine_gain_scale,
+            vision_stale_s=cfg.build_tag_vision_stale_s,
+            lost_timeout_s=cfg.build_tag_lost_timeout_s,
+            fine_align_enabled=False,
+            stop_axes_in_tolerance=True,
+            independent_heading=True,
+        )
+        self._run_build_phase()
+
+    def _building_from_result(self, result, locked_position=None):
+        cfg = self.config
+        if (result is None
+                or time.time() - result.timestamp
+                > cfg.building_vision_stale_s):
+            return None
+        candidates = [
+            block for block in result.all_blocks
+            if block.color_name.casefold() == 'orange'
+            and block.confidence >= cfg.building_min_confidence
+            and cfg.building_min_height_width_ratio
+            <= getattr(block, 'height_width_ratio', 0.0)
+            <= cfg.building_max_height_width_ratio
+        ]
+        if not candidates:
+            return None
+        if locked_position is not None:
+            previous_x, previous_z = locked_position
+            tracked = [
+                block for block in candidates
+                if abs(self._building_top_reference(block)[0] - previous_x)
+                    <= cfg.building_track_max_x_jump_mm
+                and abs(self._building_top_reference(block)[1] - previous_z)
+                    <= cfg.building_track_max_z_jump_mm
+            ]
+            if tracked:
+                return min(tracked, key=lambda block:
+                           (self._building_top_reference(block)[0] - previous_x) ** 2
+                           + (self._building_top_reference(block)[1] - previous_z) ** 2)
+            return None
+        return min(candidates, key=lambda block:
+                   (self._building_top_reference(block)[0]
+                    - cfg.building_target_x_mm) ** 2
+                   + (self._building_top_reference(block)[1]
+                      - cfg.building_target_z_mm) ** 2)
+
+    def _building_top_reference(self, block):
+        """Return X/Z measured from the visible upper edge of the contour."""
+        quad = getattr(block, 'quad', None)
+        if quad is None or len(quad) != 4:
+            return block.x, block.z
+        cfg = self.config
+        # order_corners() puts upper-left and upper-right at indices 0/1.
+        top_u = (float(quad[0][0]) + float(quad[1][0])) * 0.5
+        top_v = (float(quad[0][1]) + float(quad[1][1])) * 0.5
+        # The upper edge moves downward as the robot approaches, so Z must
+        # decrease with top_v.  Normalize by the measured scale constant.
+        z_top = cfg.building_z_scale_mm_px / max(top_v, 1.0)
+        x_top = ((top_u - cfg.building_reference_cx_px)
+                 * z_top / cfg.building_reference_fx_px)
+        return x_top, z_top
+
+    @staticmethod
+    def _building_motion_command(pid_output, error, *, deadband,
+                                 minimum, maximum, kick_error=25.0):
+        """Clamp every non-zero correction above chassis static friction."""
+        if abs(error) <= deadband:
+            return 0.0
+        value = max(-maximum, min(maximum, pid_output))
+        if abs(value) < minimum:
+            value = minimum if value >= 0.0 else -minimum
+        return max(-maximum, min(maximum, value))
+
+    @staticmethod
+    def _building_z_command(pid_output, z_error, cfg):
+        """Floor the forward/back command, but drop to a creep band near zero.
+
+        A flat 100 mm/s floor near the +/-6 mm acceptance window makes the
+        robot overshoot it every control tick and oscillate.  Inside the creep
+        start distance the command is clamped to a smaller band so the chassis
+        can glide to a stop inside the window; the 100 mm/s floor still starts
+        motion from standstill when far away.
+        """
+        if abs(z_error) <= cfg.building_z_creep_start_mm:
+            minimum = cfg.building_z_creep_min_mm_s
+            maximum = cfg.building_z_creep_speed_mm_s
+        else:
+            minimum = cfg.building_min_linear_mm_s
+            maximum = cfg.building_max_forward_mm_s
+        if abs(z_error) <= cfg.building_z_deadband_mm:
+            return 0.0
+        value = max(-maximum, min(maximum, pid_output))
+        if abs(value) < minimum:
+            value = minimum if value >= 0.0 else -minimum
+        return max(-maximum, min(maximum, value))
+
+    def _align_building(self):
+        cfg = self.config
+        forward_pid = _Pid(
+            cfg.building_forward_kp, cfg.building_forward_ki,
+            cfg.building_forward_kd, cfg.building_linear_integral_limit,
+            cfg.building_max_forward_mm_s)
+        lateral_pid = _Pid(
+            cfg.building_lateral_kp, cfg.building_lateral_ki,
+            cfg.building_lateral_kd, cfg.building_linear_integral_limit,
+            cfg.building_max_lateral_mm_s)
+        heading_pid = _Pid(
+            cfg.building_heading_kp, cfg.building_heading_ki,
+            cfg.building_heading_kd, cfg.building_heading_integral_limit,
+            cfg.building_max_yaw_deg_s)
+        samples = deque(maxlen=cfg.building_median_frames)
+        started = time.monotonic()
+        last_seen = started
+        last_update = started
+        first_frame_after = time.time()
+        last_frame_timestamp = None
+        confirmed = 0
+        vx = vy = wz = 0.0
+        locked_position = None
+        pending_position = None
+        lock_frames = 0
+        set_profile = self._set_cube_profile
+        if set_profile is not None:
+            # Building align must see the bright top surface so the tracked
+            # upper edge is the real top of the stack, not the front-face
+            # boundary that biases Z low and forces a spurious forward/back.
+            set_profile('building')
+        print(f'[{self.TASK_LABEL}] Building visual alignment: '
+              f'x={cfg.building_target_x_mm:+.1f} mm, '
+              f'z={cfg.building_target_z_mm:.1f} mm')
+        try:
+            while time.monotonic() - started < cfg.building_align_timeout_s:
+                self._check_active()
+                now = time.monotonic()
+                result = self.robot.vision_result
+                tracking_position = (locked_position
+                                     if locked_position is not None
+                                     else pending_position)
+                block = self._building_from_result(result, tracking_position)
+                frame_timestamp = result.timestamp if result is not None else None
+                if (frame_timestamp is not None
+                        and frame_timestamp <= first_frame_after):
+                    block = None
+                if (block is not None
+                        and frame_timestamp == last_frame_timestamp):
+                    time.sleep(cfg.building_control_period_s)
+                    continue
+                if frame_timestamp is not None:
+                    last_frame_timestamp = frame_timestamp
+
+                if block is None:
+                    confirmed = 0
+                    samples.clear()
+                    vx = vy = wz = 0.0
+                    for pid in (forward_pid, lateral_pid, heading_pid):
+                        pid.reset()
+                    self.robot.chassis.set_speeds([0, 0, 0, 0])
+                    if now - last_seen >= cfg.building_lost_timeout_s:
+                        raise VisualAlignmentUnavailable(
+                            'three-layer orange building lost before Build')
+                    time.sleep(cfg.building_control_period_s)
+                    continue
+
+                last_seen = now
+                ref_x, ref_z = self._building_top_reference(block)
+                if locked_position is None:
+                    if pending_position is None:
+                        pending_position = (ref_x, ref_z)
+                        lock_frames = 1
+                    else:
+                        pending_position = (ref_x, ref_z)
+                        lock_frames += 1
+                    if lock_frames >= cfg.building_track_lock_frames:
+                        locked_position = pending_position
+                        pending_position = None
+                samples.append((ref_x, ref_z))
+                x_mm = median(item[0] for item in samples)
+                z_mm = median(item[1] for item in samples)
+                # Gate the next candidate against the filtered position so a
+                # single top-edge spike cannot yank the tracker sideways.
+                locked_position = (x_mm, z_mm)
+                x_error = x_mm - cfg.building_target_x_mm
+                z_error = z_mm - cfg.building_target_z_mm
+                heading_error = self._heading_error(
+                    cfg.build_tag_heading_target_cw_deg)
+                x_ok = abs(x_error) <= cfg.building_x_tolerance_mm
+                z_ok = abs(z_error) <= cfg.building_z_tolerance_mm
+                heading_ok = (
+                    abs(heading_error)
+                    <= cfg.building_heading_tolerance_deg)
+                if x_ok and z_ok and heading_ok:
+                    self.robot.chassis.set_speeds([0, 0, 0, 0])
+                    vx = vy = wz = 0.0
+                    confirmed += 1
+                    print(f'[{self.TASK_LABEL}] Building aligned '
+                          f'{confirmed}/{cfg.building_confirm_frames}: '
+                          f'x={x_mm:+.1f} mm, z={z_mm:.1f} mm, '
+                          f'gyro={heading_error:+.1f} deg')
+                    if confirmed >= cfg.building_confirm_frames:
+                        return
+                else:
+                    confirmed = 0
+                    dt = max(0.001, min(0.2, now - last_update))
+                    # Lateral alignment has priority: while X is out of
+                    # tolerance, hold Z still and re-center X; once X is in
+                    # tolerance, hold X and close Z.  Each axis only moves when
+                    # it is actually outside its own window, so an aligned axis
+                    # is never re-kicked at minimum speed, and an axis that
+                    # later drifts out is corrected again (no one-shot latch).
+                    if not x_ok:
+                        forward_pid.reset()
+                        desired_vx = 0.0
+                        if abs(x_error) <= cfg.building_x_deadband_mm:
+                            lateral_pid.reset()
+                            desired_vy = 0.0
+                        else:
+                            desired_vy = lateral_pid.update(x_error, dt)
+                            desired_vy = self._building_motion_command(
+                                desired_vy, x_error,
+                                deadband=cfg.building_x_deadband_mm,
+                                minimum=cfg.building_min_linear_mm_s,
+                                maximum=cfg.building_max_lateral_mm_s)
+                    else:
+                        lateral_pid.reset()
+                        desired_vy = 0.0
+                        if abs(z_error) <= cfg.building_z_deadband_mm:
+                            forward_pid.reset()
+                            desired_vx = 0.0
+                        elif not z_ok:
+                            # Camera Z is positive forward (away from the
+                            # camera), matching chassis +vx, so a positive
+                            # error commands forward motion toward the target.
+                            desired_vx = forward_pid.update(z_error, dt)
+                            desired_vx = self._building_z_command(
+                                desired_vx, z_error, cfg)
+                        else:
+                            forward_pid.reset()
+                            desired_vx = 0.0
+                    if (abs(heading_error)
+                            <= cfg.building_heading_deadband_deg):
+                        heading_pid.reset()
+                        desired_wz = 0.0
+                    elif not heading_ok:
+                        desired_wz = heading_pid.update(heading_error, dt)
+                        desired_wz = self._minimum_command(
+                            desired_wz, cfg.building_min_yaw_deg_s)
+                    else:
+                        heading_pid.reset()
+                        desired_wz = 0.0
+                    vx = self._slew_command(
+                        desired_vx, vx,
+                        cfg.building_linear_accel_mm_s2, dt)
+                    vy = self._slew_command(
+                        desired_vy, vy,
+                        cfg.building_linear_accel_mm_s2, dt)
+                    wz = self._slew_command(
+                        desired_wz, wz,
+                        cfg.building_yaw_accel_deg_s2, dt)
+                    rpm = self.robot.chassis.mecanum_rpm(
+                        vx / 10.0, vy / 10.0, wz)
+                    self.robot.chassis.set_speeds(rpm)
+                    print(f'[{self.TASK_LABEL}] Building PID: '
+                          f'x={x_mm:+.1f} mm, z={z_mm:.1f} mm, '
+                          f'gyro={heading_error:+.1f} deg; '
+                          f'vx={vx:+.0f}, vy={vy:+.0f} mm/s, '
+                          f'wz={wz:+.1f} deg/s')
+                last_update = now
+                time.sleep(cfg.building_control_period_s)
+        finally:
+            self.robot.chassis.set_speeds([0, 0, 0, 0])
+            if set_profile is not None:
+                set_profile('default')
+        raise VisualAlignmentUnavailable('building visual alignment timed out')
+
+    def _align_building_or_continue(self) -> bool:
+        try:
+            self._align_building()
+            return True
+        except VisualAlignmentUnavailable as exc:
+            self._check_active()
+            report_visual_fallback(self.robot, self.TASK_LABEL, 'building alignment', exc)
+            return False
+
+    def _run_build_alignment_and_action(self, *, chassis_followup=None):
+        """Approach the building after Tag6 and run the monitored Build action."""
+        cfg = self.config
+        if cfg.post_tag6_lateral_right_mm > 0.0:
+            self.state = Task3State.POST_TAG6_LATERAL
+            print(f'[{self.TASK_LABEL}] Move {cfg.post_tag6_lateral_direction} '
+                  f'{cfg.post_tag6_lateral_right_mm:.0f} mm at '
+                  f'{cfg.post_tag6_lateral_speed_mm_s:.0f} mm/s after Tag6')
+            self._checked_move(
+                cfg.post_tag6_lateral_direction, cfg.post_tag6_lateral_right_mm,
+                cfg.post_tag6_lateral_speed_mm_s)
+
+        self.state = Task3State.BUILDING_ALIGN
+        self.robot.reset_vision_filter()
+        building_aligned = self._align_building_or_continue()
+
+        self.state = Task3State.BUILD
+        if building_aligned:
+            print(f'[{self.TASK_LABEL}] Building aligned; running Build')
+        else:
+            print(f'[{self.TASK_LABEL}] Building alignment skipped; '
+                  'running Build')
+        followup = (None if chassis_followup is None
+                    else self._chassis_followup(chassis_followup))
+        self.robot.actions.build(chassis_followup=followup)
+        print(f'[{self.TASK_LABEL}] Build complete')
+
+    def _run_post_build_route(self):
+        cfg = self.config
+        print(f'[{self.TASK_LABEL}] Build released; starting chassis route')
+        self.state = Task3State.POST_BUILD_REVERSE
+        print(f'[{self.TASK_LABEL}] Reverse {cfg.post_build_reverse_mm:.0f} mm '
+              'after Build')
+        self._checked_move(
+            'backward', cfg.post_build_reverse_mm,
+            cfg.post_build_reverse_speed_mm_s)
+
+        self.state = Task3State.POST_BUILD_TURN
+        self._check_active()
+        # Use a relative CW turn: a shortest-path absolute-heading command
+        # can choose CCW near the 180-degree boundary after building alignment.
+        self.robot.chassis.turn(
+            cfg.post_build_turn_cw_deg, cfg.delivery_turn_speed_deg_s,
+            hold_ms=0, settle_cycles=1)
+
+        self.state = Task3State.POST_BUILD_ROUTE
+        print(f'[{self.TASK_LABEL}] Left {cfg.post_build_route_distance_mm:.0f} mm '
+              f'at {cfg.post_build_route_speed_mm_s:.0f} mm/s after Build')
+        self._checked_move(
+            'left', cfg.post_build_route_distance_mm,
+            cfg.post_build_route_speed_mm_s)
+
+        self.state = Task3State.POST_BUILD_LEFT_WALL
+        self._drive_until_wall(
+            timeout_s=cfg.far_wall_timeout_s,
+            speed_mm_s=cfg.far_wall_speed_mm_s,
+            direction='left',
+            context='Post-build left wall contact',
+        )
+
+    def run(self) -> int:
+        try:
+            self._preflight()
+            self._run_mission()
+            self._check_active()
+            self.state = Task3State.FINISHED
+            return 0
+        except Exception:
+            self.state = Task3State.FAULT
+            self.robot.transport.emergency_stop()
+            raise
+
+
+class Task3_2Program(Task3Program):
+    TASK_LABEL = 'task3-2'
+
+    def __init__(self, robot, config: Task3_2Config = Task3_2Config(), *, context=None):
+        super().__init__(robot, config, context=context)
+
+
+class Task3_3Program(Task3Program):
+    TASK_LABEL = 'task3-3'
+
+    def __init__(self, robot, config: Task3_3Config = Task3_3Config(), *, context=None):
+        super().__init__(robot, config, context=context)
+
+
+__all__ = ['Task3Config', 'Task3Program', 'Task3State', 'Task3_2Config', 'Task3_2Program',
+           'Task3_3Config', 'Task3_3Program']

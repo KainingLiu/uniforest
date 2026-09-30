@@ -13,10 +13,10 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from vision import CubeDetector
-from Strategy.task2 import Task2Config
+from Strategy.task3 import Task3Config
 
 
-_BUILD_CFG = Task2Config()
+_BUILD_CFG = Task3Config()
 
 
 def top_left_u(quad) -> float:

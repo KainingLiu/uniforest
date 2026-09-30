@@ -110,6 +110,11 @@ STEPPER_VERT  = 1
 STEP_DIR_FORWARD = 0
 STEP_DIR_REVERSE = 1
 
+# Mirror Uniforest_A/Core/Inc/stepper.h; checked against firmware in local tests.
+STEPPER_DEFAULT_START_DELAY = 400
+STEPPER_DEFAULT_TARGET_DELAY = 60
+STEPPER_DEFAULT_ACCEL_STEPS = 400
+
 # ======================= Telemetry Data Structures ============================
 
 @dataclass

@@ -1043,7 +1043,7 @@ class CubeDetector:
 # 独立运行入口
 # ============================================================
 
-if __name__ == "__main__":
+def main():
     import argparse
     import sys
 
@@ -1103,3 +1103,7 @@ if __name__ == "__main__":
         print("\n[退出]")
     finally:
         det.stop()
+
+
+if __name__ == "__main__":
+    main()

@@ -44,7 +44,10 @@ class ProtocolSchemaTests(unittest.TestCase):
         self.assertNotEqual(commands.ACTION_CHASSIS_READY, commands.ACTION_DONE)
 
     def test_firmware_ids_match_schema(self):
-        root = Path(__file__).resolve().parents[2] / 'Uniforest_A/Core'
+        firmware = Path(__file__).resolve().parents[2] / 'Uniforest_A'
+        if not firmware.exists():
+            self.skipTest('A-board source checks run on the development checkout')
+        root = firmware / 'Core'
         header = (root / 'Inc/protocol.h').read_text(encoding='utf-8')
         ids = {name: int(value, 16) for name, value in re.findall(
             r'#define\s+((?:CMD|TELEM)_\w+)\s+(0x[0-9A-Fa-f]+)', header)}

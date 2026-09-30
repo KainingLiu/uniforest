@@ -16,6 +16,7 @@ from control.chassis import (
     NORMAL_DISTANCE_MOVE_ACCEL_MS,
 )
 from .common import TaskStateReporting, minimum_command, slew_command, wrap_angle
+from .common import VisualAlignmentUnavailable, report_visual_fallback
 from .tag_alignment import median_translation, translation_jump
 from .tag_controller import PID as _Pid, TagPidSet, AxisToleranceHold, profiled_command
 from .cube_tracker import CubeTargetTracker, select_tracked_block
@@ -67,11 +68,12 @@ class FirstTaskConfig:
     wall_settle_s: float = 0.0
     stall_startup_grace_s: float = 0.5
     stall_confirm_s: float = 0.3
+    stall_dropout_s: float = 0.08
     pre_grab_stall_startup_grace_s: float = 0.1
     pre_grab_stall_confirm_s: float = 0.15
     pre_grab_wall_settle_s: float = 0.0
     telemetry_stale_s: float = 0.3
-    stall_speed_rpm: int = 35
+    stall_speed_rpm: int = 80
     stall_current_raw: int = 2500
     # Default/lateral-wall confirmation remains the original three-wheel
     # criterion. Forward contact uses the two rear wheel indices explicitly.
@@ -116,7 +118,7 @@ class FirstTaskConfig:
     align_max_speed_mm_s: float = 250.0
     align_fast_speed_mm_s: float = 500.0
     # Shorter approach ramp; retain the near-target breakout speed.
-    align_slowdown_start_mm: float = 120.0
+    align_slowdown_start_mm: float = 150.0
     align_creep_start_mm: float = 30.0
     align_accel_mm_s2: float = 800.0
     # One-frame control feedback avoids commanding motion from an old median
@@ -168,6 +170,11 @@ class FirstTaskConfig:
     delivery_heading_kp: float = 1.5
     delivery_heading_ki: float = 0.02
     delivery_heading_kd: float = 0.03
+    # Tag6 gyro hold uses angular-speed units, independent of visual updates.
+    tag6_heading_kp: float = 6.0
+    tag6_heading_ki: float = 0.0
+    tag6_heading_kd: float = 0.0
+    tag6_heading_control_period_s: float = 0.02
     delivery_tag_linear_integral_limit: float = (
         500.0 * TAG_FOV_RETUNE_SCALE)
     delivery_heading_integral_limit: float = 100.0
@@ -185,27 +192,28 @@ class FirstTaskConfig:
     delivery_tag_linear_accel_mm_s2: float = 300.0
     delivery_heading_yaw_accel_deg_s2: float = 90.0
     post_tag_lateral_right_mm: float = 100.0
+    post_tag_lateral_direction: str = 'right'
     post_tag_lateral_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
     unload_reverse_mm: float = 300.0
     unload_reverse_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
     pre_final_turn_lateral_left_mm: float = 100.0
+    pre_final_turn_lateral_direction: str = 'left'
     pre_final_turn_lateral_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
-    unload_final_turn_cw_deg: float = 180.0
-    unload_final_heading_hold_ms: int = 0
     delivery_linear_accel_ms: int = NORMAL_DISTANCE_MOVE_ACCEL_MS
     long_distance_forward_accel_ms: int = LONG_DISTANCE_FORWARD_ACCEL_MS
 
 
-class CompetitionProgram(TaskStateReporting):
-    """Owns competition flow; hardware details stay in Robot/control modules."""
+class TaskControl(TaskStateReporting):
+    """Shared control procedures; no complete task route is executed here."""
 
     TELEMETRY_WAIT_S = 2.0
-    TASK_LABEL = 'Task1'
+    TASK_LABEL = 'task1-1'
     CUBE_VISION_PIPELINE_VERSION = 'task1-cube-lock-v3'
 
     def __init__(self, robot: Robot,
-                 config: FirstTaskConfig = FirstTaskConfig()):
+                 config: FirstTaskConfig = FirstTaskConfig(), *, context=None):
         self.robot = robot
+        self.context = context
         self.config = config
         self.state = CompetitionState.STARTUP
         self._search_position_mm = 0.0
@@ -219,26 +227,46 @@ class CompetitionProgram(TaskStateReporting):
         self._last_alignment_timed_out = False
         self._alignment_valid_frames = 0
 
-    def _preflight(self):
+    def _check_active(self, *, require_telemetry=True):
+        context = getattr(self, "context", None)
+        if context is not None:
+            context.check_active(require_telemetry=require_telemetry)
+
+    def _wait_ready(self):
+        self._check_active(require_telemetry=False)
         deadline = time.monotonic() + self.TELEMETRY_WAIT_S
         while self.robot.telem is None and time.monotonic() < deadline:
+            self._check_active(require_telemetry=False)
             time.sleep(0.02)
         if self.robot.telem is None:
             raise RuntimeError('A-board telemetry unavailable')
         if not self.robot.has_vision:
-            raise RuntimeError('vision subsystem unavailable')
+            report_visual_fallback(self.robot, self.TASK_LABEL, 'startup',
+                                   'cube camera unavailable; use bounded search')
         if not self.robot.has_field_localization:
-            raise RuntimeError('field localization subsystem unavailable')
+            report_visual_fallback(self.robot, self.TASK_LABEL, 'startup',
+                                   'tag camera unavailable; alignment may be skipped')
 
+        self._check_active()
+
+    def _set_cube_profile(self, profile):
+        if not getattr(self.robot, 'has_vision', True):
+            return
+        setter = getattr(self.robot, 'set_cube_detection_profile', None)
+        if setter is not None:
+            setter(profile)
+
+    def _preflight(self):
+        self._wait_ready()
         self._heading_zero_deg = self.robot.telem.yaw_deg
-        self.state = CompetitionState.READY
-        print('[Competition] Preflight complete; heading zero='
+        self.state = type(self.state).READY
+        print(f'[{self.TASK_LABEL}] Preflight complete; heading zero='
               f'{self._heading_zero_deg:+.1f} deg')
 
     @staticmethod
     def _orange_from_result(result, min_confidence: float,
                             max_age_s: float) -> Optional['BlockInfo']:
-        return CompetitionProgram._block_from_result(
+        return TaskControl._block_from_result(
             result, 'orange', min_confidence, max_age_s)
 
     @staticmethod
@@ -259,7 +287,7 @@ class CompetitionProgram(TaskStateReporting):
     @staticmethod
     def _tracked_orange_from_result(result, reference_x: float,
                                     cfg: FirstTaskConfig):
-        return CompetitionProgram._tracked_block_from_result(
+        return TaskControl._tracked_block_from_result(
             result, 'orange', reference_x, cfg.orange_min_confidence, cfg)
 
     @staticmethod
@@ -315,6 +343,7 @@ class CompetitionProgram(TaskStateReporting):
         last_telem_time = time.monotonic()
         try:
             while time.monotonic() - started < timeout_s:
+                self._check_active()
                 self.robot.chassis.set_speeds(rpm)
                 telem = self.robot.telem
                 elapsed = time.monotonic() - started
@@ -330,7 +359,8 @@ class CompetitionProgram(TaskStateReporting):
                 last_telem_time = time.monotonic()
                 is_stalled = (elapsed >= startup_grace_s
                               and self._stall_sample(telem, cfg, direction))
-                if stall_tracker.update(is_stalled, time.monotonic(), confirm_s):
+                if stall_tracker.update(is_stalled, time.monotonic(), confirm_s,
+                                        dropout_s=cfg.stall_dropout_s):
                     print(f'[{self.TASK_LABEL}] {context} confirmed')
                     return
                 time.sleep(0.01)
@@ -378,6 +408,7 @@ class CompetitionProgram(TaskStateReporting):
         started = last_telem_time = finished_at = None
 
         def press_step():
+            self._check_active()
             nonlocal started, last_telem_time, last_uptime, finished_at
             now = time.monotonic()
             if finished_at is not None:
@@ -394,7 +425,8 @@ class CompetitionProgram(TaskStateReporting):
                 stalled = (now - started >= cfg.pre_grab_stall_startup_grace_s
                            and self._stall_sample(telem, cfg))
                 contact = tracker.update(
-                    stalled, now, cfg.pre_grab_stall_confirm_s)
+                    stalled, now, cfg.pre_grab_stall_confirm_s,
+                    dropout_s=cfg.stall_dropout_s)
             if now - last_telem_time > cfg.telemetry_stale_s:
                 raise RuntimeError('telemetry lost during grab wall press')
             timed_out = now - started >= cfg.near_wall_timeout_s
@@ -426,9 +458,10 @@ class CompetitionProgram(TaskStateReporting):
 
     def _checked_move(self, direction: str, distance_mm: float,
                       speed_mm_s: float, *, accel_ms: Optional[int] = None):
+        self._check_active()
         if accel_ms is None:
             accel_ms = self.config.delivery_linear_accel_ms
-            if (direction.casefold() in ('forward', 'left')
+            if (direction.casefold() in ('forward', 'backward', 'left', 'right')
                     and abs(speed_mm_s - LONG_DISTANCE_MOVE_SPEED_MM_S) < 1e-6):
                 accel_ms = self.config.long_distance_forward_accel_ms
         result = self.robot.move_chassis(
@@ -455,6 +488,19 @@ class CompetitionProgram(TaskStateReporting):
 
     def _capture_lateral_origin(self):
         return self.robot.chassis.capture_motor_positions()
+
+    def _unload_cubes(self):
+        """Shared hatch unloading: open 300 ms, reverse, close without waiting."""
+        cfg = self.config
+        self._check_active()
+        print(f'[{self.TASK_LABEL}] Unload: open hatches')
+        self.robot.actions.hatch_open(settle_ms=300)
+        self._checked_move(
+            'backward', cfg.unload_reverse_mm, cfg.unload_reverse_speed_mm_s)
+        self._check_active()
+        print(f'[{self.TASK_LABEL}] Unload: close hatches')
+        self.robot.actions.hatch_close(settle_ms=0)
+        self._check_active()
 
     def _measure_lateral_displacement_mm(self, origin) -> float:
         return self.robot.chassis.lateral_displacement_mm(origin)
@@ -506,6 +552,7 @@ class CompetitionProgram(TaskStateReporting):
               f'{search_limit_mm:.0f} mm')
         try:
             while time.monotonic() < deadline:
+                self._check_active()
                 self.robot.chassis.set_speeds(rpm)
                 result = self.robot.vision_result
                 block = tracker.update(
@@ -665,6 +712,7 @@ class CompetitionProgram(TaskStateReporting):
             deadline = started + (cfg.align_timeout_s
                                   if timeout_s is None else timeout_s)
             while time.monotonic() - started < (deadline - started):
+                self._check_active()
                 now = time.monotonic()
                 result = self.robot.vision_result
                 frame_timestamp = result.timestamp if result is not None else None
@@ -824,47 +872,6 @@ class CompetitionProgram(TaskStateReporting):
             return True
         raise RuntimeError(f'{color_name} visual alignment timed out')
 
-    def _run_first_task(self):
-        cfg = self.config
-        set_profile = getattr(
-            self.robot, 'set_cube_detection_profile', None)
-        if set_profile is not None:
-            set_profile('default')
-        print(f'[{self.TASK_LABEL}] Cube vision pipeline '
-              f'{self.CUBE_VISION_PIPELINE_VERSION}')
-        self.state = CompetitionState.WALL_APPROACH
-        print('[Task1] Slow approach until motor stall')
-        self._drive_until_wall()
-        time.sleep(cfg.wall_settle_s)
-        self._recalibrate_heading_zero()
-        self.robot.reset_vision_filter()
-
-        self._search_position_mm = 0.0
-        lateral_origin = self._capture_lateral_origin()
-        self._orange_recovery = OrangeSearchRecovery(origin=lateral_origin)
-        reverse_done = False
-
-        def start_delivery():
-            nonlocal reverse_done
-            # Freeze the search measurement before any delivery movement.
-            self._cube_lateral_displacement_mm = (
-                self._measure_lateral_displacement_mm(lateral_origin))
-            if cfg.delivery_forward_base_mm <= self._cube_lateral_displacement_mm:
-                raise RuntimeError('delivery forward distance must be positive')
-            self._run_delivery_reverse()
-            reverse_done = True
-
-        self._collect_orange_with_count_check(
-            cfg.target_cube_count, self._grab_task1_orange,
-            chassis_followup=start_delivery)
-
-        if not reverse_done:
-            self._cube_lateral_displacement_mm = (
-                self._measure_lateral_displacement_mm(lateral_origin))
-        print('[Task1] Encoder-measured cube lateral displacement: '
-              f'{self._cube_lateral_displacement_mm:+.0f} mm '
-              '(right positive)')
-        return reverse_done
 
     def _collect_orange_with_count_check(self, initial_target, grab_one,
                                        *, chassis_followup=None):
@@ -881,7 +888,7 @@ class CompetitionProgram(TaskStateReporting):
                     return
             self.state = type(self.state).COUNT_CHECK
             count = self.robot.check_carried_cube_count(
-                chassis_followup=chassis_followup)
+                chassis_followup=chassis_followup, allow_visual_failure=True)
             if count is None or count == 3:
                 print(f'[{self.TASK_LABEL}] Carried count={count}; continue route')
                 return
@@ -890,20 +897,6 @@ class CompetitionProgram(TaskStateReporting):
             remaining = 3 - count
             print(f'[{self.TASK_LABEL}] Carried count={count}; refill {remaining}')
 
-    def _grab_task1_orange(self):
-        cfg = self.config
-        while True:
-            self.state = CompetitionState.ORANGE_SEARCH
-            block = self._find_orange()
-            self.state = CompetitionState.ORANGE_ALIGN
-            if self._align_orange(block):
-                break
-        self.state = CompetitionState.GRAB
-        print('[Task1] Orange aligned; running Grap3 with short wall press')
-        self._grab_with_wall_press(
-            self.robot.actions.grap3, recalibrate_heading_zero=True)
-        self.robot.reset_vision_filter()
-        time.sleep(cfg.post_grab_settle_s)
 
     @staticmethod
     def _wrap_angle(angle_deg: float) -> float:
@@ -924,6 +917,7 @@ class CompetitionProgram(TaskStateReporting):
                          hold_ms: int = 0,
                          settle_cycles: int = 1):
         """Turn to an absolute clockwise heading from the startup zero."""
+        self._check_active()
         error_ccw_deg = self._heading_error(target_cw_deg)
         clockwise_delta_deg = -error_ccw_deg
         print(f'[{self.TASK_LABEL}] Gyro heading target '
@@ -967,10 +961,10 @@ class CompetitionProgram(TaskStateReporting):
             lost_timeout_s: Optional[float] = None,
             fine_align_enabled: bool = True,
             stop_axes_in_tolerance: bool = False,
-            translation_only_completion: bool = False):
-        """Align translation and yaw; optionally finish on translation alone."""
-        if translation_only_completion and fine_align_enabled:
-            raise ValueError('translation-only completion requires coarse alignment')
+            independent_heading: bool = False):
+        """Use a tag for translation while holding startup-relative yaw."""
+        if independent_heading and (fine_align_enabled or not stop_axes_in_tolerance):
+            raise ValueError('independent heading requires coarse axis-hold alignment')
         cfg = self.config
         tag_id = cfg.delivery_tag_id if tag_id is None else tag_id
         target_distance_mm = (cfg.delivery_tag_distance_mm
@@ -1007,9 +1001,9 @@ class CompetitionProgram(TaskStateReporting):
             cfg.delivery_tag_linear_integral_limit,
             cfg.delivery_tag_max_lateral_mm_s)
         heading_pid = _Pid(
-            cfg.delivery_heading_kp,
-            cfg.delivery_heading_ki,
-            cfg.delivery_heading_kd,
+            cfg.tag6_heading_kp if independent_heading else cfg.delivery_heading_kp,
+            cfg.tag6_heading_ki if independent_heading else cfg.delivery_heading_ki,
+            cfg.tag6_heading_kd if independent_heading else cfg.delivery_heading_kd,
             cfg.delivery_heading_integral_limit,
             cfg.delivery_heading_max_yaw_deg_s)
         pids = TagPidSet(distance_pid, lateral_pid, heading_pid)
@@ -1019,6 +1013,11 @@ class CompetitionProgram(TaskStateReporting):
         first_valid_frame_after = time.time()
         last_seen = started
         last_update = started
+        last_heading_update = started
+        next_translation_update = started
+        translation_ready = False
+        control_period = (cfg.tag6_heading_control_period_s if independent_heading
+                          else cfg.delivery_tag_control_period_s)
         last_frame_timestamp = None
         last_translation = None
         relock_candidate = None
@@ -1028,10 +1027,30 @@ class CompetitionProgram(TaskStateReporting):
         fine_started = None
         confirmed = 0
         vx = vy = wz = 0.0
+
+        def update_heading(now):
+            # Same command owner as translation; no background motor writer.
+            nonlocal wz, last_heading_update, confirmed
+            error = self._heading_error(heading_target_cw_deg)
+            if abs(error) > heading_tolerance_deg:
+                confirmed = 0
+            heading_dt = max(0.001, min(0.2, now - last_heading_update))
+            if abs(error) <= cfg.delivery_heading_deadband_deg:
+                heading_pid.reset()
+                wz = 0.0
+            else:
+                wz = self._slew_command(
+                    heading_pid.update(error, heading_dt), wz,
+                    cfg.delivery_heading_yaw_accel_deg_s2, heading_dt)
+            last_heading_update = now
+            self.robot.chassis.set_speeds(self.robot.chassis.mecanum_rpm(
+                vx / 10.0, vy / 10.0, wz))
+
         print(f'[{self.TASK_LABEL}] Align tag {tag_id} at '
               f'{target_distance_mm:.0f} mm')
         try:
             while time.monotonic() - started < cfg.delivery_tag_align_timeout_s:
+                self._check_active()
                 now = time.monotonic()
                 pose = self.robot.field_pose
                 observation = self._delivery_tag_from_pose(
@@ -1041,15 +1060,22 @@ class CompetitionProgram(TaskStateReporting):
                         and pose.timestamp <= first_valid_frame_after):
                     observation = None
                 frame_timestamp = pose.timestamp if pose is not None else None
-                if (observation is not None
-                        and frame_timestamp is not None
-                        and frame_timestamp == last_frame_timestamp):
-                    time.sleep(cfg.delivery_tag_control_period_s)
+                if (observation is not None and (
+                        frame_timestamp == last_frame_timestamp
+                        or (independent_heading and now < next_translation_update))):
+                    # Cached visual data never advances confirmation or the
+                    # translation filter. Fresh IMU data still corrects yaw.
+                    # Rejected frames must stay stopped until visual relock.
+                    if independent_heading and translation_ready:
+                        update_heading(now)
+                    time.sleep(control_period)
                     continue
                 if frame_timestamp is not None:
                     last_frame_timestamp = frame_timestamp
 
                 if observation is None:
+                    translation_ready = False
+                    last_heading_update = now
                     confirmed = 0
                     fine_started = None
                     for axis in axis_holds:
@@ -1061,12 +1087,17 @@ class CompetitionProgram(TaskStateReporting):
                     pids.reset()
                     self.robot.chassis.set_speeds([0, 0, 0, 0])
                     if now - last_seen >= lost_timeout_s:
-                        raise RuntimeError(
+                        raise VisualAlignmentUnavailable(
                             f'tag {tag_id} lost during delivery alignment')
-                    time.sleep(cfg.delivery_tag_control_period_s)
+                    time.sleep(control_period)
                     continue
 
                 last_seen = now
+                if independent_heading:
+                    # Keep the existing 50 ms visual-control cadence; the
+                    # 20 ms scheduler may quantize individual update times.
+                    while next_translation_update <= now:
+                        next_translation_update += cfg.delivery_tag_control_period_s
                 dt = max(0.001, min(0.2, now - last_update))
                 raw_distance_mm = observation.distance_m * 1000.0
                 raw_lateral_mm = observation.lateral_m * 1000.0
@@ -1077,6 +1108,8 @@ class CompetitionProgram(TaskStateReporting):
                         cfg.delivery_tag_max_distance_jump_mm,
                         cfg.delivery_tag_max_lateral_jump_mm)
                     if jump is not None:
+                        translation_ready = False
+                        last_heading_update = now
                         distance_jump, lateral_jump = jump
                         for axis in axis_holds:
                             axis.interrupt_confirmation()
@@ -1107,7 +1140,7 @@ class CompetitionProgram(TaskStateReporting):
                             relock_count = 0
                             print(f'[{self.TASK_LABEL}] '
                                   'Tag translation relocked')
-                        time.sleep(cfg.delivery_tag_control_period_s)
+                        time.sleep(control_period)
                         continue
                 last_translation = (raw_distance_mm, raw_lateral_mm)
                 relock_candidate = None
@@ -1116,6 +1149,7 @@ class CompetitionProgram(TaskStateReporting):
                     (raw_distance_mm, raw_lateral_mm))
                 distance_mm, lateral_mm = median_translation(
                     translation_samples)
+                translation_ready = True
                 heading_error_deg = self._heading_error(
                     heading_target_cw_deg)
                 distance_error = distance_mm - target_distance_mm
@@ -1132,7 +1166,7 @@ class CompetitionProgram(TaskStateReporting):
                     # final confirmation based on measured tolerances, not holds.
                     stop_distance = axis_holds[0].update(distance_ok)
                     stop_lateral = axis_holds[1].update(lateral_ok)
-                    if not translation_only_completion:
+                    if not independent_heading:
                         stop_heading = axis_holds[2].update(heading_ok)
                     if stop_distance:
                         vx = 0.0
@@ -1141,12 +1175,11 @@ class CompetitionProgram(TaskStateReporting):
                     if stop_heading:
                         wz = 0.0
 
-                within_tolerance = (distance_ok and lateral_ok
-                                    and (translation_only_completion or heading_ok))
+                within_tolerance = distance_ok and lateral_ok and heading_ok
                 if within_tolerance and not fine_align_enabled:
-                    # Tag6 keeps correcting yaw during translation confirmation.
-                    # Other coarse-only callers still stop all three axes.
-                    if not translation_only_completion:
+                    # Tag6 keeps yaw hold active throughout confirmation.
+                    # Legacy tag alignment still stops all axes here.
+                    if not independent_heading:
                         self.robot.chassis.set_speeds([0, 0, 0, 0])
                         vx = vy = wz = 0.0
                         pids.reset()
@@ -1157,9 +1190,9 @@ class CompetitionProgram(TaskStateReporting):
                           f'gyro={heading_error_deg:+.1f} deg')
                     if confirmed >= cfg.delivery_tag_confirm_frames:
                         return
-                    if not translation_only_completion:
+                    if not independent_heading:
                         last_update = now
-                        time.sleep(cfg.delivery_tag_control_period_s)
+                        time.sleep(control_period)
                         continue
                 precision_ok = (
                     abs(distance_error)
@@ -1231,33 +1264,33 @@ class CompetitionProgram(TaskStateReporting):
                         fast_speed=cfg.delivery_tag_fast_lateral_mm_s,
                         max_speed=cfg.delivery_tag_fast_lateral_mm_s,
                         min_speed=cfg.delivery_tag_min_linear_mm_s)
-                if ((translation_only_completion and heading_error_deg == 0.0)
-                        or (not translation_only_completion and (
-                            stop_heading or (not fine_align_enabled and heading_ok)
-                            or abs(heading_error_deg) <= cfg.delivery_heading_deadband_deg))):
-                    heading_pid.reset()
-                    desired_wz = 0.0
-                    if translation_only_completion:
-                        wz = 0.0
-                else:
-                    desired_wz = heading_pid.update(heading_error_deg, dt)
-                    if translation_only_completion or not heading_ok:
-                        desired_wz = self._minimum_command(
-                            desired_wz, cfg.delivery_heading_min_yaw_deg_s)
+                if not independent_heading:
+                    if (stop_heading or (not fine_align_enabled and heading_ok)
+                            or abs(heading_error_deg) <= cfg.delivery_heading_deadband_deg):
+                        heading_pid.reset()
+                        desired_wz = 0.0
                     else:
-                        desired_wz *= fine_gain_scale
+                        desired_wz = heading_pid.update(heading_error_deg, dt)
+                        if not heading_ok:
+                            desired_wz = self._minimum_command(
+                                desired_wz, cfg.delivery_heading_min_yaw_deg_s)
+                        else:
+                            desired_wz *= fine_gain_scale
                 vx = self._slew_command(
                     desired_vx, vx,
                     cfg.delivery_tag_linear_accel_mm_s2, dt)
                 vy = self._slew_command(
                     desired_vy, vy,
                     cfg.delivery_tag_linear_accel_mm_s2, dt)
-                wz = self._slew_command(
-                    desired_wz, wz,
-                    cfg.delivery_heading_yaw_accel_deg_s2, dt)
-                rpm = self.robot.chassis.mecanum_rpm(
-                    vx / 10.0, vy / 10.0, wz)
-                self.robot.chassis.set_speeds(rpm)
+                if independent_heading:
+                    update_heading(now)
+                else:
+                    wz = self._slew_command(
+                        desired_wz, wz,
+                        cfg.delivery_heading_yaw_accel_deg_s2, dt)
+                    rpm = self.robot.chassis.mecanum_rpm(
+                        vx / 10.0, vy / 10.0, wz)
+                    self.robot.chassis.set_speeds(rpm)
                 print(f'[{self.TASK_LABEL}] Tag PID: '
                       f'd={distance_mm:.0f} mm, '
                       f'x={lateral_mm:+.0f} mm, '
@@ -1265,15 +1298,84 @@ class CompetitionProgram(TaskStateReporting):
                       f'vx={vx:+.0f}, vy={vy:+.0f} mm/s, '
                       f'wz={wz:+.1f} deg/s')
                 last_update = now
-                time.sleep(cfg.delivery_tag_control_period_s)
+                time.sleep(control_period)
         finally:
             self.robot.chassis.set_speeds([0, 0, 0, 0])
-        raise RuntimeError(f'tag {tag_id} alignment timed out')
+        raise VisualAlignmentUnavailable(f'tag {tag_id} alignment timed out')
+
+    def _align_delivery_tag_or_continue(self, **kwargs):
+        try:
+            self._align_delivery_tag(**kwargs)
+            return True
+        except VisualAlignmentUnavailable as exc:
+            self._check_active()
+            report_visual_fallback(self.robot, self.TASK_LABEL, 'tag alignment', exc)
+            return False
+
+
+class CompetitionProgram(TaskControl):
+    """Task1 orange collection and delivery, using shared control procedures."""
+
+    def _run_first_task(self):
+        cfg = self.config
+        set_profile = self._set_cube_profile
+        if set_profile is not None:
+            set_profile('default')
+        print(f'[{self.TASK_LABEL}] Cube vision pipeline '
+              f'{self.CUBE_VISION_PIPELINE_VERSION}')
+        self.state = CompetitionState.WALL_APPROACH
+        print(f'[{self.TASK_LABEL}] Slow approach until motor stall')
+        self._drive_until_wall()
+        time.sleep(cfg.wall_settle_s)
+        self._recalibrate_heading_zero()
+        self.robot.reset_vision_filter()
+
+        self._search_position_mm = 0.0
+        lateral_origin = self._capture_lateral_origin()
+        self._orange_recovery = OrangeSearchRecovery(origin=lateral_origin)
+        reverse_done = False
+
+        def start_delivery():
+            nonlocal reverse_done
+            # Freeze the search measurement before any delivery movement.
+            self._cube_lateral_displacement_mm = (
+                self._measure_lateral_displacement_mm(lateral_origin))
+            if cfg.delivery_forward_base_mm <= self._cube_lateral_displacement_mm:
+                raise RuntimeError('delivery forward distance must be positive')
+            self._run_delivery_reverse()
+            reverse_done = True
+
+        self._collect_orange_with_count_check(
+            cfg.target_cube_count, self._grab_task1_orange,
+            chassis_followup=start_delivery)
+
+        if not reverse_done:
+            self._cube_lateral_displacement_mm = (
+                self._measure_lateral_displacement_mm(lateral_origin))
+        print(f'[{self.TASK_LABEL}] Encoder-measured cube lateral displacement: '
+              f'{self._cube_lateral_displacement_mm:+.0f} mm '
+              '(right positive)')
+        return reverse_done
+
+    def _grab_task1_orange(self):
+        cfg = self.config
+        while True:
+            self.state = CompetitionState.ORANGE_SEARCH
+            block = self._find_orange()
+            self.state = CompetitionState.ORANGE_ALIGN
+            if self._align_orange(block):
+                break
+        self.state = CompetitionState.GRAB
+        print(f'[{self.TASK_LABEL}] Orange aligned; running Grap3 with short wall press')
+        self._grab_with_wall_press(
+            self.robot.actions.grap3, recalibrate_heading_zero=True)
+        self.robot.reset_vision_filter()
+        time.sleep(cfg.post_grab_settle_s)
 
     def _run_delivery_reverse(self):
         cfg = self.config
         self.state = CompetitionState.DELIVERY_ROUTE
-        print(f'[Task1] Delivery: reverse {cfg.delivery_reverse_mm:.0f} mm')
+        print(f'[{self.TASK_LABEL}] Delivery: reverse {cfg.delivery_reverse_mm:.0f} mm')
         self._checked_move(
             'backward', cfg.delivery_reverse_mm,
             cfg.delivery_reverse_speed_mm_s)
@@ -1300,7 +1402,7 @@ class CompetitionProgram(TaskStateReporting):
             cfg.delivery_turn_deg,
             hold_ms=cfg.delivery_turn_heading_hold_ms)
 
-        print(f'[Task1] Delivery: forward {delivery_forward_mm:.0f} mm '
+        print(f'[{self.TASK_LABEL}] Delivery: forward {delivery_forward_mm:.0f} mm '
               f'({cfg.delivery_forward_base_mm:.0f} calibration base - '
               f'encoder lateral '
               f'{self._cube_lateral_displacement_mm:.0f} mm)')
@@ -1312,21 +1414,21 @@ class CompetitionProgram(TaskStateReporting):
 
         self.state = CompetitionState.DELIVERY_TAG_ALIGN
         self.robot.reset_field_localization_filter()
-        self._align_delivery_tag(
+        self._align_delivery_tag_or_continue(
             fine_align_enabled=False, stop_axes_in_tolerance=True,
-            translation_only_completion=True)
+            independent_heading=True)
 
         if cfg.post_tag_lateral_right_mm > 0.0:
             self.state = CompetitionState.POST_TAG_LATERAL
-            print(f'[Task1] Move right '
+            print(f'[{self.TASK_LABEL}] Move {cfg.post_tag_lateral_direction} '
                   f'{cfg.post_tag_lateral_right_mm:.0f} mm at '
                   f'{cfg.post_tag_lateral_speed_mm_s:.0f} mm/s after Tag6')
             self._checked_move(
-                'right', cfg.post_tag_lateral_right_mm,
+                cfg.post_tag_lateral_direction, cfg.post_tag_lateral_right_mm,
                 cfg.post_tag_lateral_speed_mm_s)
 
         self.state = CompetitionState.WALL_APPROACH
-        print('[Task1] Delivery: approach unload wall')
+        print(f'[{self.TASK_LABEL}] Delivery: approach unload wall')
         self._drive_until_wall(
             timeout_s=cfg.far_wall_timeout_s,
             speed_mm_s=cfg.far_wall_speed_mm_s,
@@ -1336,26 +1438,17 @@ class CompetitionProgram(TaskStateReporting):
             reference_cw_deg=cfg.delivery_heading_target_cw_deg)
 
         self.state = CompetitionState.UNLOAD
-        print('[Task1] Unload: open hatches')
-        self.robot.actions.hatch_open(settle_ms=300)
-        self._checked_move(
-            'backward', cfg.unload_reverse_mm,
-            cfg.unload_reverse_speed_mm_s)
-        print('[Task1] Unload: close hatches')
-        self.robot.actions.hatch_close(settle_ms=0)
+        self._unload_cubes()
         if cfg.pre_final_turn_lateral_left_mm > 0.0:
             self.state = CompetitionState.PRE_FINAL_TURN_LATERAL
-            print(f'[Task1] Move left '
+            print(f'[{self.TASK_LABEL}] Move {cfg.pre_final_turn_lateral_direction} '
                   f'{cfg.pre_final_turn_lateral_left_mm:.0f} mm at '
                   f'{cfg.pre_final_turn_lateral_speed_mm_s:.0f} mm/s '
-                  'before final turn')
+                  'after unloading; finish at heading 180 deg')
             self._checked_move(
-                'left', cfg.pre_final_turn_lateral_left_mm,
+                cfg.pre_final_turn_lateral_direction, cfg.pre_final_turn_lateral_left_mm,
                 cfg.pre_final_turn_lateral_speed_mm_s)
-        self._turn_to_heading(
-            cfg.delivery_heading_target_cw_deg
-            + cfg.unload_final_turn_cw_deg,
-            hold_ms=cfg.unload_final_heading_hold_ms)
+        self._check_active()
 
     def _run_mission(self):
         reverse_done = self._run_first_task()

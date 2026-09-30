@@ -31,7 +31,7 @@ GIB = 1024 ** 3
 
 @dataclass(frozen=True)
 class CollectionConfig:
-    enabled: bool = True
+    enabled: bool = False
     data_dir: str = 'vision/yolo/data/collection'
     sample_hz: float = 2.0
     static_keep_seconds: float = 5.0

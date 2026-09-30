@@ -13,6 +13,7 @@ class OrangeSearchRecovery:
     armed: bool = True
     retry_after_mm: float = float('-inf')
     clear_frames: int = 0
+    search_elapsed_s: float = 0.0
 
 
 def _same_row(block, band):
@@ -27,15 +28,18 @@ def _same_row(block, band):
 
 
 def find_orange(program, tracker, search_limit_mm):
-    """Return a confirmed block, or None on budget exhaustion; faults propagate.
+    """Return a confirmed block, or None on budget exhaustion.
 
     The existing rightward budget counts only commanded right-search time.
-    Each recovery has independent encoder, commanded-distance and time bounds.
+    Camera loss continues the bounded rightward search. Link, telemetry,
+    cancellation and command failures still propagate. Recovery has independent
+    encoder, commanded-distance and time bounds; active search time is shared
+    across pickups/refills and excludes time spent executing mechanical actions.
     """
     cfg, robot = program.config, program.robot
     state = program._orange_recovery
     now = time.monotonic()
-    last_update = last_telem_at = last_frame_at = now
+    last_update = last_telem_at = now
     last_uptime = last_frame = None
     stop_generation = robot.transport.emergency_stop_generation
     speed = 0.0
@@ -47,6 +51,11 @@ def find_orange(program, tracker, search_limit_mm):
     stop_until = now
     hold_start = None
     hold_spent = False
+    vision_missing = False
+    origin_blocked = False
+    search_time_budget_s = (search_limit_mm / cfg.search_speed_mm_s
+                            + cfg.orange_edge_timeout_s
+                            + cfg.target_cube_count * cfg.vision_observe_s)
     print(f'[{program.TASK_LABEL}] Orange search: '
           f'{program._search_position_mm:.0f}/{search_limit_mm:.0f} mm right budget')
 
@@ -54,9 +63,11 @@ def find_orange(program, tracker, search_limit_mm):
         if state.origin is None:
             state.origin = program._capture_lateral_origin()
         while True:
+            program._check_active()
             now = time.monotonic()
             dt = max(0.0, now - last_update)
             last_update = now
+            state.search_elapsed_s += dt
             program._search_position_mm = min(
                 search_limit_mm, program._search_position_mm + max(0.0, speed) * dt)
             if search_limit_mm - program._search_position_mm < 1e-6:
@@ -78,6 +89,11 @@ def find_orange(program, tracker, search_limit_mm):
             x = program._measure_lateral_displacement_mm(state.origin)
             if not math.isfinite(x):
                 raise RuntimeError('invalid orange search encoder position')
+            if state.search_elapsed_s >= search_time_budget_s:
+                program._search_position_mm = search_limit_mm
+                print(f'[{program.TASK_LABEL}] Orange search time budget reached; '
+                      'continue route')
+                return None
 
             result = robot.vision_result
             fresh = (result is not None
@@ -93,8 +109,20 @@ def find_orange(program, tracker, search_limit_mm):
                 if recovering:
                     candidates = [b for b in candidates if _same_row(b, recovery_band)]
 
+            if not fresh:
+                if not vision_missing:
+                    print(f'[{program.TASK_LABEL}] Orange vision unavailable; '
+                          'continue bounded rightward search')
+                vision_missing = True
+                clipped_frames = 0
+                state.clear_frames = 0
+                tracker.reset()
+            elif vision_missing:
+                vision_missing = False
+                print(f'[{program.TASK_LABEL}] Orange vision recovered')
+
             if new_frame:
-                last_frame, last_frame_at = result.timestamp, now
+                last_frame = result.timestamp
                 tracked_result = copy.copy(result)
                 tracked_result.all_blocks = candidates
                 block = tracker.update(
@@ -122,18 +150,16 @@ def find_orange(program, tracker, search_limit_mm):
                     lost_frames = (lost_frames + 1
                                    if not candidates and clipped_band is None else 0)
 
-            if now - last_frame_at >= cfg.vision_stale_s:
-                raise RuntimeError('vision lost during orange search')
-
             origin_guard = (cfg.orange_edge_origin_margin_mm
                             + cfg.orange_edge_speed_mm_s * cfg.search_control_period_s)
             if (not recovering and state.armed and new_frame
                     and clipped_frames >= cfg.orange_edge_confirm_frames):
-                state.armed = False
-                state.clear_frames = 0
-                state.retry_after_mm = x + cfg.orange_edge_retry_spacing_mm
-                clipped_frames = 0
                 if x > origin_guard:
+                    # Consume the attempt only when recovery can really start.
+                    state.armed = False
+                    state.clear_frames = 0
+                    state.retry_after_mm = x + cfg.orange_edge_retry_spacing_mm
+                    clipped_frames = 0
                     recovering = True
                     recovery_start, recovery_x, recovery_travel = now, x, 0.0
                     recovery_band = clipped_band
@@ -144,9 +170,10 @@ def find_orange(program, tracker, search_limit_mm):
                     print(f'[{program.TASK_LABEL}] Orange left edge clipped; '
                           f'recover left at {cfg.orange_edge_speed_mm_s:.0f} mm/s, '
                           f'max {min(cfg.orange_edge_max_distance_mm, x - origin_guard):.0f} mm')
-                else:
+                elif not origin_blocked:
+                    origin_blocked = True
                     print(f'[{program.TASK_LABEL}] Orange left recovery blocked '
-                          'by phase origin; continue right')
+                          'by phase origin; continue right, keep recovery armed')
 
             # Candidate confirmation takes place stopped, with a bounded hold.
             # Merely receiving the same frame cannot confirm or trigger recovery.
@@ -160,7 +187,9 @@ def find_orange(program, tracker, search_limit_mm):
 
             if recovering:
                 reason = None
-                if x <= origin_guard:
+                if not fresh:
+                    reason = 'vision unavailable'
+                elif x <= origin_guard:
                     reason = 'phase origin'
                 elif (recovery_x - x >= cfg.orange_edge_max_distance_mm
                       or recovery_travel >= cfg.orange_edge_max_distance_mm):
@@ -182,8 +211,9 @@ def find_orange(program, tracker, search_limit_mm):
             if (program._search_position_mm >= search_limit_mm and not recovering
                     and not (candidates and not hold_spent)):
                 return None
-            if (not fresh or now < stop_until or (candidates and not hold_spent)
-                    or (state.armed and clipped_frames > 0 and not recovering)):
+            if (now < stop_until or (candidates and not hold_spent)
+                    or (state.armed and clipped_frames > 0 and not recovering
+                        and x > origin_guard)):
                 desired = 0.0
             else:
                 desired = (-cfg.orange_edge_speed_mm_s if recovering

@@ -10,11 +10,16 @@ from vision.carried_cube_count import observe, classify
 CONFIG_PATH = Path(__file__).resolve().parents[1] / 'tools/carried_cube_count_config.json'
 
 
-def inspect_carried_cubes(robot, *, chassis_followup=None):
+class InspectionVisionUnavailable(RuntimeError):
+    """No current images are available; link and mechanism failures differ."""
+
+
+def inspect_carried_cubes(robot, *, chassis_followup=None, allow_visual_failure=False):
     """Return 0..3/None; optionally overlap the next chassis move with restore.
 
     Only successful counts (3/None) run the chassis-only callback. Refill must
-    wait for restore and fresh vision. Hardware/cancellation failures propagate.
+    wait for restore and fresh vision. Competition may treat camera failure as
+    unknown after restoring the arm. Hardware/cancellation failures propagate.
     """
     config = json.loads(CONFIG_PATH.read_text(encoding='utf-8'))
     transport = robot.transport
@@ -94,39 +99,50 @@ def inspect_carried_cubes(robot, *, chassis_followup=None):
             wait(.005)
         print(f'[Count] Stationary confirmed in {time.monotonic() - stopped_at:.3f}s',
               flush=True)
-        # Validate configuration and a live raw frame before any pose command.
-        sample = robot.cube_raw_frame
-        if sample is None or time.monotonic() - sample[1] > .5:
-            raise RuntimeError('inspection camera frame unavailable')
-        classify([observe(sample[0], config)[0]], config)
-        servo(0, 37.2)
-        wait(.200)
-        servo(1, 120)
-        wait(.300)
-        first_after = time.monotonic()
-        last_timestamp = first_after
-        skipped = 0
+        pose_started = False
         observations = []
-        while len(observations) < 8:
-            check()
-            if time.monotonic() - first_after > 4:
-                raise RuntimeError('inspection fresh camera frames timed out')
+        try:
+            # Validate configuration and a live frame before any pose command.
             sample = robot.cube_raw_frame
-            if sample is not None and sample[1] > last_timestamp:
-                frame, last_timestamp = sample
-                if skipped < 3:
-                    skipped += 1
-                else:
-                    observations.append(observe(frame, config)[0])
-            wait(.005)
-        result = classify(observations, config)
+            if sample is None or not 0 <= time.monotonic() - sample[1] <= .5:
+                raise InspectionVisionUnavailable('inspection camera frame unavailable')
+            classify([observe(sample[0], config)[0]], config)
+            servo(0, 37.2)
+            pose_started = True
+            wait(.200)
+            servo(1, 120)
+            wait(.300)
+            first_after = time.monotonic()
+            last_timestamp = first_after
+            skipped = 0
+            while len(observations) < 8:
+                check()
+                if time.monotonic() - first_after > 4:
+                    raise InspectionVisionUnavailable('inspection fresh camera frames timed out')
+                sample = robot.cube_raw_frame
+                if sample is not None and sample[1] > last_timestamp:
+                    frame, last_timestamp = sample
+                    if skipped < 3:
+                        skipped += 1
+                    else:
+                        observations.append(observe(frame, config)[0])
+                wait(.005)
+            result = classify(observations, config)
+        except InspectionVisionUnavailable as exc:
+            if not allow_visual_failure:
+                raise
+            check()
+            result = {'count': None, 'reason': str(exc), 'visual_fallback': True}
+            robot.diagnostics.write('visual_fallback', stage='carried count', reason=str(exc))
+            print(f'[Count] {exc}; count unknown, continue mission', flush=True)
         check()
         count = result['count']
         if count not in (None, 0, 1, 2, 3):
             raise RuntimeError(f'invalid carried cube count: {count}')
-        servo(1, 90)
+        if pose_started:
+            servo(1, 90)
         restore_at = time.monotonic() + .200
-        restored = False
+        restored = not pose_started
 
         def advance_restore():
             nonlocal restored

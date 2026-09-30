@@ -29,7 +29,7 @@ def main():
     args = parser.parse_args()
     results = {}
     files = sorted(ROOT.glob('*.py'))
-    for directory in ('control', 'protocol', 'Strategy', 'vision', 'sensors', 'utils', 'tools', 'tests'):
+    for directory in ('control', 'protocol', 'Strategy', 'vision', 'sensors', 'utils', 'tools', 'tests', 'agent'):
         files.extend(sorted((ROOT / directory).rglob('*.py')))
     results['syntax'] = True
     for path in files:
@@ -49,6 +49,11 @@ def main():
         sys.executable, '-m', 'unittest', 'tests.test_chassis_route', '-q'])
     results['tag6'] = run('Tag6 completion control', [
         sys.executable, '-m', 'unittest', 'tests.test_tag6_completion', '-q'])
+    results['strategy'] = run('Strategy composition', [
+        sys.executable, '-m', 'unittest', 'tests.test_strategy_composition',
+        'tests.test_plan_b', '-q'])
+    results['visual_fallback'] = run('Search recovery and visual fallback', [
+        sys.executable, '-m', 'unittest', 'tests.test_visual_fallback', '-q'])
     firmware = ROOT.parent / 'Uniforest_A'
     if args.firmware:
         configured = run('Firmware configure', ['cmake', '--preset', 'Debug'], firmware)

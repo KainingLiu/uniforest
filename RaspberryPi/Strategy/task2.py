@@ -2,22 +2,17 @@
 
 from __future__ import annotations
 
-from collections import deque
 from dataclasses import dataclass
 from enum import Enum, auto
-from statistics import median
 import time
-import math
 from typing import TYPE_CHECKING, Optional
 
 from .competition import (
-    _Pid,
-    CompetitionProgram,
+    TaskControl,
     FirstTaskConfig,
     SearchRangeExhausted,
-    LONG_DISTANCE_MOVE_SPEED_MM_S,
     NORMAL_DISTANCE_MOVE_SPEED_MM_S,
-    TAG_FOV_RETUNE_SCALE,
+    LONG_DISTANCE_MOVE_SPEED_MM_S,
 )
 from .vision_targets import TASK2_ORANGE, TASK2_PURPLE
 from .orange_search import OrangeSearchRecovery
@@ -30,7 +25,7 @@ class Task2State(Enum):
     STARTUP = auto()
     READY = auto()
     INITIAL_MOVE = auto()
-    TURN_LEFT = auto()
+    TURN_TO_COLLECTION = auto()
     TAG_ALIGN = auto()
     POST_TAG_LATERAL = auto()
     WALL_PREMOVE = auto()
@@ -51,20 +46,13 @@ class Task2State(Enum):
     POST_ORANGE_LATERAL = auto()
     FINAL_TURN = auto()
     BUILD_ROUTE = auto()
-    TAG6_ALIGN = auto()
-    POST_TAG6_LATERAL = auto()
-    BUILDING_ALIGN = auto()
-    BUILD = auto()
-    POST_BUILD_REVERSE = auto()
-    POST_BUILD_TURN = auto()
-    POST_BUILD_ROUTE = auto()
-    POST_BUILD_LEFT_WALL = auto()
     FINISHED = auto()
     FAULT = auto()
 
 
 @dataclass(frozen=True)
 class Task2Config(FirstTaskConfig):
+    initial_heading_cw_deg: float = 180.0
     initial_distance_mm: float = 2500.0
     initial_speed_mm_s: float = 800.0  # Task2 ramp approach, independent of cruise speed.
     delivery_heading_target_cw_deg: float = -90.0
@@ -98,8 +86,10 @@ class Task2Config(FirstTaskConfig):
     post_grab_reverse_mm: float = 100.0
     post_grab_reverse_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
     post_grab_heading_target_cw_deg: float = 0.0
-    post_grab_forward_base_mm: float = 400.0
+    post_grab_forward_base_mm: float = 350.0
     post_grab_forward_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
+    compensation_fast_distance_mm: float = 500.0
+    compensation_fast_speed_mm_s: float = LONG_DISTANCE_MOVE_SPEED_MM_S
     left_wall_approach_enabled: bool = True
     orange_target_count: int = 2
     orange_target_count_without_purple: int = 3
@@ -112,21 +102,9 @@ class Task2Config(FirstTaskConfig):
     post_orange_lateral_base_mm: float = 550.0
     post_orange_lateral_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
     final_turn_target_cw_deg: float = 180.0
-    build_route_distance_mm: float = 2800.0
+    build_route_distance_mm: float = 2750.0
     build_route_speed_mm_s: float = 800.0  # Task2 second ramp section.
-    build_tag_id: int = 6
-    build_tag_distance_mm: float = FirstTaskConfig().delivery_tag_distance_mm
-    build_tag_heading_target_cw_deg: float = 180.0
-    build_tag_distance_tolerance_mm: float = 8.0
-    build_tag_lateral_tolerance_mm: float = 8.0
-    build_tag_heading_tolerance_deg: float = (
-        FirstTaskConfig().delivery_heading_tolerance_deg)
-    build_tag_fine_gain_scale: float = (
-        FirstTaskConfig().delivery_tag_fine_gain_scale)
-    build_tag_vision_stale_s: float = 0.7
-    build_tag_lost_timeout_s: float = 2.0
-    # Tag6 is approached after a long straight run. Slow the far-field
-    # profile and enter deceleration earlier without changing final tolerances.
+    # Preserve the existing optional Tag3 profile if that route is re-enabled.
     delivery_tag_fast_forward_mm_s: float = 260.0
     delivery_tag_fast_lateral_mm_s: float = 200.0
     delivery_tag_min_linear_mm_s: float = 100.0
@@ -134,89 +112,14 @@ class Task2Config(FirstTaskConfig):
     delivery_tag_slowdown_lateral_mm: float = 100.0
     delivery_tag_creep_distance_mm: float = 35.0
     delivery_tag_creep_lateral_mm: float = 25.0
-    post_tag6_lateral_right_mm: float = 100.0
-    post_tag6_lateral_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
-    building_target_x_mm: float = 0.0
-    # Z target is the horizontal robot-to-building distance at which Build
-    # places correctly.  With the cube camera a lower top edge means nearer.
-    building_target_z_mm: float = 75.0
-    # Inverse-row Z model: z = building_z_scale / top_row.  The scale comes
-    # from one measured pose where the building top edge sat at image row 82.4
-    # while the robot was 132.8 mm away, so the scale is 132.8*82.4.  The Z
-    # target above then corresponds to the top edge around row scale/75 ~= 146,
-    # i.e. the upper-middle part of the frame.
-    building_z_scale_mm_px: float = 132.8 * 82.4
-    # Lateral pixels convert with the same calibrated focal length and optical
-    # center as camera_calib.json for the cube camera.
-    building_reference_fx_px: float = 331.93
-    building_reference_cx_px: float = 320.0
-    # Forward/back creep: inside this remaining Z error the approach slows to
-    # the creep band so the 100 mm/s static-friction floor cannot overshoot
-    # the +/-6 mm acceptance window and set up a forward/back limit cycle.
-    building_z_creep_start_mm: float = 30.0
-    building_z_creep_speed_mm_s: float = 90.0
-    building_z_creep_min_mm_s: float = 60.0
-    # Building contours vary with occlusion and camera pitch. Keep the
-    # geometric gate permissive; position and multi-frame confirmation still
-    # reject isolated orange cube candidates.
-    building_min_confidence: float = 35.0
-    building_min_height_width_ratio: float = 0.35
-    building_max_height_width_ratio: float = 2.20
-    building_x_tolerance_mm: float = 3.0
-    building_z_tolerance_mm: float = 6.0
-    building_heading_tolerance_deg: float = 2.4
-    building_x_deadband_mm: float = 1.0
-    building_z_deadband_mm: float = 2.0
-    building_heading_deadband_deg: float = 0.5
-    building_confirm_frames: int = 3
-    building_median_frames: int = 5
-    building_align_timeout_s: float = 7.0
-    building_lost_timeout_s: float = 4.0
-    building_vision_stale_s: float = 0.7
-    building_track_max_x_jump_mm: float = 50.0
-    building_track_max_z_jump_mm: float = 60.0
-    building_track_lock_frames: int = 2
-    building_control_period_s: float = 0.05
-    building_forward_kp: float = 1.5
-    building_forward_ki: float = 0.01
-    building_forward_kd: float = 0.02
-    building_lateral_kp: float = 1.8
-    building_lateral_ki: float = 0.01
-    building_lateral_kd: float = 0.02
-    building_heading_kp: float = 1.5
-    building_heading_ki: float = 0.02
-    building_heading_kd: float = 0.03
-    building_linear_integral_limit: float = 150.0
-    building_heading_integral_limit: float = 100.0
-    building_max_forward_mm_s: float = 250.0
-    building_max_lateral_mm_s: float = 250.0
-    building_max_yaw_deg_s: float = 30.0
-    # Static-friction floor for starting motion. Required for pure lateral
-    # commands (mecanum rollers) and far forward/back approach; once the
-    # chassis is rolling the building_z_* creep band lets forward speed drop
-    # near the target instead of slamming every frame and overshooting.
-    building_min_linear_mm_s: float = 100.0
-    building_far_linear_mm_s: float = 150.0
-    building_min_yaw_deg_s: float = 6.0
-    # Soften command changes; the accel limiter still allows a smooth stop as
-    # an axis enters its acceptance window.
-    building_linear_accel_mm_s2: float = 1000.0
-    building_yaw_accel_deg_s2: float = 60.0
-    post_build_reverse_mm: float = 100.0
-    post_build_reverse_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
-    post_build_turn_cw_deg: float = 180.0
-    post_build_route_distance_mm: float = 2500.0
-    post_build_route_speed_mm_s: float = LONG_DISTANCE_MOVE_SPEED_MM_S
-    finish_after_build: bool = False
 
 
 @dataclass(frozen=True)
-class Task2Round2Config(Task2Config):
+class Task2_2Config(Task2Config):
     initial_distance_mm: float = 2350.0
     purple_search_max_distance_mm: float = 650.0
+    post_grab_forward_base_mm: float = 500.0
     post_tag_lateral_mm: float = 0.0
-    post_tag6_lateral_right_mm: float = 400.0
-    finish_after_build: bool = True
 
 
 @dataclass(frozen=True)
@@ -227,6 +130,8 @@ class Task2DebugConfig:
 
 class Task2DebugProgram:
     """Report Task2 subsystem readiness without issuing motion commands."""
+
+    TASK_LABEL = 'task2-1-preflight'
 
     def __init__(self, robot: Robot,
                  config: Task2DebugConfig = Task2DebugConfig()):
@@ -240,322 +145,40 @@ class Task2DebugProgram:
         if self.robot.telem is None:
             raise RuntimeError('A-board telemetry unavailable')
 
-        print('[Task2] Debug preflight only; motion is disabled')
-        print(f'[Task2] cube vision: {self.robot.has_vision}')
-        print('[Task2] field localization: '
+        print(f'[{self.TASK_LABEL}] Debug preflight only; motion is disabled')
+        print(f'[{self.TASK_LABEL}] cube vision: {self.robot.has_vision}')
+        print(f'[{self.TASK_LABEL}] field localization: '
               f'{self.robot.has_field_localization}')
         return 0
 
 
-class Task2Program(CompetitionProgram):
-    """Run the currently implemented first section of Task2."""
+class Task2Program(TaskControl):
+    """Collect purple/orange cubes and stop after the 2750 mm approach (steps 1-14)."""
 
-    TASK_LABEL = 'Task2'
+    TASK_LABEL = 'task2-1'
     TELEMETRY_WAIT_S = 2.0
 
     def __init__(self, robot: Robot,
-                 config: Task2Config = Task2Config()):
-        super().__init__(robot, config)
+                 config: Task2Config = Task2Config(), *, context=None):
+        super().__init__(robot, config, context=context)
         self.config = config
         self.state = Task2State.STARTUP
         self._heading_zero_deg: Optional[float] = None
 
     def _preflight(self):
-        deadline = time.monotonic() + self.TELEMETRY_WAIT_S
-        while self.robot.telem is None and time.monotonic() < deadline:
-            time.sleep(0.02)
-        if self.robot.telem is None:
-            raise RuntimeError('A-board telemetry unavailable')
-        if not self.robot.has_field_localization:
-            raise RuntimeError('field localization subsystem unavailable')
-        if not self.robot.has_vision:
-            raise RuntimeError('cube vision subsystem unavailable')
-
-        self._heading_zero_deg = self.robot.telem.yaw_deg
+        self._wait_ready()
+        # Entry is now at 180 degrees after Task1/Task4; the current yaw must
+        # not become heading zero, or every following absolute turn is reversed.
+        self._heading_zero_deg = self._wrap_angle(
+            self.robot.telem.yaw_deg + self.config.initial_heading_cw_deg)
         self.state = Task2State.READY
-        print('[Task2] Preflight complete; heading zero='
-              f'{self._heading_zero_deg:+.1f} deg')
-
-    def _building_from_result(self, result, locked_position=None):
-        cfg = self.config
-        if (result is None
-                or time.time() - result.timestamp
-                > cfg.building_vision_stale_s):
-            return None
-        candidates = [
-            block for block in result.all_blocks
-            if block.color_name.casefold() == 'orange'
-            and block.confidence >= cfg.building_min_confidence
-            and cfg.building_min_height_width_ratio
-            <= getattr(block, 'height_width_ratio', 0.0)
-            <= cfg.building_max_height_width_ratio
-        ]
-        if not candidates:
-            return None
-        if locked_position is not None:
-            previous_x, previous_z = locked_position
-            tracked = [
-                block for block in candidates
-                if abs(self._building_top_reference(block)[0] - previous_x)
-                    <= cfg.building_track_max_x_jump_mm
-                and abs(self._building_top_reference(block)[1] - previous_z)
-                    <= cfg.building_track_max_z_jump_mm
-            ]
-            if tracked:
-                return min(tracked, key=lambda block:
-                           (self._building_top_reference(block)[0] - previous_x) ** 2
-                           + (self._building_top_reference(block)[1] - previous_z) ** 2)
-            return None
-        return min(candidates, key=lambda block:
-                   (self._building_top_reference(block)[0]
-                    - cfg.building_target_x_mm) ** 2
-                   + (self._building_top_reference(block)[1]
-                      - cfg.building_target_z_mm) ** 2)
-
-    def _building_top_reference(self, block):
-        """Return X/Z measured from the visible upper edge of the contour."""
-        quad = getattr(block, 'quad', None)
-        if quad is None or len(quad) != 4:
-            return block.x, block.z
-        cfg = self.config
-        # order_corners() puts upper-left and upper-right at indices 0/1.
-        top_u = (float(quad[0][0]) + float(quad[1][0])) * 0.5
-        top_v = (float(quad[0][1]) + float(quad[1][1])) * 0.5
-        # The upper edge moves downward as the robot approaches, so Z must
-        # decrease with top_v.  Normalize by the measured scale constant.
-        z_top = cfg.building_z_scale_mm_px / max(top_v, 1.0)
-        x_top = ((top_u - cfg.building_reference_cx_px)
-                 * z_top / cfg.building_reference_fx_px)
-        return x_top, z_top
-
-    @staticmethod
-    def _building_motion_command(pid_output, error, *, deadband,
-                                 minimum, maximum, kick_error=25.0):
-        """Clamp every non-zero correction above chassis static friction."""
-        if abs(error) <= deadband:
-            return 0.0
-        value = max(-maximum, min(maximum, pid_output))
-        if abs(value) < minimum:
-            value = minimum if value >= 0.0 else -minimum
-        return max(-maximum, min(maximum, value))
-
-    @staticmethod
-    def _building_z_command(pid_output, z_error, cfg):
-        """Floor the forward/back command, but drop to a creep band near zero.
-
-        A flat 100 mm/s floor near the +/-6 mm acceptance window makes the
-        robot overshoot it every control tick and oscillate.  Inside the creep
-        start distance the command is clamped to a smaller band so the chassis
-        can glide to a stop inside the window; the 100 mm/s floor still starts
-        motion from standstill when far away.
-        """
-        if abs(z_error) <= cfg.building_z_creep_start_mm:
-            minimum = cfg.building_z_creep_min_mm_s
-            maximum = cfg.building_z_creep_speed_mm_s
-        else:
-            minimum = cfg.building_min_linear_mm_s
-            maximum = cfg.building_max_forward_mm_s
-        if abs(z_error) <= cfg.building_z_deadband_mm:
-            return 0.0
-        value = max(-maximum, min(maximum, pid_output))
-        if abs(value) < minimum:
-            value = minimum if value >= 0.0 else -minimum
-        return max(-maximum, min(maximum, value))
-
-    def _align_building(self):
-        cfg = self.config
-        forward_pid = _Pid(
-            cfg.building_forward_kp, cfg.building_forward_ki,
-            cfg.building_forward_kd, cfg.building_linear_integral_limit,
-            cfg.building_max_forward_mm_s)
-        lateral_pid = _Pid(
-            cfg.building_lateral_kp, cfg.building_lateral_ki,
-            cfg.building_lateral_kd, cfg.building_linear_integral_limit,
-            cfg.building_max_lateral_mm_s)
-        heading_pid = _Pid(
-            cfg.building_heading_kp, cfg.building_heading_ki,
-            cfg.building_heading_kd, cfg.building_heading_integral_limit,
-            cfg.building_max_yaw_deg_s)
-        samples = deque(maxlen=cfg.building_median_frames)
-        started = time.monotonic()
-        last_seen = started
-        last_update = started
-        first_frame_after = time.time()
-        last_frame_timestamp = None
-        confirmed = 0
-        vx = vy = wz = 0.0
-        locked_position = None
-        pending_position = None
-        lock_frames = 0
-        set_profile = getattr(
-            self.robot, 'set_cube_detection_profile', None)
-        if set_profile is not None:
-            # Building align must see the bright top surface so the tracked
-            # upper edge is the real top of the stack, not the front-face
-            # boundary that biases Z low and forces a spurious forward/back.
-            set_profile('building')
-        print('[Task2] Building visual alignment: '
-              f'x={cfg.building_target_x_mm:+.1f} mm, '
-              f'z={cfg.building_target_z_mm:.1f} mm')
-        try:
-            while time.monotonic() - started < cfg.building_align_timeout_s:
-                now = time.monotonic()
-                result = self.robot.vision_result
-                tracking_position = (locked_position
-                                     if locked_position is not None
-                                     else pending_position)
-                block = self._building_from_result(result, tracking_position)
-                frame_timestamp = result.timestamp if result is not None else None
-                if (frame_timestamp is not None
-                        and frame_timestamp <= first_frame_after):
-                    block = None
-                if (block is not None
-                        and frame_timestamp == last_frame_timestamp):
-                    time.sleep(cfg.building_control_period_s)
-                    continue
-                if frame_timestamp is not None:
-                    last_frame_timestamp = frame_timestamp
-
-                if block is None:
-                    confirmed = 0
-                    samples.clear()
-                    vx = vy = wz = 0.0
-                    for pid in (forward_pid, lateral_pid, heading_pid):
-                        pid.reset()
-                    self.robot.chassis.set_speeds([0, 0, 0, 0])
-                    if now - last_seen >= cfg.building_lost_timeout_s:
-                        raise RuntimeError(
-                            'three-layer orange building lost before Build')
-                    time.sleep(cfg.building_control_period_s)
-                    continue
-
-                last_seen = now
-                ref_x, ref_z = self._building_top_reference(block)
-                if locked_position is None:
-                    if pending_position is None:
-                        pending_position = (ref_x, ref_z)
-                        lock_frames = 1
-                    else:
-                        pending_position = (ref_x, ref_z)
-                        lock_frames += 1
-                    if lock_frames >= cfg.building_track_lock_frames:
-                        locked_position = pending_position
-                        pending_position = None
-                samples.append((ref_x, ref_z))
-                x_mm = median(item[0] for item in samples)
-                z_mm = median(item[1] for item in samples)
-                # Gate the next candidate against the filtered position so a
-                # single top-edge spike cannot yank the tracker sideways.
-                locked_position = (x_mm, z_mm)
-                x_error = x_mm - cfg.building_target_x_mm
-                z_error = z_mm - cfg.building_target_z_mm
-                heading_error = self._heading_error(
-                    cfg.build_tag_heading_target_cw_deg)
-                x_ok = abs(x_error) <= cfg.building_x_tolerance_mm
-                z_ok = abs(z_error) <= cfg.building_z_tolerance_mm
-                heading_ok = (
-                    abs(heading_error)
-                    <= cfg.building_heading_tolerance_deg)
-                if x_ok and z_ok and heading_ok:
-                    self.robot.chassis.set_speeds([0, 0, 0, 0])
-                    vx = vy = wz = 0.0
-                    confirmed += 1
-                    print(f'[Task2] Building aligned '
-                          f'{confirmed}/{cfg.building_confirm_frames}: '
-                          f'x={x_mm:+.1f} mm, z={z_mm:.1f} mm, '
-                          f'gyro={heading_error:+.1f} deg')
-                    if confirmed >= cfg.building_confirm_frames:
-                        return
-                else:
-                    confirmed = 0
-                    dt = max(0.001, min(0.2, now - last_update))
-                    # Lateral alignment has priority: while X is out of
-                    # tolerance, hold Z still and re-center X; once X is in
-                    # tolerance, hold X and close Z.  Each axis only moves when
-                    # it is actually outside its own window, so an aligned axis
-                    # is never re-kicked at minimum speed, and an axis that
-                    # later drifts out is corrected again (no one-shot latch).
-                    if not x_ok:
-                        forward_pid.reset()
-                        desired_vx = 0.0
-                        if abs(x_error) <= cfg.building_x_deadband_mm:
-                            lateral_pid.reset()
-                            desired_vy = 0.0
-                        else:
-                            desired_vy = lateral_pid.update(x_error, dt)
-                            desired_vy = self._building_motion_command(
-                                desired_vy, x_error,
-                                deadband=cfg.building_x_deadband_mm,
-                                minimum=cfg.building_min_linear_mm_s,
-                                maximum=cfg.building_max_lateral_mm_s)
-                    else:
-                        lateral_pid.reset()
-                        desired_vy = 0.0
-                        if abs(z_error) <= cfg.building_z_deadband_mm:
-                            forward_pid.reset()
-                            desired_vx = 0.0
-                        elif not z_ok:
-                            # Camera Z is positive forward (away from the
-                            # camera), matching chassis +vx, so a positive
-                            # error commands forward motion toward the target.
-                            desired_vx = forward_pid.update(z_error, dt)
-                            desired_vx = self._building_z_command(
-                                desired_vx, z_error, cfg)
-                        else:
-                            forward_pid.reset()
-                            desired_vx = 0.0
-                    if (abs(heading_error)
-                            <= cfg.building_heading_deadband_deg):
-                        heading_pid.reset()
-                        desired_wz = 0.0
-                    elif not heading_ok:
-                        desired_wz = heading_pid.update(heading_error, dt)
-                        desired_wz = self._minimum_command(
-                            desired_wz, cfg.building_min_yaw_deg_s)
-                    else:
-                        heading_pid.reset()
-                        desired_wz = 0.0
-                    vx = self._slew_command(
-                        desired_vx, vx,
-                        cfg.building_linear_accel_mm_s2, dt)
-                    vy = self._slew_command(
-                        desired_vy, vy,
-                        cfg.building_linear_accel_mm_s2, dt)
-                    wz = self._slew_command(
-                        desired_wz, wz,
-                        cfg.building_yaw_accel_deg_s2, dt)
-                    rpm = self.robot.chassis.mecanum_rpm(
-                        vx / 10.0, vy / 10.0, wz)
-                    self.robot.chassis.set_speeds(rpm)
-                    print(f'[Task2] Building PID: '
-                          f'x={x_mm:+.1f} mm, z={z_mm:.1f} mm, '
-                          f'gyro={heading_error:+.1f} deg; '
-                          f'vx={vx:+.0f}, vy={vy:+.0f} mm/s, '
-                          f'wz={wz:+.1f} deg/s')
-                last_update = now
-                time.sleep(cfg.building_control_period_s)
-        finally:
-            self.robot.chassis.set_speeds([0, 0, 0, 0])
-            if set_profile is not None:
-                set_profile('default')
-        raise RuntimeError('building visual alignment timed out')
-
-    def _align_building_or_continue(self) -> bool:
-        try:
-            self._align_building()
-            return True
-        except RuntimeError as exc:
-            if str(exc) not in {
-                    'three-layer orange building lost before Build',
-                    'building visual alignment timed out'}:
-                raise
-            self.robot.chassis.set_speeds([0, 0, 0, 0])
-            print(f'[Task2] Warning: {exc}; continuing with Build')
-            return False
+        print(f'[{self.TASK_LABEL}] Entry heading '
+              f'{self.config.initial_heading_cw_deg:.0f} deg; '
+              f'heading zero={self._heading_zero_deg:+.1f} deg')
 
     def _search_and_align_purple(self) -> bool:
         cfg = self.config
-        set_profile = getattr(self.robot, 'set_cube_detection_profile', None)
+        set_profile = self._set_cube_profile
         try:
             if set_profile is not None:
                 set_profile('task2_purple')
@@ -569,7 +192,7 @@ class Task2Program(CompetitionProgram):
                         max_distance_mm=cfg.purple_search_max_distance_mm,
                     )
                 except SearchRangeExhausted:
-                    print('[Task2] Purple cube not found within '
+                    print(f'[{self.TASK_LABEL}] Purple cube not found within '
                           f'{cfg.purple_search_max_distance_mm:.0f} mm; '
                           'skipping Grap2')
                     return False
@@ -600,16 +223,22 @@ class Task2Program(CompetitionProgram):
             return 'left', -correction_mm
         return None, 0.0
 
+    def _compensation_motion_parameters(self, distance_mm, short_speed_mm_s):
+        cfg = self.config
+        if distance_mm >= cfg.compensation_fast_distance_mm:
+            return cfg.compensation_fast_speed_mm_s, cfg.long_distance_forward_accel_ms
+        return short_speed_mm_s, cfg.delivery_linear_accel_ms
+
     def _run_post_purple_route(self, purple_lateral_origin):
         cfg = self.config
         print(f'[{self.TASK_LABEL}] Starting post-purple chassis route')
         purple_lateral_mm = self._measure_lateral_displacement_mm(
             purple_lateral_origin)
-        print('[Task2] Encoder-measured purple lateral displacement: '
+        print(f'[{self.TASK_LABEL}] Encoder-measured purple lateral displacement: '
               f'{purple_lateral_mm:+.0f} mm (right positive)')
 
         self.state = Task2State.POST_GRAB_REVERSE
-        print(f'[Task2] Reverse {cfg.post_grab_reverse_mm:.0f} mm')
+        print(f'[{self.TASK_LABEL}] Reverse {cfg.post_grab_reverse_mm:.0f} mm')
         self._checked_move(
             'backward', cfg.post_grab_reverse_mm,
             cfg.post_grab_reverse_speed_mm_s)
@@ -626,13 +255,15 @@ class Task2Program(CompetitionProgram):
                 f'({purple_lateral_mm:.0f}) = '
                 f'{return_distance_mm:.0f} mm')
         self.state = Task2State.RETURN_MOVE
-        print(f'[Task2] Forward {return_distance_mm:.0f} mm at '
-              f'{cfg.post_grab_forward_speed_mm_s:.0f} mm/s '
+        speed_mm_s, accel_ms = self._compensation_motion_parameters(
+            return_distance_mm, cfg.post_grab_forward_speed_mm_s)
+        print(f'[{self.TASK_LABEL}] Forward {return_distance_mm:.0f} mm at '
+              f'{speed_mm_s:.0f} mm/s '
               f'({cfg.post_grab_forward_base_mm:.0f} - encoder lateral '
               f'{purple_lateral_mm:.0f} mm)')
         self._checked_move(
             'forward', return_distance_mm,
-            cfg.post_grab_forward_speed_mm_s)
+            speed_mm_s, accel_ms=accel_ms)
 
         self._run_post_return_wall_approach()
 
@@ -641,79 +272,12 @@ class Task2Program(CompetitionProgram):
             return False
 
         self.state = Task2State.GRAB
-        print('[Task2] Purple aligned; running Grap2 with short wall press')
+        print(f'[{self.TASK_LABEL}] Purple aligned; running Grap2 with short wall press')
         self._grab_with_wall_press(
             self.robot.actions.grap2, chassis_followup=chassis_followup)
-        print('[Task2] Grap2 complete')
+        print(f'[{self.TASK_LABEL}] Grap2 complete')
         return True
 
-    def _run_build_alignment_and_action(self, *, chassis_followup=None):
-        """Run the Tag6-to-Build segment of Task2."""
-        cfg = self.config
-        if cfg.post_tag6_lateral_right_mm > 0.0:
-            self.state = Task2State.POST_TAG6_LATERAL
-            print(f'[{self.TASK_LABEL}] Move right '
-                  f'{cfg.post_tag6_lateral_right_mm:.0f} mm at '
-                  f'{cfg.post_tag6_lateral_speed_mm_s:.0f} mm/s after Tag6')
-            self._checked_move(
-                'right', cfg.post_tag6_lateral_right_mm,
-                cfg.post_tag6_lateral_speed_mm_s)
-
-        self.state = Task2State.BUILDING_ALIGN
-        self.robot.reset_vision_filter()
-        building_aligned = self._align_building_or_continue()
-
-        self.state = Task2State.BUILD
-        if building_aligned:
-            print(f'[{self.TASK_LABEL}] Building aligned; running Build')
-        else:
-            print(f'[{self.TASK_LABEL}] Building alignment skipped; '
-                  'running Build')
-        followup = (None if chassis_followup is None
-                    else self._chassis_followup(chassis_followup))
-        self.robot.actions.build(chassis_followup=followup)
-        print(f'[{self.TASK_LABEL}] Build complete')
-
-    def _run_build_phase(self):
-        cfg = self.config
-        self._run_build_alignment_and_action(
-            chassis_followup=None if cfg.finish_after_build else self._run_post_build_route)
-
-        if cfg.finish_after_build:
-            print(f'[{self.TASK_LABEL}] Round complete after Build')
-            return
-
-    def _run_post_build_route(self):
-        cfg = self.config
-        print(f'[{self.TASK_LABEL}] Build released; starting chassis route')
-        self.state = Task2State.POST_BUILD_REVERSE
-        print(f'[Task2] Reverse {cfg.post_build_reverse_mm:.0f} mm '
-              'after Build')
-        self._checked_move(
-            'backward', cfg.post_build_reverse_mm,
-            cfg.post_build_reverse_speed_mm_s)
-
-        self.state = Task2State.POST_BUILD_TURN
-        # Use a relative CW turn: a shortest-path absolute-heading command
-        # can choose CCW near the 180-degree boundary after building alignment.
-        self.robot.chassis.turn(
-            cfg.post_build_turn_cw_deg, cfg.delivery_turn_speed_deg_s,
-            hold_ms=0, settle_cycles=1)
-
-        self.state = Task2State.POST_BUILD_ROUTE
-        print(f'[Task2] Left {cfg.post_build_route_distance_mm:.0f} mm '
-              f'at {cfg.post_build_route_speed_mm_s:.0f} mm/s after Build')
-        self._checked_move(
-            'left', cfg.post_build_route_distance_mm,
-            cfg.post_build_route_speed_mm_s)
-
-        self.state = Task2State.POST_BUILD_LEFT_WALL
-        self._drive_until_wall(
-            timeout_s=cfg.far_wall_timeout_s,
-            speed_mm_s=cfg.far_wall_speed_mm_s,
-            direction='left',
-            context='Post-build left wall contact',
-        )
 
     def _run_post_tag3_lateral(self):
         cfg = self.config
@@ -773,41 +337,41 @@ class Task2Program(CompetitionProgram):
                 if self._last_alignment_timed_out or self._fine_align_orange(block):
                     break
         self.state = Task2State.ORANGE_GRAB
-        print('[Task2] Orange aligned; running Grap1 with short wall press')
+        print(f'[{self.TASK_LABEL}] Orange aligned; running Grap1 with short wall press')
         self._grab_with_wall_press(
             self.robot.actions.grap1, recalibrate_heading_zero=True)
         self.robot.reset_vision_filter()
         time.sleep(cfg.post_grab_settle_s)
 
-    def _run_partial_task(self):
+    def _run_collection_route(self):
         cfg = self.config
 
         self.state = Task2State.INITIAL_MOVE
-        print(f'[Task2] Forward {cfg.initial_distance_mm:.0f} mm at '
+        print(f'[{self.TASK_LABEL}] Backward {cfg.initial_distance_mm:.0f} mm at '
               f'{cfg.initial_speed_mm_s:.0f} mm/s')
         self._checked_move(
-            'forward', cfg.initial_distance_mm, cfg.initial_speed_mm_s,
+            'backward', cfg.initial_distance_mm, cfg.initial_speed_mm_s,
             accel_ms=cfg.long_distance_forward_accel_ms)
 
-        self.state = Task2State.TURN_LEFT
+        self.state = Task2State.TURN_TO_COLLECTION
         self._turn_to_heading(cfg.delivery_heading_target_cw_deg)
 
         if cfg.tag3_alignment_enabled:
             self.state = Task2State.TAG_ALIGN
             self.robot.reset_field_localization_filter()
-            self._align_delivery_tag(fine_align_enabled=False)
+            self._align_delivery_tag_or_continue(fine_align_enabled=False)
             self._run_post_tag3_lateral()
         else:
             print(f'[{self.TASK_LABEL}] Tag3 alignment and lateral move skipped')
 
         self.state = Task2State.WALL_PREMOVE
-        print(f'[Task2] Forward {cfg.wall_premove_mm:.0f} mm at '
+        print(f'[{self.TASK_LABEL}] Forward {cfg.wall_premove_mm:.0f} mm at '
               f'{cfg.wall_premove_speed_mm_s:.0f} mm/s before wall approach')
         self._checked_move(
             'forward', cfg.wall_premove_mm, cfg.wall_premove_speed_mm_s)
 
         self.state = Task2State.WALL_APPROACH
-        print(f'[Task2] Approach wall at '
+        print(f'[{self.TASK_LABEL}] Approach wall at '
               f'{cfg.far_wall_speed_mm_s:.0f} mm/s')
         self._drive_until_wall(
             timeout_s=cfg.far_wall_timeout_s,
@@ -826,8 +390,7 @@ class Task2Program(CompetitionProgram):
         if not purple_grabbed:
             post_purple_route()
 
-        set_profile = getattr(
-            self.robot, 'set_cube_detection_profile', None)
+        set_profile = self._set_cube_profile
         if set_profile is not None:
             set_profile('task2_orange')
         orange_lateral_mm = None
@@ -838,7 +401,7 @@ class Task2Program(CompetitionProgram):
             orange_lateral_mm = self._measure_lateral_displacement_mm(
                 orange_lateral_origin)
             self.state = Task2State.POST_ORANGE_REVERSE
-            print(f'[Task2] Reverse {cfg.post_orange_reverse_mm:.0f} mm')
+            print(f'[{self.TASK_LABEL}] Reverse {cfg.post_orange_reverse_mm:.0f} mm')
             self._checked_move(
                 'backward', cfg.post_orange_reverse_mm,
                 cfg.post_orange_reverse_speed_mm_s)
@@ -861,7 +424,7 @@ class Task2Program(CompetitionProgram):
 
         if not reverse_done:
             start_orange_exit()
-        print('[Task2] Encoder-measured orange lateral displacement: '
+        print(f'[{self.TASK_LABEL}] Encoder-measured orange lateral displacement: '
               f'{orange_lateral_mm:+.0f} mm (right positive)')
 
         lateral_direction, lateral_distance_mm = (
@@ -869,52 +432,38 @@ class Task2Program(CompetitionProgram):
                 cfg.post_orange_lateral_base_mm, orange_lateral_mm))
         self.state = Task2State.POST_ORANGE_LATERAL
         if lateral_direction is None:
-            print('[Task2] Post-orange lateral correction is zero; '
+            print(f'[{self.TASK_LABEL}] Post-orange lateral correction is zero; '
                   'skipping lateral move')
         else:
-            print(f'[Task2] Move {lateral_direction} '
+            speed_mm_s, accel_ms = self._compensation_motion_parameters(
+                lateral_distance_mm, cfg.post_orange_lateral_speed_mm_s)
+            print(f'[{self.TASK_LABEL}] Move {lateral_direction} '
                   f'{lateral_distance_mm:.0f} mm at '
-                  f'{cfg.post_orange_lateral_speed_mm_s:.0f} mm/s '
+                  f'{speed_mm_s:.0f} mm/s '
                   f'(target right {cfg.post_orange_lateral_base_mm:.0f} - '
                   f'encoder right {orange_lateral_mm:.0f} mm)')
             self._checked_move(
                 lateral_direction, lateral_distance_mm,
-                cfg.post_orange_lateral_speed_mm_s)
+                speed_mm_s, accel_ms=accel_ms)
 
         self.state = Task2State.FINAL_TURN
         self._turn_to_heading(cfg.final_turn_target_cw_deg)
 
         self.state = Task2State.BUILD_ROUTE
-        print(f'[Task2] Forward {cfg.build_route_distance_mm:.0f} mm at '
+        print(f'[{self.TASK_LABEL}] Forward {cfg.build_route_distance_mm:.0f} mm at '
               f'{cfg.build_route_speed_mm_s:.0f} mm/s before Build')
         self._checked_move(
             'forward', cfg.build_route_distance_mm,
             cfg.build_route_speed_mm_s,
             accel_ms=cfg.long_distance_forward_accel_ms)
 
-        self.state = Task2State.TAG6_ALIGN
-        self.robot.reset_field_localization_filter()
-        self._align_delivery_tag(
-            tag_id=cfg.build_tag_id,
-            target_distance_mm=cfg.build_tag_distance_mm,
-            heading_target_cw_deg=cfg.build_tag_heading_target_cw_deg,
-            distance_tolerance_mm=cfg.build_tag_distance_tolerance_mm,
-            lateral_tolerance_mm=cfg.build_tag_lateral_tolerance_mm,
-            heading_tolerance_deg=cfg.build_tag_heading_tolerance_deg,
-            fine_gain_scale=cfg.build_tag_fine_gain_scale,
-            vision_stale_s=cfg.build_tag_vision_stale_s,
-            lost_timeout_s=cfg.build_tag_lost_timeout_s,
-            fine_align_enabled=False,
-            stop_axes_in_tolerance=True,
-            translation_only_completion=True,
-        )
-
-        self._run_build_phase()
+        if self.context is not None:
+            self.context.publish_build_approach(self._heading_zero_deg)
 
     def run(self) -> int:
         try:
             self._preflight()
-            self._run_partial_task()
+            self._run_collection_route()
             self.state = Task2State.FINISHED
             return 0
         except Exception:
@@ -923,20 +472,18 @@ class Task2Program(CompetitionProgram):
             raise
 
 
-class Task2Round2Program(Task2Program):
-    TASK_LABEL = 'Task2-R2'
+class Task2_2Program(Task2Program):
+    TASK_LABEL = 'task2-2'
 
     def __init__(self, robot,
-                 config: Task2Round2Config = Task2Round2Config()):
-        super().__init__(robot, config)
+                 config: Task2_2Config = Task2_2Config(), *, context=None):
+        super().__init__(robot, config, context=context)
 
 
-__all__ = [
-    'Task2Config',
-    'Task2DebugConfig',
-    'Task2DebugProgram',
-    'Task2Program',
-    'Task2Round2Config',
-    'Task2Round2Program',
-    'Task2State',
-]
+# Old import names remain aliases; canonical variant IDs use -1/-2.
+Task2Round2Config = Task2_2Config
+Task2Round2Program = Task2_2Program
+
+__all__ = ['Task2Config', 'Task2Program', 'Task2State', 'Task2_2Config',
+           'Task2_2Program', 'Task2DebugConfig', 'Task2DebugProgram',
+           'Task2Round2Config', 'Task2Round2Program']

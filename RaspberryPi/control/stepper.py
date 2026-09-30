@@ -11,6 +11,8 @@ from protocol.transport import Transport
 from protocol.commands import (
     STEPPER_HORIZ, STEPPER_VERT,
     STEP_DIR_FORWARD, STEP_DIR_REVERSE,
+    STEPPER_DEFAULT_START_DELAY, STEPPER_DEFAULT_TARGET_DELAY,
+    STEPPER_DEFAULT_ACCEL_STEPS,
 )
 
 # Steps per cm (400 steps/rev ÷ 10 mm/rev = 400 steps/cm)
@@ -19,9 +21,9 @@ STEPS_PER_CM = 400
 # Default trapezoidal parameters (µs)
 # STM32 applies a small 6/5 half-cycle safety scale, giving approximately
 # 1042 Hz at start; TIM7 rounds the cruise half-cycle to 7 ticks (~7143 pulses/s).
-DEFAULT_START_DELAY  = 400
-DEFAULT_TARGET_DELAY = 60
-DEFAULT_ACCEL_STEPS  = 400
+DEFAULT_START_DELAY  = STEPPER_DEFAULT_START_DELAY
+DEFAULT_TARGET_DELAY = STEPPER_DEFAULT_TARGET_DELAY
+DEFAULT_ACCEL_STEPS  = STEPPER_DEFAULT_ACCEL_STEPS
 
 
 def cm_to_steps(cm: float) -> int:

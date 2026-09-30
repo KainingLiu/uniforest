@@ -42,6 +42,7 @@ def _field(obj: Any, name: str, default=None):
 
 def tool_definitions() -> list[dict]:
     """Return strict Responses API function definitions."""
+    from Strategy.runner import SELECTION_CHOICES
     return [
         {
             "type": "function",
@@ -166,9 +167,10 @@ def tool_definitions() -> list[dict]:
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "selection": {"type": "string", "enum": ["all", "round1", "round2", "task1", "task2", "task1-r1", "task2-r1", "task1-r2", "task2-r2"]},
+                    "selection": {"type": "string", "enum": list(SELECTION_CHOICES)},
+                    "heading_zero_deg": {"type": ["number", "null"], "description": "独立执行 task3-1/task3-2/task3-3/task4-1/task4-2 时，必须由用户提供已知陀螺仪航向零点，并确认已在 Task2 结束位置、初始航向180°；其他情况填 null，不得猜测。"},
                 },
-                "required": ["selection"], "additionalProperties": False,
+                "required": ["selection", "heading_zero_deg"], "additionalProperties": False,
             },
             "strict": True,
         },
@@ -225,6 +227,7 @@ class RobotToolExecutor:
         self._strategy_name = None
         self._strategy_result = None
         self._strategy_started_at = None
+        self._strategy_cancel = threading.Event()
 
     def _require_robot(self):
         if self.robot is None:
@@ -269,7 +272,7 @@ class RobotToolExecutor:
         try:
             from vision import resolve_camera_source
         except ImportError:
-            from Vision.opencv.camera_devices import resolve_camera_source
+            from vision.camera_devices import resolve_camera_source
         return resolve_camera_source(role)
 
     def _snapshot(self, role: str) -> tuple[dict, str]:
@@ -423,32 +426,43 @@ class RobotToolExecutor:
             program._drive_until_wall(direction=direction, speed_mm_s=float(speed_mm_s), timeout_s=float(timeout_s), context="Agent wall approach")
             return ToolResult({"state": "wall_contact", "direction": direction})
 
-    def run_strategy(self, selection):
+    def run_strategy(self, selection, heading_zero_deg=None):
+        from Strategy.context import BuildApproach, TaskContext
+        from Strategy.plans import validate_plan
+        from Strategy.runner import resolve_selection, run_tasks
+        plan = resolve_selection(selection)
+        handoff = (None if heading_zero_deg is None else
+                   BuildApproach(float(heading_zero_deg), 'operator supplied entry pose'))
+        validate_plan(plan, initial_handoff=handoff is not None)
         if self.dry_run:
-            return ToolResult({"dry_run": True, "would_start_strategy": selection})
+            return ToolResult({"dry_run": True, "would_start_strategy": plan.name,
+                               "tasks": [step.task_id for step in plan.steps]})
         with self._lock:
             self._require_robot()
             if self._strategy_thread and self._strategy_thread.is_alive():
                 raise RuntimeError("已有比赛策略正在运行")
-            from Strategy.runner import run_tasks
-            self._strategy_name = selection
+            self._strategy_cancel = threading.Event()
+            context = TaskContext(self.robot, self._strategy_cancel, handoff)
+            self._strategy_name = plan.name
             self._strategy_result = None
             self._strategy_started_at = time.time()
             def target():
                 try:
-                    self._strategy_result = run_tasks(self.robot, selection)
+                    self._strategy_result = run_tasks(self.robot, selection, context=context)
                 except BaseException as exc:  # report through state tool
                     self._strategy_result = {"error": str(exc)}
                 finally:
-                    self._strategy_name = selection
+                    self._strategy_name = plan.name
             self._strategy_thread = threading.Thread(target=target, name="agent-strategy", daemon=True)
             self._strategy_thread.start()
-            return ToolResult({"state": "started", "selection": selection})
+            return ToolResult({"state": "started", "selection": plan.name,
+                               "tasks": [step.task_id for step in plan.steps]})
 
     def cancel_current_action(self, **_):
         if self.dry_run:
             return ToolResult({"dry_run": True, "state": "stop_requested"})
         self._require_robot()
+        self._strategy_cancel.set()
         self.robot.transport.emergency_stop()
         return ToolResult({"state": "stop_requested", "message": "已发送急停；请用 get_robot_state 检查策略状态"})
 
@@ -456,6 +470,7 @@ class RobotToolExecutor:
         if self.dry_run:
             return ToolResult({"dry_run": True, "state": "stopped"})
         self._require_robot()
+        self._strategy_cancel.set()
         self.robot.transport.emergency_stop()
         return ToolResult({"state": "stopped"})
 

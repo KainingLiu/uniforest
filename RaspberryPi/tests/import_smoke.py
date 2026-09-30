@@ -51,6 +51,7 @@ test('control.actions', 'control.actions')
 print('\n=== Vision ===')
 test('vision.cube_detector', 'vision.cube_detector')
 test('vision.field_localizer', 'vision.field_localizer')
+test('vision.opencv.camera_tuner', 'vision.opencv.camera_tuner')
 test('vision.yolo.collector', 'vision.yolo.collector')
 
 # Competition architecture
@@ -58,6 +59,11 @@ print('\n=== Competition ===')
 test('robot', 'robot')
 test('Strategy.task0', 'Strategy.task0')
 test('Strategy.competition', 'Strategy.competition')
+test('Strategy.task3', 'Strategy.task3')
+test('Strategy.task4', 'Strategy.task4')
+test('Strategy.tasks', 'Strategy.tasks')
+test('Strategy.plans', 'Strategy.plans')
+test('Strategy.runner', 'Strategy.runner')
 
 # Main syntax
 print('\n=== Main ===')

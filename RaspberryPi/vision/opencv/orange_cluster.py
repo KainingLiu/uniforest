@@ -11,7 +11,7 @@
 
 简化策略：机器人从左向右搜索，最先看到的是每簇的左缘。纯视觉拆分多块
 不可靠，因此不做拆分——簇的左缘就是首块左边界，首块跨 [start_x, start_x+CUBE]。
-左缘被画面裁剪时不输出坐标，机器人继续向右搜索直到左缘完整入画。
+左缘被画面裁剪时不输出坐标，而是发布所在行的像素范围，供策略执行有界回找。
 """
 import numpy as np
 import cv2
@@ -151,7 +151,8 @@ class Detector:
         mask = self._orange_mask(frame)
         cubes = []
         info = {"status": "empty", "n_clusters": 0, "message": "",
-                "mask": mask, "scale": frame.shape[1] / float(orig_w)}
+                "mask": mask, "scale": frame.shape[1] / float(orig_w),
+                "left_clipped_y_range": None}
 
         if np.count_nonzero(mask) < self.cfg.MIN_MASK_FRAC * H_img * W_img:
             info["message"] = "视野中无橙色方块"
@@ -166,6 +167,31 @@ class Detector:
         # commonly do). Then suppress small detached patches relative to the
         # dominant cube body in this frame.
         edge = max(1, int(getattr(self.cfg, "FRAME_EDGE_MARGIN_PX", 3)))
+        # Recovery needs evidence of a clipped row, not a graspable cube.
+        # A narrow left fragment cannot meet the normal aspect gate, and a
+        # touching row can span both sides or be cut by the pickup ROI.
+        # Publish this hint before shape/relative-area/ROI-edge/corner gates.
+        roi_top = max(0, min(H_img, round(
+            H_img * getattr(self.cfg, "ROI_TOP_RATIO", 0.0))))
+        left_components = []
+        for cnt in contours_by_area:
+            x, y, w, h = cv2.boundingRect(cnt)
+            if x > edge:
+                continue
+            low, high = max(y, roi_top), min(y + h, H_img)
+            if high - low <= edge:
+                continue
+            spans_width = x + w >= W_img - edge
+            # Ordinary top/bottom fragments are often hands or orange props.
+            # A row spanning the full width may also fill the frame height;
+            # it still merits bounded recovery, but never a grasp coordinate.
+            if not spans_width and (y <= edge or y + h >= H_img - edge):
+                continue
+            left_components.append((cv2.contourArea(cnt), low, high))
+        if left_components:
+            _, low, high = max(left_components)
+            info["left_clipped_y_range"] = (low / info["scale"],
+                                             high / info["scale"])
         contours = [cnt for cnt in contours
                     if (lambda r: r[1] > max(edge, round(H_img * getattr(self.cfg, "ROI_TOP_RATIO", 0.0)) + edge) and r[1] + r[3] < H_img - edge)
                     (cv2.boundingRect(cnt))]

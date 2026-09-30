@@ -42,21 +42,21 @@ static const ActionStep grap2[] = {
 };
 static const ActionStep grap3[] = {
     {PUMP,{0}}, {HOME,{0}}, A(1,450), A(0,522), {HATCH,{0}},
-    D(H,27,F,V,9,R,17), D3(V,9,F,9,R,H,21.5,R,5,15),
+    D(H,27,F,V,9,R,17), D3(V,9,F,9,R,H,21.5,R,5,16),
     DROP, D_OP(DUAL_ASYNC,V,9,F,H,5.5,R,0),
     {WAIT_PROGRESS,{V,S(5),F}}, A(1,900), {JOIN,{0}},
     {HOME,{0}}, {END,{0}}
 };
 static const ActionStep build[] = {
     /* Only pickup-pose and LIFT waits remain; no post-stepper settle. */
-    {HOME,{0}}, {HATCH,{0}}, {PUMP,{0}}, M(H,F,4),
+    {HOME,{0}}, {HATCH,{0}}, {PUMP,{0}}, M(H,F,3.5),
     A(1,1000), A(0,1022), W(500), A(0,952), LIFT(30),
     D(H,19,F,V,19,R,3), {RELEASE,{0}},
-    D3(V,10,F,2,R,H,23,R,3,20),
+    D3(V,10,F,2,R,H,22.5,R,3,19.5),
     {PUMP,{0}}, A(1,950), A(0,1022), W(500), A(0,972), LIFT(0),
-    D2(H,23,F,V,2,F,5,R,21), {RELEASE,{0}},
+    D2(H,23,F,V,2,F,4.5,R,21), {RELEASE,{0}},
     /* Third pickup: keep H retracting while V descends at H = 18 cm. */
-    D3_OP(DUAL3_ASYNC,V,5,F,11.5,R,H,23,R,1,18),
+    D3_OP(DUAL3_ASYNC,V,4.5,F,11.5,R,H,23,R,1,18),
     {WAIT_PROGRESS,{H,S(18),R}}, A(1,950), A(0,1022), {PUMP,{0}},
     {JOIN,{0}},
     /* Lift with V; start H at V = 15 cm, then descend at H = 22 cm.

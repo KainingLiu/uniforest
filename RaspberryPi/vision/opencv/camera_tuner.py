@@ -9,8 +9,12 @@ import sys
 import cv2
 import numpy as np
 
-from cube_detector import CONFIG, detect_all_blocks
-from camera_devices import default_camera_selector, resolve_camera_source
+try:
+    from .cube_detector import CONFIG, detect_all_blocks
+    from .camera_devices import default_camera_selector, resolve_camera_source
+except ImportError:  # Direct execution: python vision/opencv/camera_tuner.py
+    from cube_detector import CONFIG, detect_all_blocks
+    from camera_devices import default_camera_selector, resolve_camera_source
 
 
 SETTINGS_PATH = os.path.join(os.path.dirname(__file__), "camera_settings.json")

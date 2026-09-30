@@ -27,7 +27,7 @@ class CollectionTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
         self.directory = Path(self.temporary.name) / 'library'
-        self.config = CollectionConfig(data_dir=str(self.directory), min_free_gb=0,
+        self.config = CollectionConfig(enabled=True, data_dir=str(self.directory), min_free_gb=0,
                                        queue_size=16)
         self.frame = np.full((48, 64, 3), (20, 80, 160), dtype=np.uint8)
         self.camera = {'selector': 'cube', 'reported': {'exposure': 312.0}}
@@ -282,6 +282,25 @@ class CollectionTests(unittest.TestCase):
 
 
 class WorkflowIntegrationTests(unittest.TestCase):
+    def test_collection_is_off_by_default_for_robot(self):
+        from robot import Robot
+        with patch.dict('os.environ', {}, clear=True):
+            self.assertFalse(CollectionConfig().enabled)
+            self.assertFalse(CollectionConfig.load().enabled)
+            self.assertIsNone(create_collector())
+            robot = Robot(enable_vision=True, camera_id='cube')
+        self.assertIsNone(robot._data_collector)
+        self.assertIsNone(robot._vision._frame_sink)
+        self.assertFalse(robot.transport.connected)
+        self.assertFalse(robot._vision.is_running)
+
+    def test_explicit_collection_enable_and_disable_override(self):
+        with patch.dict('os.environ', {'UNIFOREST_COLLECT_DATA': '1'}):
+            self.assertTrue(CollectionConfig.load().enabled)
+            self.assertIsNone(create_collector(enabled=False))
+        with patch.dict('os.environ', {}, clear=True):
+            self.assertTrue(CollectionConfig.load(enabled=True).enabled)
+
     def test_robot_enables_collector_on_existing_vision_without_opening_hardware(self):
         from robot import Robot
         collector = Mock()
@@ -295,30 +314,36 @@ class WorkflowIntegrationTests(unittest.TestCase):
 
     def test_existing_task_states_are_reported_without_motion(self):
         from Strategy.competition import CompetitionProgram, CompetitionState
-        from Strategy.task2 import Task2Round2Program, Task2State
+        from Strategy.task2 import Task2_2Program, Task2State
+        from Strategy.task3 import Task3_2Program, Task3State
         from Strategy.task0 import Task0Program, Task0State
         reporter = Mock()
         robot = SimpleNamespace(set_collection_context=reporter)
         program = CompetitionProgram(robot)
         program.state = CompetitionState.ORANGE_SEARCH
-        reporter.assert_called_with(task='Task1', phase='ORANGE_SEARCH')
-        program = Task2Round2Program(robot)
-        program.state = Task2State.BUILDING_ALIGN
-        reporter.assert_called_with(task='Task2-R2', phase='BUILDING_ALIGN')
+        reporter.assert_called_with(task='task1-1', phase='ORANGE_SEARCH')
+        program = Task2_2Program(robot)
+        program.state = Task2State.ORANGE_SEARCH
+        reporter.assert_called_with(task='task2-2', phase='ORANGE_SEARCH')
+        program = Task3_2Program(robot)
+        program.state = Task3State.BUILDING_ALIGN
+        reporter.assert_called_with(task='task3-2', phase='BUILDING_ALIGN')
         program = Task0Program(robot)
         program.state = Task0State.INITIAL_MOVE
-        reporter.assert_called_with(task='Task0', phase='INITIAL_MOVE')
+        reporter.assert_called_with(task='task0', phase='INITIAL_MOVE')
         # Existing fake/legacy robot facades without a collector remain usable.
         self.assertEqual(CompetitionProgram(SimpleNamespace()).state,
                          CompetitionState.STARTUP)
 
     def test_agent_repeated_workflows_get_distinct_flow_ids(self):
         from Strategy.runner import run_tasks
+        from tests.test_strategy_composition import robot_fixture
         reporter = Mock()
-        robot = SimpleNamespace(set_collection_context=reporter)
-        factory = lambda robot: SimpleNamespace(run=lambda: 0)
-        self.assertEqual(run_tasks(robot, 'task1', task1_factory=factory), 0)
-        self.assertEqual(run_tasks(robot, 'task1', task1_factory=factory), 0)
+        robot = robot_fixture()
+        robot.set_collection_context = reporter
+        with patch('Strategy.task1.Task1Program.run', return_value=0):
+            self.assertEqual(run_tasks(robot, 'task1-1'), 0)
+            self.assertEqual(run_tasks(robot, 'task1-1'), 0)
         flows = [call.kwargs['flow_id'] for call in reporter.call_args_list
                  if 'flow_id' in call.kwargs]
         self.assertEqual(len(set(flows)), 2)
