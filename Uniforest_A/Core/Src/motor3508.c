@@ -334,18 +334,26 @@ void Motor3508_UpdateAllSpeedPID(float dt)
 
 void Motor3508_StopAll(void)
 {
+    /* TIM6 must see cleared setpoints before running the next speed PID tick. */
+    uint32_t irq = __get_PRIMASK();
+    __disable_irq();
     int16_t zero[4] = {0, 0, 0, 0};
-    Motor3508_SendTorques(zero);
     g_torque[0] = g_torque[1] = g_torque[2] = g_torque[3] = 0;
 
     /* Reset PID integrators */
     for (int i = 0; i < M3508_COUNT; i++)
     {
+        g_motor[i].target_speed = 0;
+        g_motor[i].target_position = g_motor[i].cumulative_pos;
+        g_motor[i].pos_pid.integral = 0.0f;
+        g_motor[i].pos_pid.prev_error = 0.0f;
         g_motor[i].speed_pid.integral   = 0.0f;
         g_motor[i].speed_pid.prev_error = 0.0f;
         g_motor[i].current_pid.integral = 0.0f;
         g_motor[i].current_pid.prev_error = 0.0f;
     }
+    Motor3508_SendTorques(zero);
+    __set_PRIMASK(irq);
 }
 
 /* ======================== Power Management ================================ */

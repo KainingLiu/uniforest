@@ -237,6 +237,11 @@ void Stepper_Stop(uint8_t motor);
  */
 uint8_t Stepper_IsBusy(uint8_t motor);
 
+/* Latched when the first commanded segment finishes; a queued reversal does
+ * not clear it. A new move or Stop clears it. This reports emitted pulses,
+ * so physical lift clearance still requires on-robot validation. */
+uint8_t Stepper_FirstSegmentDone(uint8_t motor);
+
 /**
  * @brief  Get cumulative step position
  * @return signed step count (positive = forward, negative = reverse)

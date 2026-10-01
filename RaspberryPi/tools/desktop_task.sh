@@ -21,6 +21,7 @@ case "$selection" in
     round2|set2) label='set2 任务组合' ;;
     collect-build-1|collect-build-2) label="$selection" ;;
     task0|task0-1|task0-2|task0-3|task1-1|task1-2|task1-3|task2-1|task2-2|task3-1|task3-2|task3-3|task4-1|task4-2|task5) label="$selection" ;;
+    depart-a|depart-b|return-orange|collect-orange-[123]|collect-mixed-[12]|build-[123]|unload-[12]|build-staged) label="$selection" ;;
     *) printf '无效任务：%s\n' "$selection"; finish 2 ;;
 esac
 
@@ -31,11 +32,7 @@ if [[ ! -x .venv/bin/python || ! -f main.py ]]; then
     finish 1
 fi
 
-case "$selection" in
-    PlanA|PlanB|plana|planb|classic|set1|set2|collect-build-1|collect-build-2)
-        command=(.venv/bin/python -u main.py --strategy "$selection") ;;
-    *) command=(.venv/bin/python -u main.py --task "$selection") ;;
-esac
+command=(.venv/bin/python -u main.py --flow "$selection")
 if [[ "$preview" == '--show-plan' ]]; then
     exec "${command[@]}" --show-plan
 fi
@@ -48,7 +45,7 @@ if ! flock -n 9; then
 fi
 
 case "$selection" in
-    task3-1|task3-2|task3-3|task4-1|task4-2)
+    task3-1|task3-2|task3-3|task4-1|task4-2|build-[123]|unload-[12])
         printf '独立 Task3/Task4 要求停在 Task2 结束位置，初始航向 180°。\n'
         printf 'Task3 需准备好搭建方块；Task4 需准备好舱内投放方块。\n'
         printf '请填写之前标定的航向零点（度），不能直接填当前航向；留空取消：'

@@ -5,8 +5,7 @@ import argparse
 import sys
 
 from robot import Robot
-from Strategy.task2 import Task2DebugProgram
-from Strategy.runner import run_tasks
+from Strategy.runner import run_selection
 from vision import default_camera_selector
 from vision.yolo.collector import add_collection_arguments
 
@@ -54,8 +53,8 @@ def main() -> int:
             return 1
         robot.start(telem_rate=args.telem_rate)
         if args.preflight_only:
-            return Task2DebugProgram(robot).run()
-        return run_tasks(robot, f'task2-{args.variant}')
+            return 0 if robot.hardware_preflight().ok else 1
+        return run_selection(robot, f'collect-mixed-{args.variant}')
     except KeyboardInterrupt:
         print('\n[Task2] Interrupted')
         return 130

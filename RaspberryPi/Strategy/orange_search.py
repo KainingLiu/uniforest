@@ -56,7 +56,7 @@ def find_orange(program, tracker, search_limit_mm):
     search_time_budget_s = (search_limit_mm / cfg.search_speed_mm_s
                             + cfg.orange_edge_timeout_s
                             + cfg.target_cube_count * cfg.vision_observe_s)
-    print(f'[{program.TASK_LABEL}] Orange search: '
+    print(f'[{program.operation_name}] Orange search: '
           f'{program._search_position_mm:.0f}/{search_limit_mm:.0f} mm right budget')
 
     try:
@@ -91,7 +91,7 @@ def find_orange(program, tracker, search_limit_mm):
                 raise RuntimeError('invalid orange search encoder position')
             if state.search_elapsed_s >= search_time_budget_s:
                 program._search_position_mm = search_limit_mm
-                print(f'[{program.TASK_LABEL}] Orange search time budget reached; '
+                print(f'[{program.operation_name}] Orange search time budget reached; '
                       'continue route')
                 return None
 
@@ -111,7 +111,7 @@ def find_orange(program, tracker, search_limit_mm):
 
             if not fresh:
                 if not vision_missing:
-                    print(f'[{program.TASK_LABEL}] Orange vision unavailable; '
+                    print(f'[{program.operation_name}] Orange vision unavailable; '
                           'continue bounded rightward search')
                 vision_missing = True
                 clipped_frames = 0
@@ -119,7 +119,7 @@ def find_orange(program, tracker, search_limit_mm):
                 tracker.reset()
             elif vision_missing:
                 vision_missing = False
-                print(f'[{program.TASK_LABEL}] Orange vision recovered')
+                print(f'[{program.operation_name}] Orange vision recovered')
 
             if new_frame:
                 last_frame = result.timestamp
@@ -130,7 +130,7 @@ def find_orange(program, tracker, search_limit_mm):
                     min_confidence=cfg.orange_min_confidence,
                     max_age_s=cfg.vision_stale_s)
                 if block is not None:
-                    print(f'[{program.TASK_LABEL}] Orange acquired: '
+                    print(f'[{program.operation_name}] Orange acquired: '
                           f'x={block.x:+.0f} mm, right budget='
                           f'{program._search_position_mm:.0f} mm')
                     return block
@@ -167,12 +167,12 @@ def find_orange(program, tracker, search_limit_mm):
                     hold_start, hold_spent = None, False
                     stop_until = now + cfg.orange_edge_stop_s
                     tracker.reset()
-                    print(f'[{program.TASK_LABEL}] Orange left edge clipped; '
+                    print(f'[{program.operation_name}] Orange left edge clipped; '
                           f'recover left at {cfg.orange_edge_speed_mm_s:.0f} mm/s, '
                           f'max {min(cfg.orange_edge_max_distance_mm, x - origin_guard):.0f} mm')
                 elif not origin_blocked:
                     origin_blocked = True
-                    print(f'[{program.TASK_LABEL}] Orange left recovery blocked '
+                    print(f'[{program.operation_name}] Orange left recovery blocked '
                           'by phase origin; continue right, keep recovery armed')
 
             # Candidate confirmation takes place stopped, with a bounded hold.
@@ -205,7 +205,7 @@ def find_orange(program, tracker, search_limit_mm):
                     tracker.reset()
                     clipped_frames = 0
                     stop_until = now + cfg.orange_edge_stop_s
-                    print(f'[{program.TASK_LABEL}] Orange recovery ended: {reason}; '
+                    print(f'[{program.operation_name}] Orange recovery ended: {reason}; '
                           'continue right')
 
             if (program._search_position_mm >= search_limit_mm and not recovering

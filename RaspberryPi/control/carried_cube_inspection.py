@@ -14,43 +14,70 @@ class InspectionVisionUnavailable(RuntimeError):
     """No current images are available; link and mechanism failures differ."""
 
 
-def inspect_carried_cubes(robot, *, chassis_followup=None, allow_visual_failure=False):
-    """Return 0..3/None; optionally overlap the next chassis move with restore.
+class CarriedInspectionSession:
+    """Own inspection and arm restoration across a chassis handoff.
 
-    Only successful counts (3/None) run the chassis-only callback. Refill must
-    wait for restore and fresh vision. Competition may treat camera failure as
-    unknown after restoring the arm. Hardware/cancellation failures propagate.
+    ``inspect`` returns the count after initiating the existing return sequence.
+    The caller keeps this session alive while a route calls ``check_restore``.
+    ``finish_restore`` then ``close`` are required before another mechanism
+    command. Restoration means commands/timing completed; no angle sensor is
+    available to confirm the physical arm or camera pose.
     """
-    config = json.loads(CONFIG_PATH.read_text(encoding='utf-8'))
-    transport = robot.transport
-    actions = robot.actions
-    generation = transport.emergency_stop_generation
-    link_generation = robot.inspection_link_snapshot()[3]
 
-    def check():
-        actions._check_cancelled()
-        telem, received_at, pong_at, epoch = robot.inspection_link_snapshot()
+    def __init__(self, robot, config, *, allow_visual_failure=False):
+        self.robot, self.config = robot, config
+        self.transport, self.actions = robot.transport, robot.actions
+        self.allow_visual_failure = allow_visual_failure
+        self._generation = self.transport.emergency_stop_generation
+        self._link_generation = robot.inspection_link_snapshot()[3]
+        self._owns_lock = False
+        self.closed = self.inspected = self.restored = False
+        self.count = None
+        self.result = None
+        self.observations = []
+        self._restore_at = None
+        self._abort_succeeded = True
+        self.cleanup_error = None
+
+    def _check(self):
+        if self.closed:
+            raise RuntimeError('carried-count inspection session is closed')
+        self.actions._check_cancelled()
+        telem, received_at, pong_at, epoch = self.robot.inspection_link_snapshot()
         now = time.monotonic()
-        if (not transport.connected or not robot._running
-                or transport.emergency_stop_generation != generation
-                or epoch != link_generation or received_at is None
+        if (not self.transport.connected or not self.robot._running
+                or self.transport.emergency_stop_generation != self._generation
+                or epoch != self._link_generation or telem is None
+                or received_at is None or pong_at is None
                 or now - received_at > .15 or now - pong_at > .15):
             raise RuntimeError('carried-count inspection communication/cancellation fault')
         return telem
 
-    def wait(seconds):
+    def _wait(self, seconds):
         deadline = time.monotonic() + seconds
         while time.monotonic() < deadline:
-            check()
+            self._check()
             time.sleep(min(.005, max(0, deadline - time.monotonic())))
-        check()
+        self._check()
 
-    def servo(servo_id, angle):
-        transport.set_servo_angle_checked(servo_id, angle, check)
+    def _servo(self, servo_id, angle):
+        self.transport.set_servo_angle_checked(servo_id, angle, self._check)
 
-    if not actions._action_lock.acquire(blocking=False):
-        raise RuntimeError('another mechanical action is running')
-    try:
+    def inspect(self):
+        """Count from fresh raw frames and begin restoration without joining it."""
+        try:
+            self._check()
+            if self.inspected:
+                raise RuntimeError('carried-count inspection already performed')
+            return self._inspect()
+        except BaseException:
+            self.abort()
+            raise
+
+    def _inspect(self):
+        robot, transport, config = self.robot, self.transport, self.config
+        check, wait, servo = self._check, self._wait, self._servo
+        allow_visual_failure = self.allow_visual_failure
         check()
         probe_at = time.monotonic()
         if not transport.query_action_status():
@@ -137,40 +164,128 @@ def inspect_carried_cubes(robot, *, chassis_followup=None, allow_visual_failure=
             print(f'[Count] {exc}; count unknown, continue mission', flush=True)
         check()
         count = result['count']
-        if count not in (None, 0, 1, 2, 3):
+        if count is not None and (type(count) is not int or not 0 <= count <= 3):
             raise RuntimeError(f'invalid carried cube count: {count}')
         if pose_started:
             servo(1, 90)
-        restore_at = time.monotonic() + .200
-        restored = not pose_started
+        self._restore_at = time.monotonic() + .200
+        self.restored = not pose_started
+        self.count, self.result, self.observations = count, result, observations
+        self.inspected = True
+        return count
 
-        def advance_restore():
-            nonlocal restored
-            check()
-            if not restored and time.monotonic() >= restore_at:
-                servo(0, 97.2)
-                check()
-                robot.reset_vision_filter(after_inspection=True)
-                restored = True
+    def check_restore(self):
+        """Guard the route and advance timed restoration without blocking."""
+        try:
+            self._check()
+            if not self.inspected:
+                raise RuntimeError('inspect must complete before arm restoration')
+            if not self.restored and time.monotonic() >= self._restore_at:
+                self._servo(0, 97.2)
+                self._check()
+                self.robot.reset_vision_filter(after_inspection=True)
+                self.restored = True
+            return self.restored
+        except BaseException:
+            self.abort()
+            raise
 
+    def finish_restore(self):
+        """Wait for restoration; retain mechanism ownership until close()."""
+        try:
+            while not self.check_restore():
+                self._wait(.005)
+            self._check()
+        except BaseException:
+            self.abort()
+            raise
+
+    def close(self):
+        """Release completed inspection; interrupt an unfinished session."""
+        if self.closed:
+            return
+        if not self.inspected or not self.restored:
+            self.abort()
+            return
+        try:
+            self._check()
+            self.robot.diagnostics.write(
+                'carried_cube_count', result=self.result,
+                observations=self.observations,
+                feature_version=self.config['feature_version'])
+            print(f'[Count] {self.result}', flush=True)
+        except BaseException:
+            self.abort()
+            raise
+        self.closed = True
+        self._release()
+
+    def _release(self):
+        if self._owns_lock:
+            self._owns_lock = False
+            self.actions._action_lock.release()
+
+    def abort(self):
+        """Stop and release once, with no subsequent servo commands."""
+        if self.closed:
+            return self._abort_succeeded
+        self.closed = True
+        try:
+            self._abort_succeeded = self.transport.emergency_stop() is not False
+        except BaseException as exc:
+            self.cleanup_error = exc
+            self._abort_succeeded = False
+        finally:
+            self._release()
+        return self._abort_succeeded
+
+    def __enter__(self):
+        try:
+            self._check()
+        except BaseException:
+            self.abort()
+            raise
+        return self
+
+    def __exit__(self, exc_type, exc, traceback):
+        if exc_type is not None:
+            self.abort()
+        else:
+            self.close()
+        return False
+
+
+def begin_carried_inspection(robot, *, allow_visual_failure=False):
+    """Acquire mechanism ownership for a phased inspection; no pose move yet."""
+    config = json.loads(CONFIG_PATH.read_text(encoding='utf-8'))
+    session = CarriedInspectionSession(robot, config,
+                                       allow_visual_failure=allow_visual_failure)
+    if not robot.actions._action_lock.acquire(blocking=False):
+        raise RuntimeError('another mechanical action is running')
+    session._owns_lock = True
+    try:
+        session._check()
+    except BaseException:
+        session.abort()
+        raise
+    return session
+
+
+def inspect_carried_cubes(robot, *, chassis_followup=None, allow_visual_failure=False):
+    """Legacy blocking API using the same phased session and guarded restore.
+
+    Full/unknown counts may overlap restoration with a chassis-only callback.
+    Partial counts finish restoration before returning for another pickup.
+    """
+    session = begin_carried_inspection(robot, allow_visual_failure=allow_visual_failure)
+    try:
+        count = session.inspect()
         if chassis_followup is not None and count in (None, 3):
-            # Chassis loops supervise both the link and timed servo restore.
-            # No detached worker can outlive cancellation or start a later grab.
-            with robot.chassis.monitor_action(advance_restore):
+            with robot.chassis.monitor_action(session.check_restore):
                 chassis_followup()
-        while not restored:
-            advance_restore()
-            if not restored:
-                wait(.005)
-        check()
-        robot.diagnostics.write('carried_cube_count', result=result,
-                                observations=observations, feature_version=config['feature_version'])
-        print(f'[Count] {result}', flush=True)
+        session.finish_restore()
+        session.close()
         return count
     except BaseException:
-        # Do not turn a hardware/pose failure into the user's null-success path.
-        # After cancellation/fault no further servo commands are sent.
-        transport.emergency_stop()
+        session.abort()
         raise
-    finally:
-        actions._action_lock.release()

@@ -106,7 +106,8 @@ class Robot:
                  diagnostics_path: Optional[str] = None,
                  quiet_heartbeat: bool = False,
                  collect_data: Optional[bool] = None,
-                 dataset_dir: Optional[str] = None):
+                 dataset_dir: Optional[str] = None,
+                 pickup_full_lift_validated: bool = False):
         if port is None:
             port = self.SERIAL_PORT
         if baud is None:
@@ -122,7 +123,8 @@ class Robot:
         self.servo = Servo(self.transport)
         self.stepper = Stepper(self.transport)
         self.actions = Actions(self.servo, self.stepper,
-                               transport=self.transport)
+                               transport=self.transport,
+                               pickup_full_lift_validated=pickup_full_lift_validated)
 
         # Vision subsystem (optional)
         self._vision: Optional['CubeDetector'] = None
@@ -316,6 +318,11 @@ class Robot:
     def cube_raw_frame(self):
         return self._vision.raw_frame if self.has_vision else None
 
+    def begin_carried_cube_inspection(self, *, allow_visual_failure=False):
+        """Start phased cargo inspection; caller must finish/close its session."""
+        from control.carried_cube_inspection import begin_carried_inspection
+        return begin_carried_inspection(self, allow_visual_failure=allow_visual_failure)
+
     def check_carried_cube_count(self, *, chassis_followup=None,
                                 allow_visual_failure=False):
         from control.carried_cube_inspection import inspect_carried_cubes
@@ -392,6 +399,26 @@ class Robot:
                 self._vision.reset_after_inspection()
             else:
                 self._vision.reset_filter()
+
+    def begin_cube_camera_pose_change(self, reason: str = 'arm_motion'):
+        """Invalidate cube geometry before changing the arm camera pose."""
+        if self._vision is not None:
+            return self._vision.begin_pose_change(reason)
+        return None
+
+    def end_cube_camera_pose_change(self, token, *, settle_s: float = 0.0):
+        """Caller confirms whole-arm restoration; wait for a fresh camera frame.
+
+        The caller supplies the validated profile settling time. This call does
+        not infer arm restoration from a PWM command or a generic action DONE.
+        """
+        if self._vision is not None:
+            return self._vision.end_pose_change(token, settle_s=settle_s)
+        return None
+
+    @property
+    def cube_camera_pose_ready(self) -> bool:
+        return self._vision is not None and self._vision.camera_pose_ready
 
     def set_cube_detection_profile(self, profile_name: str):
         """Select task-specific cube HSV parameters at runtime."""

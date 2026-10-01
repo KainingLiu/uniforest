@@ -1,112 +1,96 @@
-"""Unified executor for named strategies and reusable task sequences."""
-
+"""Run one complete functional action plan, without numbered task programs."""
+from dataclasses import asdict
+from contextlib import suppress
+import math
 import uuid
 
-from .context import BuildApproach, TaskContext
-from .plans import PLAN_IDS, PLANS, StrategyPlan, validate_plan
-from .tasks import TASK_IDS, TASK_LIBRARY, TaskStep
-from .results import TaskResult
+from .context import ExecutionContext
+from .execution import ExecutionRuntime
+from .flows.factory import ActionEnvironment
+from .plans import PLANS, PLAN_IDS, validate_plan
 
-
-# Old Task2 selectors retain the complete Task2 + Task3 scope.
-PLAN_ALIASES = {'classic': 'PlanA', 'plana': 'PlanA', 'planb': 'PlanB'}
-LEGACY_SELECTIONS = {
-    **PLAN_ALIASES,
-    'all': 'PlanA', 'round1': 'set1', 'round2': 'set2', 'task0': 'task0-1',
-    'task1': 'task1-1', 'task1-r1': 'task1-1', 'task1-r2': 'task1-2',
-    'task2': 'collect-build-1', 'task2-r1': 'collect-build-1',
-    'task2-r2': 'collect-build-2',
-}
-TASK_CHOICES = (*TASK_IDS, *LEGACY_SELECTIONS)
-STRATEGY_CHOICES = (*PLAN_IDS, *PLAN_ALIASES)
-SELECTION_CHOICES = (*TASK_IDS, *PLAN_IDS, *LEGACY_SELECTIONS)
+# Old command-line names only translate to new data plans; no old program runs.
+LEGACY_SELECTIONS = {'all':'PlanA','classic':'PlanA','plana':'PlanA','planb':'PlanB',
+    'round1':'set1','round2':'set2','task0':'depart-a','task0-1':'depart-a',
+    'task0-2':'depart-b','task0-3':'return-orange','task1':'collect-orange-1',
+    'task1-r1':'collect-orange-1','task1-r2':'collect-orange-2',
+    'task2':'collect-build-1','task2-r1':'collect-build-1','task2-r2':'collect-build-2',
+    'task5':'build-staged'}
+for i in (1,2,3):
+    LEGACY_SELECTIONS[f'task1-{i}'] = f'collect-orange-{i}'
+    LEGACY_SELECTIONS[f'task3-{i}'] = f'build-{i}'
+for i in (1,2):
+    LEGACY_SELECTIONS[f'task2-{i}'] = f'collect-mixed-{i}'
+    LEGACY_SELECTIONS[f'task4-{i}'] = f'unload-{i}'
+SELECTION_CHOICES = (*PLAN_IDS, *LEGACY_SELECTIONS)
 
 
 def resolve_selection(selection='PlanA'):
-    canonical = LEGACY_SELECTIONS.get(selection, selection)
-    if canonical in PLANS:
-        return PLANS[canonical]
-    if canonical in TASK_LIBRARY:
-        return StrategyPlan(canonical, (TaskStep(canonical),))
-    raise ValueError(f'unknown strategy/task: {selection}')
+    name = LEGACY_SELECTIONS.get(selection, selection)
+    if name not in PLANS:
+        raise ValueError(f'unknown strategy/flow: {selection}')
+    return PLANS[name]
 
 
-def run_plan(robot, plan, *, context=None, heading_zero_deg=None,
-             task_library=TASK_LIBRARY):
-    """Robot lifecycle stays with the caller; every task is a fresh instance."""
+def run_plan(robot, plan, *, context=None, heading_zero_deg=None, transition_config=None):
+    if (transition_config is not None and transition_config.pickups and
+            not getattr(robot.actions,'pickup_full_lift_validated',False)):
+        raise ValueError('pickup transitions require verified full-lift firmware on this Robot')
     if context is not None and context.robot is not robot:
-        raise ValueError('task context belongs to a different robot')
+        raise ValueError('execution context belongs to a different robot')
     if context is not None and heading_zero_deg is not None:
-        raise ValueError('supply either context or heading_zero_deg, not both')
-    handoff = (None if heading_zero_deg is None else
-               BuildApproach(heading_zero_deg, 'explicit entry pose'))
-    validate_plan(plan, task_library=task_library,
-                  initial_handoff=handoff is not None or (
-                      context is not None and context.build_approach is not None))
+        raise ValueError('supply context or heading zero, not both')
+    known_zero = context.heading_zero_deg if context is not None else heading_zero_deg
+    validate_plan(plan, heading_zero_deg=known_zero,
+                  initial_anchor=context.anchor if context is not None else None)
     if context is None:
-        context = TaskContext(robot, build_approach=handoff)
-    report = getattr(robot, 'set_collection_context', None)
-    diagnostics = getattr(robot, 'diagnostics', None)
+        context = ExecutionContext(robot, heading_zero_deg=known_zero, anchor=plan.entry_anchor)
     if not robot.strategy_lock.acquire(blocking=False):
         raise RuntimeError('another strategy is already running on this robot')
     previous_cancel = robot.actions._cancel_event
     robot.actions.set_cancel_event(context.cancel_event)
+    report = getattr(robot,'set_collection_context',None)
+    diagnostics = getattr(robot,'diagnostics',None)
+    env = None
     try:
         context.check_active(require_telemetry=False)
-        if report is not None:
-            report(flow_id=uuid.uuid4().hex, task=plan.name, phase='STARTUP')
-        for index, step in enumerate(plan.steps):
-            context.check_active(require_telemetry=False)
-            definition = task_library[step.task_id]
-            if definition.requires is None:
-                context.build_approach = None
-            elif context.build_approach is None:
-                raise RuntimeError(f'{step.task_id}: previous task did not publish its handoff')
-            context.current_task = step.task_id
-            print(f'[Strategy {plan.name}] Starting {step.task_id}')
-            if diagnostics is not None:
-                diagnostics.write('task_start', task=step.task_id,
-                                  selection=plan.name, step=index)
-            raw = definition.create(context, step).run()
-            context.check_active()
-            outcome = raw if isinstance(raw, TaskResult) else TaskResult.from_code(
-                int(raw), task=step.task_id)
-            if not outcome.ok or outcome.code != 0:
-                robot.transport.emergency_stop()
-                if report is not None:
-                    report(task=step.task_id, phase='FAILED')
-                if diagnostics is not None:
-                    diagnostics.write('task_failed', task=step.task_id,
-                                      code=outcome.code, status=outcome.status.value,
-                                      message=outcome.message)
-                return outcome.code or 1
-            if definition.provides == 'build_approach' and context.build_approach is None:
-                raise RuntimeError(f'{step.task_id}: successful task omitted its handoff')
-            if diagnostics is not None:
-                diagnostics.write('task_complete', task=step.task_id,
-                                  status=outcome.status.value)
-            print(f'[Strategy {plan.name}] {step.task_id} complete')
-        if report is not None:
-            report(task=plan.name, phase='FINISHED')
+        env = (ActionEnvironment(robot,context) if transition_config is None else
+               ActionEnvironment(robot,context,transition_config=transition_config))
+        # Only wait for telemetry/cameras; this never starts a mission routine.
+        env.control(plan.steps[0].profile)._wait_ready()
+        if context.heading_zero_deg is None:
+            context.heading_zero_deg = ((robot.telem.yaw_deg + plan.entry_heading_deg + 180) % 360) - 180
+        if report:
+            report(flow_id=uuid.uuid4().hex,task=plan.name,phase='STARTUP')
+        def trace(event):
+            if diagnostics:
+                diagnostics.write('execution_phase',selection=plan.name,detail=asdict(event))
+        runtime = ExecutionRuntime(guard=context.check_active,stop=env.stop,
+            emergency_stop=robot.transport.emergency_stop,close=context.close,
+            cancel_event=context.cancel_event,context={'selection':plan.name},trace=trace)
+        compiled = env.compile(plan)
+        results = runtime.run(compiled)
+        if report:
+            report(task=plan.name,phase='FINISHED')
         return 0
     except BaseException:
-        robot.transport.emergency_stop()
-        if report is not None:
-            report(task=context.current_task or plan.name, phase='INTERRUPTED_OR_FAILED')
+        with suppress(BaseException):
+            robot.transport.emergency_stop()
+        if report:
+            with suppress(BaseException):
+                report(task=context.current_action or plan.name,phase='INTERRUPTED_OR_FAILED')
         raise
     finally:
+        if env is not None:
+            env.abort()
         robot.actions.set_cancel_event(previous_cancel)
         context.close()
         robot.strategy_lock.release()
 
 
-def run_tasks(robot, selection='PlanA', *, context=None, heading_zero_deg=None):
-    plan = resolve_selection(selection)
+def run_selection(robot, selection='PlanA', *, context=None, heading_zero_deg=None, transition_config=None):
+    plan=resolve_selection(selection)
     if selection in LEGACY_SELECTIONS:
-        print(f'[Strategy] Legacy selector {selection!r} -> '
-              f'{plan.name}: ' + ' -> '.join(step.task_id for step in plan.steps))
-    return run_plan(robot, plan, context=context, heading_zero_deg=heading_zero_deg)
-
-
-__all__ = ['TASK_CHOICES', 'STRATEGY_CHOICES', 'SELECTION_CHOICES',
-           'resolve_selection', 'run_plan', 'run_tasks']
+        print(f'[Strategy] Legacy selector {selection!r} -> {plan.name}')
+    return run_plan(robot,plan,context=context,heading_zero_deg=heading_zero_deg,
+                    transition_config=transition_config)

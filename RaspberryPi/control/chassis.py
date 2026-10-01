@@ -272,6 +272,31 @@ class Chassis:
         wheel_distance_mm = projected_counts * 10.0 / COUNTS_PER_CM
         return wheel_distance_mm / self.lateral_distance_scale
 
+    def forward_displacement_mm(
+            self, origin: Tuple[int, int, int, int]) -> float:
+        """Body-axis encoder projection; caller guards freshness and heading."""
+        if len(origin) != 4:
+            raise ValueError('forward encoder origin must contain 4 positions')
+        if self._telem is None:
+            raise RuntimeError('forward displacement requires active telemetry')
+        _, counts = self._project_wheel_positions(
+            self._telem, origin, [-1, 1, 1, -1])
+        return counts * 10.0 / COUNTS_PER_CM
+
+    def measured_body_velocity(self):
+        """Encoder-derived mm/s forward/right and deg/s CW; caller guards age."""
+        from control.trajectory import BodyVelocity
+        if self._telem is None:
+            raise RuntimeError('measured velocity requires active telemetry')
+        rpms = tuple(m.speed_rpm for m in self._telem.motors)
+        if len(rpms) != 4 or not all(math.isfinite(v) for v in rpms):
+            raise RuntimeError('measured wheel velocity invalid')
+        tr, tl, bl, br = rpms
+        return BodyVelocity(
+            (-tr+tl+bl-br)*10.0/(4*MECANUM_RPM_PER_CM_S),
+            (tr+tl-bl-br)*10.0/(4*MECANUM_RPM_PER_CM_S*self.lateral_distance_scale),
+            sum(rpms)/(4*TURN_DEG_S_TO_RPM))
+
     # ==================== Mecanum Kinematics ==================================
 
     @staticmethod
@@ -376,6 +401,88 @@ class Chassis:
     # opts into a wider arrival window and braking during acceleration.
     # They run BLOCKING on the Pi — call from a task thread.
     # STM32 handles the speed PID; Pi handles the position loop.
+
+    def follow_trajectory(self, waypoints, profile, *, check,
+                          initial_velocity=None):
+        """Follow a validated continuous local route, without intermediate stops.
+
+        Waypoints use local mm forward/right and unwrapped clockwise yaw. ``check``
+        must be the active execution context guard, including cancellation and
+        robot link-generation checks. The IMU's CCW convention is converted here.
+        Existing move/turn commands retain their independent behavior.
+        """
+        from control.trajectory import (
+            BodyVelocity, CubicRoute, PoseSample, follow_trajectory,
+        )
+        points = tuple(waypoints)
+        CubicRoute(points, profile)  # Reject unvalidated routes before any output.
+        stop_generation = self._t.emergency_stop_generation
+        last_uptime = None
+        previous_telem = None
+        local_x = local_y = local_yaw = 0.0
+
+        def guard():
+            nonlocal last_uptime
+            check()
+            self._check_action()
+            if (not self._t.connected
+                    or self._t.emergency_stop_generation != stop_generation):
+                raise RuntimeError('trajectory communication or emergency stop fault')
+            telem = self._telem
+            if (telem is None or not math.isfinite(telem.yaw_deg)
+                    or not 0 <= time.monotonic()-self._telem_received_at
+                    <= profile.max_telemetry_age_s):
+                raise RuntimeError('trajectory telemetry unavailable or stale')
+            if (last_uptime is not None
+                    and ((telem.uptime_ms-last_uptime) & 0xffffffff) >= 0x80000000):
+                raise RuntimeError('A-board restarted during trajectory')
+            last_uptime = telem.uptime_ms
+
+        def project(values, scale):
+            tr, tl, bl, br = values
+            return ((-tr+tl+bl-br)*scale/4,
+                    (tr+tl-bl-br)*scale/(4*self.lateral_distance_scale))
+
+        def read_pose():
+            nonlocal previous_telem, local_x, local_y, local_yaw
+            guard()
+            telem = self._telem
+            received_at = self._telem_received_at
+            values = tuple(m.cumulative_pos for m in telem.motors)
+            rpms = tuple(m.speed_rpm for m in telem.motors)
+            if (len(values) != 4 or len(rpms) != 4
+                    or not all(math.isfinite(v) for v in (*values, *rpms))):
+                raise RuntimeError('trajectory encoder telemetry invalid')
+            if previous_telem is not None:
+                positions, yaw = previous_telem
+                deltas = tuple((b-a+0x80000000) % 0x100000000-0x80000000
+                               for a, b in zip(positions, values))
+                dx, dy = project(deltas, 10.0/COUNTS_PER_CM)
+                # Unwrap adjacent IMU samples, then convert CCW to local CW.
+                d_yaw = -((telem.yaw_deg-yaw+180.0) % 360.0-180.0)
+                angle = math.radians(local_yaw+d_yaw/2.0)
+                local_x += math.cos(angle)*dx-math.sin(angle)*dy
+                local_y += math.sin(angle)*dx+math.cos(angle)*dy
+                local_yaw += d_yaw
+            previous_telem = (values, telem.yaw_deg)
+            vx, vy = project(rpms, 10.0/MECANUM_RPM_PER_CM_S)
+            velocity = BodyVelocity(vx, vy, sum(rpms)/(4*TURN_DEG_S_TO_RPM))
+            return PoseSample(local_x, local_y, local_yaw, velocity, received_at)
+
+        def wheel_rpm(velocity):
+            return self.mecanum_rpm(velocity.vx_mm_s/10.0,
+                                    velocity.vy_mm_s*self.lateral_distance_scale/10.0,
+                                    -velocity.yaw_deg_s)
+
+        def send_velocity(velocity):
+            guard()
+            return self.set_speeds(wheel_rpm(velocity))
+
+        return follow_trajectory(points, profile, read_pose=read_pose,
+                                 send_velocity=send_velocity, wheel_rpm=wheel_rpm,
+                                 check=guard, emergency_stop=self._t.emergency_stop,
+                                 initial_velocity=initial_velocity,
+                                 clock=time.monotonic, sleep=time.sleep)
 
     @staticmethod
     def _smoothstep(r: float) -> float:

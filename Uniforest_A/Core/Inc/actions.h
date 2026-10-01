@@ -14,7 +14,9 @@
 #define ACTION_CANCELLED 3u
 #define ACTION_TIMEOUT 4u
 #define ACTION_REJECTED 5u
-/* Still owns the mechanism; the chassis may start its following route. */
+/* Still owns the mechanism; the chassis may start its following route.
+ * Grap1/2/3: full first lift segment has finished (pulse-count evidence).
+ * This does not indicate camera readiness or confirmed pickup success. */
 #define ACTION_CHASSIS_READY 6u
 
 typedef struct {

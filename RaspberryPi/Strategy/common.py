@@ -1,4 +1,4 @@
-"""Strategy-control and state-reporting helpers shared by the task library."""
+"""Shared control math and visual-fallback diagnostics for functional actions."""
 
 from __future__ import annotations
 
@@ -12,21 +12,6 @@ def report_visual_fallback(robot, task, stage, reason):
     diagnostics = getattr(robot, 'diagnostics', None)
     if diagnostics is not None:
         diagnostics.write('visual_fallback', task=task, stage=stage, reason=str(reason))
-
-
-class TaskStateReporting:
-    """Mirror existing state assignments into optional dataset metadata."""
-
-    @property
-    def state(self):
-        return self._state
-
-    @state.setter
-    def state(self, value):
-        self._state = value
-        report = getattr(self.robot, 'set_collection_context', None)
-        if report is not None:
-            report(task=self.TASK_LABEL, phase=value.name)
 
 
 def wrap_angle(angle_deg: float) -> float:
@@ -49,5 +34,5 @@ def slew_command(target: float, current: float,
     return current + delta
 
 
-__all__ = ['TaskStateReporting', 'VisualAlignmentUnavailable', 'report_visual_fallback',
+__all__ = ['VisualAlignmentUnavailable', 'report_visual_fallback',
            'minimum_command', 'slew_command', 'wrap_angle']

@@ -1,22 +1,56 @@
-"""Task ordering, handoff and cancellation tests; no hardware is opened."""
-
+"""Functional plan validation, hardware continuity and task-free execution."""
 import contextlib
-from dataclasses import dataclass
 import io
 import threading
 import time
+import sys
 from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from Strategy.context import BuildApproach, TaskContext
+from Strategy.context import ExecutionContext
+from Strategy.controllers import RobotController
+from Strategy.flows.model import ActionSpec
+from Strategy.flows.factory import ActionEnvironment
 from Strategy.plans import PLANS, StrategyPlan, validate_plan
-from Strategy.results import TaskResult, TaskStatus
 from Strategy.runner import resolve_selection, run_plan
-from Strategy.tasks import TASK_LIBRARY, TaskDefinition, TaskStep
-from Strategy.task1 import Task1Program, Task1_2Program, Task1_3Program
-from Strategy.task2 import Task2Program, Task2_2Program
-from Strategy.task3 import Task3Program, Task3_2Program, Task3_3Program
+
+class FakeActionSession:
+    """Explicit milestone fake; routes run outside the mechanism session."""
+
+    def __init__(self, events=None, *, release='third_release', check=None):
+        self.events = events
+        self.release = release
+        self.on_check = check
+        self.done = self.closed = self.chassis_ready = False
+
+    def wait_chassis_ready(self):
+        if not self.chassis_ready and self.events is not None:
+            self.events.append(self.release)
+        self.chassis_ready = True
+
+    def check(self):
+        if self.closed:
+            raise RuntimeError('fake action session closed')
+        if self.on_check is not None:
+            self.on_check()
+        if self.events is not None:
+            self.events.append('action_check')
+
+    def wait_done(self):
+        if not self.done and self.events is not None:
+            self.events.append('build_done')
+        self.done = True
+
+    def close(self):
+        if not self.closed:
+            if not self.done:
+                self.abort()
+            else:
+                self.closed = True
+
+    def abort(self):
+        self.closed = True
 
 
 def robot_fixture():
@@ -40,304 +74,157 @@ def robot_fixture():
     robot.actions = SimpleNamespace(_cancel_event=None)
     robot.actions.set_cancel_event = lambda event: setattr(robot.actions, '_cancel_event', event)
     robot.chassis = SimpleNamespace(turn=Mock(), set_speeds=Mock(return_value=True))
+    @contextlib.contextmanager
+    def monitor_action(check):
+        check()
+        try:
+            yield
+            check()
+        finally:
+            pass
+    robot.chassis.monitor_action = monitor_action
     return robot
 
-
-@dataclass(frozen=True)
-class RecordConfig:
-    value: int = 0
 
 
 class CompositionTests(unittest.TestCase):
     def setUp(self):
-        self.output = contextlib.redirect_stdout(io.StringIO())
-        self.output.__enter__()
-        self.addCleanup(self.output.__exit__, None, None, None)
-        self.robot = robot_fixture()
+        quiet=contextlib.redirect_stdout(io.StringIO())
+        quiet.__enter__()
+        self.addCleanup(quiet.__exit__,None,None,None)
+        self.robot=robot_fixture()
+        self.robot.move_chassis=Mock(return_value=SimpleNamespace(timed_out=False,cancelled=False))
 
-    def test_default_and_legacy_sequences(self):
-        expected = ['task0-1', 'task1-1', 'task2-1', 'task3-1',
-                    'task1-2', 'task2-2', 'task3-2',
-                    'task1-3', 'task2-2', 'task3-3']
-        self.assertEqual([s.task_id for s in PLANS['PlanA'].steps], expected)
+    def test_plans_are_flat_actions_and_legacy_selectors_only_translate_names(self):
         for plan in PLANS.values():
-            validate_plan(plan)
-        for selection in ('all', 'classic', 'PlanA', 'plana'):
-            self.assertIs(resolve_selection(selection), PLANS['PlanA'])
-        self.assertIs(resolve_selection(), PLANS['PlanA'])
-        self.assertEqual(resolve_selection('task0').steps[0].task_id, 'task0-1')
-        self.assertEqual([s.task_id for s in resolve_selection('task2-r2').steps],
-                         ['task2-2', 'task3-2'])
-        self.assertEqual([s.task_id for s in resolve_selection('task2-2').steps], ['task2-2'])
+            validate_plan(plan,heading_zero_deg=37 if plan.needs_heading_zero else None)
+            self.assertTrue(all(isinstance(s,ActionSpec) for s in plan.steps))
+            self.assertTrue(all(not hasattr(s,'task_id') for s in plan.steps))
+        self.assertEqual(sum(s.kind=='build' for s in PLANS['PlanA'].steps),3)
+        self.assertEqual(sum(s.kind=='build' for s in PLANS['PlanB'].steps),2)
+        self.assertIs(resolve_selection('task1-1'),PLANS['collect-orange-1'])
+        self.assertIs(resolve_selection(),PLANS['PlanA'])
+        self.assertIs(resolve_selection('task2-r2'),PLANS['collect-build-2'])
 
-    def test_invalid_compositions_and_parameters_fail_before_execution(self):
-        for steps in (('task3-1',), ('task2-1', 'task1-1', 'task3-1'),
-                      ('task2-1', 'task3-1', 'task3-2'), ('missing',)):
-            with self.subTest(steps=steps), self.assertRaises(ValueError):
-                run_plan(self.robot, StrategyPlan('bad', tuple(map(TaskStep, steps))))
-        with self.assertRaises(TypeError):
-            run_plan(self.robot, StrategyPlan('bad-parameter', (
-                TaskStep('task2-1'), TaskStep('task3-1', {'wrong_parameter': 1}))))
+    def test_invalid_plan_rejected_before_hardware_or_diagnostics(self):
+        bad=[ActionSpec('missing','bad','ground-1'),
+             ActionSpec('navigate','bad','ground-1',{'route':'orange_to_build'}),
+             ActionSpec('rebase_heading','bad','ground-1'),
+             ActionSpec('load_staged','bad','ground-1'),
+             ActionSpec('grab_cube','bad','ground-1',{'method':'grap3'}),
+             ActionSpec('navigate','bad','depart-a',{'route':'depart_a','after_build':True}),
+             ActionSpec('anchor_wall','bad','ground-1',{'speed_mm_s':-1}),
+             ActionSpec('begin_collection','bad','ground-1',{'color':'purple'})]
+        for spec in bad:
+            with self.subTest(spec=spec),self.assertRaises((TypeError,ValueError)):
+                run_plan(self.robot,StrategyPlan('bad',(spec,)))
+        self.robot.move_chassis.assert_not_called()
         self.robot.transport.emergency_stop.assert_not_called()
         self.robot.set_collection_context.assert_not_called()
 
-    def test_reusing_task_creates_fresh_instances_and_separate_parameters(self):
-        instances, observations = [], []
-        class RecordTask:
-            def __init__(self, robot, config, *, context):
-                instances.append(self)
-                self.config, self.context = config, context
-            def run(self):
-                observations.append(self.config.value)
-                return 0
-        definition = TaskDefinition(RecordTask, RecordConfig)
-        plan = StrategyPlan('reused', (TaskStep('record', {'value': 4}), TaskStep('record')))
-        context = TaskContext(self.robot)
-        self.assertEqual(run_plan(self.robot, plan, task_library={'record': definition}, context=context), 0)
-        self.assertEqual(observations, [4, 0])
-        self.assertIsNot(instances[0], instances[1])
-        self.assertIs(instances[0].context, instances[1].context)
-        self.assertTrue(context.closed)
-        self.assertIsNone(self.robot.actions._cancel_event)
+    def test_missing_heading_wrong_anchor_and_nonfinite_heading_reject_before_motion(self):
+        with self.assertRaises(ValueError):run_plan(self.robot,PLANS['build-1'])
+        for value in (float('nan'),float('inf')):
+            with self.assertRaises(ValueError):run_plan(self.robot,PLANS['build-1'],heading_zero_deg=value)
+        context=ExecutionContext(self.robot,heading_zero_deg=37,anchor='start')
+        with self.assertRaises(ValueError):run_plan(self.robot,PLANS['unload-1'],context=context)
+        self.robot.transport.emergency_stop.assert_not_called()
+
+    def test_fault_or_cancellation_between_actions_prevents_later_motion(self):
+        for fault in ('stop','disconnect','stale','cancel','restart','reconnect'):
+            robot=robot_fixture()
+            context=ExecutionContext(robot)
+            def move(*args,**kwargs):
+                if fault=='stop':robot.transport.emergency_stop()
+                if fault=='disconnect':robot.transport.connected=False
+                if fault=='stale':robot.telemetry_age=1
+                if fault=='cancel':context.cancel_event.set()
+                if fault=='restart':robot.telem.uptime_ms=0
+                if fault=='reconnect':robot.link_generation+=1
+                return SimpleNamespace(timed_out=False,cancelled=False)
+            robot.move_chassis=Mock(side_effect=move)
+            steps=tuple(ActionSpec('navigate',str(i),'depart-a',{'route':'depart_a'}) for i in (1,2))
+            with self.subTest(fault=fault),self.assertRaises(RuntimeError):
+                run_plan(robot,StrategyPlan('fault',steps),context=context)
+            self.assertEqual(robot.move_chassis.call_count,1)
+            self.assertTrue(context.closed)
+            self.assertFalse(robot.strategy_lock.locked())
+
+    def test_only_one_robot_owner_and_no_motion_on_conflicting_context(self):
+        self.robot.strategy_lock.acquire()
+        with self.assertRaises(RuntimeError):run_plan(self.robot,PLANS['depart-a'])
+        self.robot.move_chassis.assert_not_called()
+        self.assertTrue(self.robot.strategy_lock.locked())
+        self.robot.strategy_lock.release()
+        with self.assertRaises(ValueError):
+            run_plan(self.robot,PLANS['depart-a'],context=ExecutionContext(robot_fixture()))
+
+    def test_compile_exposes_actions_and_build_pair_without_constructing_old_programs(self):
+        context=ExecutionContext(self.robot,heading_zero_deg=37,anchor='build_approach')
+        env=ActionEnvironment(self.robot,context)
+        compiled=env.compile(PLANS['build-2'])
+        self.assertEqual(len(compiled.flow.actions),len(PLANS['build-2'].steps))
+        self.assertEqual(compiled.preview()[-1]['transition_candidates'],('build_release_to_route',))
+        self.assertNotIn('Strategy.competition',sys.modules)
+        for i in range(6):self.assertNotIn(f'Strategy.task{i}',sys.modules)
+        self.assertNotIn('Strategy.tasks',sys.modules)
+
+    def test_moving_between_acquisition_and_grab_is_rejected_before_motion(self):
+        steps=list(PLANS['collect-orange-1'].steps)
+        movement=next(s for s in steps if s.name.endswith('.delivery'))
+        steps.remove(movement)
+        grip=next(i for i,s in enumerate(steps) if s.name.endswith('.grab.3'))
+        steps.insert(grip,movement)
+        with self.assertRaisesRegex(ValueError,'immediately preceding'):
+            run_plan(self.robot,StrategyPlan('bad-order',steps,'ground_area'))
+        self.robot.move_chassis.assert_not_called()
+
+    def test_secondary_stop_error_preserves_primary_action_failure_and_restores_detector(self):
+        self.robot.move_chassis.side_effect=ValueError('primary motion fault')
+        self.robot.transport.emergency_stop.side_effect=OSError('send failed')
+        with self.assertRaisesRegex(ValueError,'primary motion fault'):
+            run_plan(self.robot,PLANS['depart-a'])
+        self.robot.set_cube_detection_profile.assert_called_with('default')
         self.assertFalse(self.robot.strategy_lock.locked())
 
-    def test_failures_never_start_next_task_or_return_false_success(self):
-        for failure in ('code', 'structured', 'exception', 'interrupt', 'stop', 'stale', 'reboot', 'disconnect', 'reconnect'):
-            with self.subTest(failure=failure):
-                robot = robot_fixture()
-                calls = []
-                class FailingTask:
-                    def __init__(self, robot, config, *, context):
-                        self.robot = robot
-                    def run(self):
-                        calls.append('first')
-                        if failure == 'code': return 9
-                        if failure == 'structured': return TaskResult(TaskStatus.HARDWARE_FAULT)
-                        if failure == 'exception': raise RuntimeError('failed')
-                        if failure == 'interrupt': raise KeyboardInterrupt()
-                        if failure == 'stop': self.robot.transport.emergency_stop()
-                        if failure == 'stale': self.robot.telemetry_age = 1.0
-                        if failure == 'reboot': self.robot.telem.uptime_ms = 0
-                        if failure == 'disconnect': self.robot.transport.connected = False
-                        if failure == 'reconnect': self.robot.link_generation += 1
-                        return 0
-                library = {'first': TaskDefinition(FailingTask, RecordConfig)}
-                plan = StrategyPlan('failure', (TaskStep('first'), TaskStep('first')))
-                context = TaskContext(robot)
-                if failure in ('code', 'structured'):
-                    self.assertNotEqual(run_plan(robot, plan, context=context, task_library=library), 0)
-                else:
-                    error = KeyboardInterrupt if failure == 'interrupt' else RuntimeError
-                    with self.assertRaises(error):
-                        run_plan(robot, plan, context=context, task_library=library)
-                self.assertEqual(calls, ['first'])
-                self.assertTrue(context.closed)
-                self.assertIsNone(context.build_approach)
-                self.assertFalse(robot.strategy_lock.locked())
+    def test_build_output_anchor_uses_serial_fallback_when_required_for_route_entry(self):
+        from Strategy.execution import ExecutionRuntime
+        from unittest.mock import call
+        steps=(ActionSpec('build','build','building-1',ends_at='tower'),
+               ActionSpec('navigate','depart','building-1',
+                          {'route':'build_return','after_build':True},requires_anchor='tower',ends_at='ground_area'))
+        plan=StrategyPlan('anchored',steps,'build_approach',180,True)
+        context=ExecutionContext(self.robot,heading_zero_deg=37,anchor='build_approach')
+        env=ActionEnvironment(self.robot,context)
+        events=[]
+        self.robot.actions.begin=Mock(return_value=FakeActionSession(events))
+        env.run_route=Mock(side_effect=lambda *args:events.append('route'))
+        validate_plan(plan,heading_zero_deg=37)
+        runtime=ExecutionRuntime(guard=context.check_active,stop=env.stop,
+                                 emergency_stop=self.robot.transport.emergency_stop)
+        runtime.run(env.compile(plan))
+        self.assertLess(events.index('build_done'),events.index('route'))
+        self.assertEqual(context.anchor,'ground_area')
 
-    def test_stop_before_background_execution_and_closed_context_cannot_restart(self):
-        context = TaskContext(self.robot)
-        context.cancel_event.set()
-        with patch.object(Task2Program, 'run') as run:
-            with self.assertRaises(RuntimeError):
-                run_plan(self.robot, PLANS['collect-build-1'], context=context)
-            run.assert_not_called()
-            context.cancel_event.clear()
-            with self.assertRaises(RuntimeError):
-                run_plan(self.robot, PLANS['collect-build-1'], context=context)
-            run.assert_not_called()
+    def test_production_sources_do_not_import_removed_task_modules(self):
+        import ast
+        from pathlib import Path
+        root=Path(__file__).resolve().parents[1]
+        paths=list((root/'Strategy').rglob('*.py'))+[root/'main.py',root/'task2_main.py']
+        for path in paths:
+            for node in ast.walk(ast.parse(path.read_text(encoding='utf-8'))):
+                if isinstance(node,ast.ImportFrom):
+                    module=node.module or ''
+                    self.assertNotIn(module, {'competition','tasks',*[f'task{i}' for i in range(6)]},str(path))
+                    self.assertFalse(module.startswith(('Strategy.task','Strategy.competition')),str(path))
 
-    def test_concurrent_strategy_rejected_without_stopping_the_owner(self):
-        self.robot.strategy_lock.acquire()
-        try:
-            with self.assertRaisesRegex(RuntimeError, 'already running'):
-                run_plan(self.robot, PLANS['PlanA'])
-            self.robot.transport.emergency_stop.assert_not_called()
-        finally:
-            self.robot.strategy_lock.release()
-
-    def test_fresh_flow_ids_for_separate_runs(self):
-        with patch.object(TASK_LIBRARY['task1-1'].program_type, 'run', return_value=0):
-            run_plan(self.robot, resolve_selection('task1-1'))
-            run_plan(self.robot, resolve_selection('task1-1'))
-        flows = [c.kwargs['flow_id'] for c in self.robot.set_collection_context.call_args_list
-                 if 'flow_id' in c.kwargs]
-        self.assertEqual(len(set(flows)), 2)
-
-    def test_task1_finishes_after_lateral_move_without_turning_back_to_zero(self):
-        for task_type, lateral, before, after in (
-                (Task1Program, 100, 'right', 'left'),
-                (Task1_2Program, 400, 'right', 'left'),
-                (Task1_3Program, 500, 'left', 'right')):
-            with self.subTest(task=task_type.TASK_LABEL):
-                robot = robot_fixture()
-                task = task_type(robot, context=TaskContext(robot))
-                task._cube_lateral_displacement_mm = 125
-                moves, turns = [], []
-                task._checked_move = lambda direction, mm, speed, **kw: moves.append((direction, mm, speed))
-                task._turn_to_heading = lambda heading, **kw: turns.append(heading)
-                task._drive_until_wall = Mock()
-                task._align_delivery_tag_or_continue = Mock()
-                robot.actions.hatch_open = Mock()
-                robot.actions.hatch_close = Mock()
-                task._run_delivery_route()
-                self.assertEqual(turns, [90, 180])
-                self.assertEqual(moves, [('backward', 400, 400), ('forward', 2675, 1000),
-                                         (before, lateral, 400), ('backward', 300, 400),
-                                         (after, lateral, 400)])
-                self.assertEqual(task._heading_zero_deg, 37)
-                robot.actions.hatch_open.assert_called_once_with(settle_ms=300)
-                robot.actions.hatch_close.assert_called_once_with(settle_ms=0)
-
-    def test_task2_entry_180_preserves_absolute_heading_for_next_turn(self):
-        for task_type in (Task2Program, Task2_2Program):
-            with self.subTest(task=task_type.TASK_LABEL):
-                robot = robot_fixture()
-                task = task_type(robot, context=TaskContext(robot))
-                task._preflight()
-                self.assertEqual(task._heading_zero_deg, 37)
-                self.assertEqual(task._heading_error(180), 0)
-                task._turn_to_heading(-90)
-                robot.chassis.turn.assert_called_once_with(
-                    90, 120, hold_ms=0, settle_cycles=1)
-
-    def test_task2_stops_before_tag6_and_exports_calibrated_heading(self):
-        for task_type, distance in ((Task2Program, 2500), (Task2_2Program, 2350)):
-            for grabbed in (True, False):
-                for overlap in (True, False):
-                    with self.subTest(task=task_type.__name__, grabbed=grabbed, overlap=overlap):
-                        robot = robot_fixture()
-                        context = TaskContext(robot, current_task=task_type.TASK_LABEL)
-                        task = task_type(robot, context=context)
-                        moves, turns, post_purple = [], [], []
-                        task._checked_move = lambda direction, mm, speed, **kw: moves.append((direction, mm))
-                        task._turn_to_heading = turns.append
-                        task._drive_until_wall = Mock()
-                        task._capture_lateral_origin = lambda: 'origin'
-                        task._measure_lateral_displacement_mm = lambda origin: 125
-                        def purple_route(origin):
-                            post_purple.append(origin)
-                            # Represents the existing wall-based zero recalibration.
-                            task._heading_zero_deg = 37.0
-                        task._run_post_purple_route = purple_route
-                        def purple(*, chassis_followup):
-                            if grabbed: chassis_followup()
-                            return grabbed
-                        task._try_grab_purple = purple
-                        def collect(count, grab, *, chassis_followup):
-                            self.assertEqual(count, 2 if grabbed else 3)
-                            if overlap: chassis_followup()
-                        task._collect_orange_with_count_check = collect
-                        task._align_delivery_tag = Mock(side_effect=AssertionError('Tag6 is in Task3'))
-                        self.assertEqual(task.run(), 0)
-                        self.assertEqual(moves, [('backward', distance), ('forward', 250),
-                                                 ('backward', 100), ('right', 425), ('forward', 2750)])
-                        self.assertEqual(turns, [-90, 180])
-                        self.assertEqual(post_purple, ['origin'])
-                        self.assertEqual(context.build_approach.heading_zero_deg, 37.0)
-                        task._align_delivery_tag.assert_not_called()
-
-    def test_task3_consumes_heading_and_keeps_build_overlap_for_all_variants(self):
-        for task_type, direction, lateral, return_mm in (
-                (Task3Program, 'right', 100, 2500),
-                (Task3_2Program, 'right', 400, 2200),
-                (Task3_3Program, 'left', 500, 3000)):
-            with self.subTest(task=task_type.__name__):
-                robot = robot_fixture()
-                context = TaskContext(robot, build_approach=BuildApproach(37.0, 'task2'))
-                task = task_type(robot, context=context)
-                events = []
-                @contextlib.contextmanager
-                def monitor(check):
-                    events.append('monitor_enter')
-                    check()
-                    yield
-                    check()
-                    events.append('monitor_exit')
-                robot.chassis.monitor_action = monitor
-                robot.chassis.turn = lambda angle, speed, **kw: events.append(('turn', angle))
-                def build(*, chassis_followup):
-                    events.append('build_release')
-                    chassis_followup(lambda: events.append('action_check'))
-                    events.append('build_done')
-                robot.actions.build = build
-                task._align_delivery_tag = Mock(side_effect=lambda **kw: events.append('tag6'))
-                task._align_building_or_continue = Mock(return_value=True)
-                task._checked_move = lambda direction, mm, speed, **kw: events.append((direction, mm, speed))
-                task._drive_until_wall = lambda **kw: events.append(('wall', kw['direction']))
-                self.assertEqual(task.run(), 0)
-                self.assertEqual(task._heading_zero_deg, 37.0)
-                self.assertIsNone(context.build_approach)
-                self.assertEqual(events, ['tag6', (direction, lateral, 400), 'build_release',
-                    'monitor_enter', 'action_check', ('backward', 100, 400), ('turn', 180),
-                    ('left', return_mm, 1000), ('wall', 'left'), 'action_check', 'monitor_exit', 'build_done'])
-                self.assertNotIn('translation_only_completion', task._align_delivery_tag.call_args.kwargs)
-                self.assertTrue(task._align_delivery_tag.call_args.kwargs['independent_heading'])
-                self.assertEqual(task._align_delivery_tag.call_args.kwargs['tag_id'], 6)
-
-    def test_task3_missing_or_consumed_handoff_never_commands_motion(self):
-        context = TaskContext(self.robot)
-        task = Task3Program(self.robot, context=context)
-        with patch.object(task, '_run_mission') as mission:
-            with self.assertRaisesRegex(RuntimeError, 'handoff'):
-                task.run()
-            mission.assert_not_called()
-        for value in (float('nan'), float('inf')):
-            with self.assertRaises(ValueError):
-                run_plan(self.robot, resolve_selection('task3-1'), heading_zero_deg=value)
-
-    def test_build_failure_does_not_turn_into_a_successful_return_route(self):
-        robot = robot_fixture()
-        task = Task3Program(robot)
-        task._checked_move = Mock()
-        task._align_building_or_continue = Mock(return_value=True)
-        robot.actions.build = Mock(side_effect=RuntimeError('action failed'))
-        with patch.object(task, '_run_post_build_route') as followup:
-            with self.assertRaisesRegex(RuntimeError, 'action failed'):
-                task._run_build_phase()
-            followup.assert_not_called()
-
-    def test_executor_hands_off_actual_task2_zero_to_fresh_task3_instance(self):
-        received = []
-        def collect(task):
-            task._heading_zero_deg = 37.0
-            task.context.publish_build_approach(task._heading_zero_deg)
-        def build(task):
-            received.append((task._heading_zero_deg, task.context.current_task))
-        with patch.object(Task2Program, '_run_collection_route', collect), \
-             patch.object(Task3Program, '_run_mission', build):
-            self.assertEqual(run_plan(self.robot, PLANS['collect-build-1']), 0)
-        self.assertEqual(received, [(37.0, 'task3-1')])
-
-    def test_agent_catalog_and_dry_run_use_the_same_library(self):
-        from agent.tools import RobotToolExecutor, tool_definitions
-        from Strategy.runner import SELECTION_CHOICES
-        schema = next(t for t in tool_definitions() if t['name'] == 'run_strategy')
-        self.assertEqual(schema['parameters']['properties']['selection']['enum'], list(SELECTION_CHOICES))
-        agent = RobotToolExecutor(dry_run=True)
-        self.assertEqual(agent.run_strategy('collect-build-2').value['tasks'], ['task2-2', 'task3-2'])
-        self.assertEqual(agent.run_strategy('task2-1').value['tasks'], ['task2-1'])
-        with self.assertRaises(ValueError):
-            agent.run_strategy('task3-1')
-        self.assertEqual(agent.run_strategy('task3-1', heading_zero_deg=37).value['tasks'], ['task3-1'])
-
-    def test_readonly_cli_and_missing_handoff_never_construct_robot(self):
+    def test_cli_preview_and_missing_entry_heading_do_not_construct_robot(self):
         import main
-        for args in (['--list-tasks'], ['--strategy', 'classic', '--show-plan'],
-                     ['--task', 'task3-2', '--show-plan'],
-                     ['--task', 'task1-3', '--show-plan'],
-                     ['--task', 'task3-3', '--show-plan']):
-            with self.subTest(args=args), patch('sys.argv', ['main.py', *args]), \
-                 patch('main.Robot') as robot:
-                self.assertEqual(main.main(), 0)
-                robot.assert_not_called()
-        for args in (['--task', 'task3-1'], ['--task', 'task3-3'],
-                     ['--task', 'task3-2', '--heading-zero-deg', 'nan']):
-            with self.subTest(args=args), patch('sys.argv', ['main.py', *args]), \
-                 patch('main.Robot') as robot, contextlib.redirect_stderr(io.StringIO()):
-                self.assertEqual(main.main(), 2)
+        for args,code in ((['--strategy','PlanA','--show-plan'],0),
+                          (['--flow','build-1','--show-plan'],0),
+                          (['--flow','build-1'],2),(['--list-flows'],0)):
+            with self.subTest(args=args),patch('sys.argv',['main.py',*args]),patch('main.Robot') as robot,contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(main.main(),code)
                 robot.assert_not_called()
 
-
-if __name__ == '__main__':
-    unittest.main()
+if __name__=='__main__':unittest.main()

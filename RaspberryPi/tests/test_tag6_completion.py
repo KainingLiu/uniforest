@@ -7,13 +7,13 @@ import unittest
 from unittest.mock import patch
 
 from control.chassis import Chassis
-from Strategy.competition import CompetitionProgram, FirstTaskConfig
-from Strategy.task1 import Task1_2Config
-from Strategy.task3 import Task3Config, Task3_2Config
+from Strategy.controllers import RobotController
+from Strategy.settings import (GroundCollectionConfig, GroundCollection2Config,
+                               BuildingConfig, Building2Config)
 
 
 class TagReplay:
-    def __init__(self, samples, config=FirstTaskConfig()):
+    def __init__(self, samples, config=GroundCollectionConfig()):
         self.samples = samples  # distance mm, lateral mm, gyro error deg
         self.now, self.index = 100.0, -1
         self.commands, self.velocities = [], []
@@ -22,8 +22,7 @@ class TagReplay:
         self.robot.chassis = SimpleNamespace(
             set_speeds=self.record_speeds,
             mecanum_rpm=self.mecanum)
-        self.program = CompetitionProgram.__new__(CompetitionProgram)
-        self.program.robot = self.robot
+        self.program = RobotController(self.robot)
         self.program._heading_zero_deg = 0
         self.program.config = replace(config, delivery_tag_align_timeout_s=1.0)
 
@@ -57,7 +56,7 @@ class TagReplay:
         clock = SimpleNamespace(monotonic=lambda: self.now, time=lambda: self.now,
                                 sleep=self.sleep)
         self.log = io.StringIO()
-        with patch('Strategy.competition.time', clock), contextlib.redirect_stdout(self.log):
+        with patch('Strategy.controllers.time', clock), contextlib.redirect_stdout(self.log):
             self.program._align_delivery_tag(
                 tag_id=6, target_distance_mm=425, heading_target_cw_deg=180,
                 distance_tolerance_mm=8, lateral_tolerance_mm=8,
@@ -65,9 +64,21 @@ class TagReplay:
                 independent_heading=independent_heading)
 
 
-class LegacyTagAlignmentTests(unittest.TestCase):
-    def test_four_task_configs_wait_for_heading_then_confirm_all_axes(self):
-        for config in (FirstTaskConfig(), Task1_2Config(), Task3Config(), Task3_2Config()):
+class TagAlignmentTests(unittest.TestCase):
+    def test_recalibration_is_shared_with_the_next_action(self):
+        robot = SimpleNamespace(telem=SimpleNamespace(yaw_deg=42.0))
+        context = SimpleNamespace(heading_zero_deg=37.5)
+        pickup = RobotController(robot, context=context, operation_name='pickup')
+        self.assertEqual(pickup._heading_zero_deg, 37.5)
+        with contextlib.redirect_stdout(io.StringIO()):
+            pickup._recalibrate_heading_zero(reference_cw_deg=180.0)
+        alignment = RobotController(robot, BuildingConfig(), context=context,
+                                    operation_name='align-building')
+        self.assertEqual(alignment._heading_zero_deg, -138.0)
+        self.assertEqual(alignment._heading_error(180.0), 0.0)
+
+    def test_four_action_profiles_wait_for_heading_then_confirm_all_axes(self):
+        for config in (GroundCollectionConfig(), GroundCollection2Config(), BuildingConfig(), Building2Config()):
             with self.subTest(config=type(config).__name__):
                 replay = TagReplay([(425, 0, 15)] * 3 + [(425, 0, 2)], config)
                 replay.run()
@@ -118,7 +129,7 @@ class LegacyTagAlignmentTests(unittest.TestCase):
 
 class IndependentHeadingTests(unittest.TestCase):
     def test_all_variants_keep_correcting_during_four_frame_confirmation(self):
-        for config in (FirstTaskConfig(), Task1_2Config(), Task3Config(), Task3_2Config()):
+        for config in (GroundCollectionConfig(), GroundCollection2Config(), BuildingConfig(), Building2Config()):
             with self.subTest(config=type(config).__name__):
                 replay = TagReplay([(425, 0, 2)], config)
                 replay.run(independent_heading=True)
@@ -201,7 +212,7 @@ class IndependentHeadingTests(unittest.TestCase):
                 def check_active(**kwargs):
                     if replay.index >= 2:
                         raise RuntimeError(fault)
-                replay.program.context = SimpleNamespace(check_active=check_active)
+                replay.program.context = SimpleNamespace(check_active=check_active, heading_zero_deg=0.0)
                 with self.assertRaisesRegex(RuntimeError, fault):
                     replay.run(independent_heading=True)
                 self.assertEqual(replay.index, 2)

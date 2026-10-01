@@ -6,8 +6,9 @@ from types import SimpleNamespace
 import unittest
 from unittest.mock import Mock, patch
 
-from Strategy.competition import FirstTaskConfig, TaskControl
-from Strategy.context import TaskContext
+from Strategy.controllers import RobotController
+from Strategy.settings import GroundCollectionConfig
+from Strategy.context import ExecutionContext
 from Strategy.wall_controller import StallConfirmation
 from tests.test_strategy_composition import robot_fixture
 
@@ -26,7 +27,7 @@ class WallReplay:
         self.after_sleep = lambda: None
         self.robot = robot_fixture()
         self.robot.chassis.mecanum_rpm = Mock(return_value=[700, -700, -700, 700])
-        self.task = TaskControl(self.robot, context=TaskContext(self.robot))
+        self.task = RobotController(self.robot, context=ExecutionContext(self.robot))
         self.refresh()
 
     def refresh(self):
@@ -43,15 +44,15 @@ class WallReplay:
     @contextlib.contextmanager
     def clock(self):
         self.output = io.StringIO()
-        with patch('Strategy.competition.time.monotonic', side_effect=lambda: self.now), \
-             patch('Strategy.competition.time.sleep', side_effect=self.sleep), \
+        with patch('Strategy.controllers.time.monotonic', side_effect=lambda: self.now), \
+             patch('Strategy.controllers.time.sleep', side_effect=self.sleep), \
              contextlib.redirect_stdout(self.output):
             yield
 
 
 class WallContactTests(unittest.TestCase):
     def test_relaxed_speed_still_requires_load_and_original_wheel_count(self):
-        cfg = FirstTaskConfig()
+        cfg = GroundCollectionConfig()
         for direction, speeds, currents, expected in (
             ('forward', [700, 700, -80, 80], [0, 0, -2500, 2500], True),
             ('forward', [0, 0, 81, 80], [3000] * 4, False),
@@ -62,7 +63,7 @@ class WallContactTests(unittest.TestCase):
             ('left', [700] * 4, [4000] * 4, False),
         ):
             with self.subTest(direction=direction, speeds=speeds, currents=currents):
-                self.assertEqual(TaskControl._stall_sample(
+                self.assertEqual(RobotController._stall_sample(
                     feedback(speeds, currents), cfg, direction), expected)
 
     def test_short_dropout_pauses_time_and_cannot_confirm_on_failed_sample(self):

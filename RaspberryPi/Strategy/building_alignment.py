@@ -1,183 +1,16 @@
-"""Task3: Tag6 alignment, building, and post-Build return (old steps 15-17)."""
+"""Reusable building visual alignment, independent of mission recipes."""
 
 from collections import deque
-from dataclasses import dataclass
-from enum import Enum, auto
 from statistics import median
 import time
 
-from .competition import TaskControl, FirstTaskConfig, _Pid
+from .tag_controller import PID as _Pid
 from .common import VisualAlignmentUnavailable, report_visual_fallback
-from control.chassis import NORMAL_DISTANCE_MOVE_SPEED_MM_S, LONG_DISTANCE_MOVE_SPEED_MM_S
 
 
-class Task3State(Enum):
-    STARTUP = auto()
-    READY = auto()
-    TAG6_ALIGN = auto()
-    POST_TAG6_LATERAL = auto()
-    BUILDING_ALIGN = auto()
-    BUILD = auto()
-    POST_BUILD_REVERSE = auto()
-    POST_BUILD_TURN = auto()
-    POST_BUILD_ROUTE = auto()
-    POST_BUILD_LEFT_WALL = auto()
-    FINISHED = auto()
-    FAULT = auto()
+class BuildingAlignment:
+    """Geometric target selection and bounded X/Z/heading alignment."""
 
-
-@dataclass(frozen=True)
-class Task3Config(FirstTaskConfig):
-    delivery_tag_vision_stale_s: float = 0.7
-    delivery_tag_lost_timeout_s: float = 2.0
-    build_tag_id: int = 6
-    build_tag_distance_mm: float = FirstTaskConfig().delivery_tag_distance_mm
-    build_tag_heading_target_cw_deg: float = 180.0
-    build_tag_distance_tolerance_mm: float = 8.0
-    build_tag_lateral_tolerance_mm: float = 8.0
-    build_tag_heading_tolerance_deg: float = (
-        FirstTaskConfig().delivery_heading_tolerance_deg)
-    build_tag_fine_gain_scale: float = (
-        FirstTaskConfig().delivery_tag_fine_gain_scale)
-    build_tag_vision_stale_s: float = 0.7
-    build_tag_lost_timeout_s: float = 2.0
-    # Tag6 is approached after a long straight run. Slow the far-field
-    # profile and enter deceleration earlier without changing final tolerances.
-    delivery_tag_fast_forward_mm_s: float = 260.0
-    delivery_tag_fast_lateral_mm_s: float = 200.0
-    delivery_tag_min_linear_mm_s: float = 100.0
-    delivery_tag_slowdown_distance_mm: float = 140.0
-    delivery_tag_slowdown_lateral_mm: float = 100.0
-    delivery_tag_creep_distance_mm: float = 35.0
-    delivery_tag_creep_lateral_mm: float = 25.0
-    post_tag6_lateral_right_mm: float = 100.0
-    post_tag6_lateral_direction: str = 'right'
-    post_tag6_lateral_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
-    building_target_x_mm: float = 0.0
-    # Z target is the horizontal robot-to-building distance at which Build
-    # places correctly.  With the cube camera a lower top edge means nearer.
-    building_target_z_mm: float = 75.0
-    # Inverse-row Z model: z = building_z_scale / top_row.  The scale comes
-    # from one measured pose where the building top edge sat at image row 82.4
-    # while the robot was 132.8 mm away, so the scale is 132.8*82.4.  The Z
-    # target above then corresponds to the top edge around row scale/75 ~= 146,
-    # i.e. the upper-middle part of the frame.
-    building_z_scale_mm_px: float = 132.8 * 82.4
-    # Lateral pixels convert with the same calibrated focal length and optical
-    # center as camera_calib.json for the cube camera.
-    building_reference_fx_px: float = 331.93
-    building_reference_cx_px: float = 320.0
-    # Forward/back creep: inside this remaining Z error the approach slows to
-    # the creep band so the 100 mm/s static-friction floor cannot overshoot
-    # the +/-6 mm acceptance window and set up a forward/back limit cycle.
-    building_z_creep_start_mm: float = 30.0
-    building_z_creep_speed_mm_s: float = 90.0
-    building_z_creep_min_mm_s: float = 60.0
-    # Building contours vary with occlusion and camera pitch. Keep the
-    # geometric gate permissive; position and multi-frame confirmation still
-    # reject isolated orange cube candidates.
-    building_min_confidence: float = 35.0
-    building_min_height_width_ratio: float = 0.35
-    building_max_height_width_ratio: float = 2.20
-    building_x_tolerance_mm: float = 3.0
-    building_z_tolerance_mm: float = 6.0
-    building_heading_tolerance_deg: float = 2.4
-    building_x_deadband_mm: float = 1.0
-    building_z_deadband_mm: float = 2.0
-    building_heading_deadband_deg: float = 0.5
-    building_confirm_frames: int = 3
-    building_median_frames: int = 5
-    building_align_timeout_s: float = 7.0
-    building_lost_timeout_s: float = 4.0
-    building_vision_stale_s: float = 0.7
-    building_track_max_x_jump_mm: float = 50.0
-    building_track_max_z_jump_mm: float = 60.0
-    building_track_lock_frames: int = 2
-    building_control_period_s: float = 0.05
-    building_forward_kp: float = 1.5
-    building_forward_ki: float = 0.01
-    building_forward_kd: float = 0.02
-    building_lateral_kp: float = 1.8
-    building_lateral_ki: float = 0.01
-    building_lateral_kd: float = 0.02
-    building_heading_kp: float = 1.5
-    building_heading_ki: float = 0.02
-    building_heading_kd: float = 0.03
-    building_linear_integral_limit: float = 150.0
-    building_heading_integral_limit: float = 100.0
-    building_max_forward_mm_s: float = 250.0
-    building_max_lateral_mm_s: float = 250.0
-    building_max_yaw_deg_s: float = 30.0
-    # Static-friction floor for starting motion. Required for pure lateral
-    # commands (mecanum rollers) and far forward/back approach; once the
-    # chassis is rolling the building_z_* creep band lets forward speed drop
-    # near the target instead of slamming every frame and overshooting.
-    building_min_linear_mm_s: float = 100.0
-    building_far_linear_mm_s: float = 150.0
-    building_min_yaw_deg_s: float = 6.0
-    # Soften command changes; the accel limiter still allows a smooth stop as
-    # an axis enters its acceptance window.
-    building_linear_accel_mm_s2: float = 1000.0
-    building_yaw_accel_deg_s2: float = 60.0
-    post_build_reverse_mm: float = 100.0
-    post_build_reverse_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
-    post_build_turn_cw_deg: float = 180.0
-    post_build_route_distance_mm: float = 2500.0
-    post_build_route_speed_mm_s: float = LONG_DISTANCE_MOVE_SPEED_MM_S
-
-@dataclass(frozen=True)
-class Task3_2Config(Task3Config):
-    post_tag6_lateral_right_mm: float = 400.0
-    post_build_route_distance_mm: float = 2200.0
-
-
-@dataclass(frozen=True)
-class Task3_3Config(Task3Config):
-    post_tag6_lateral_right_mm: float = 500.0
-    post_tag6_lateral_direction: str = 'left'
-    post_build_route_distance_mm: float = 3000.0
-
-
-class Task3Program(TaskControl):
-    TASK_LABEL = 'task3-1'
-
-    def __init__(self, robot, config: Task3Config = Task3Config(), *, context=None):
-        super().__init__(robot, config, context=context)
-        self.state = Task3State.STARTUP
-
-    def _preflight(self):
-        self._wait_ready()
-        if self.context is None:
-            raise RuntimeError('Task3 requires a TaskContext with build-approach heading')
-        handoff = self.context.take_build_approach()
-        self._heading_zero_deg = handoff.heading_zero_deg
-        self.state = Task3State.READY
-        print(f'[{self.TASK_LABEL}] Heading zero inherited from {handoff.source_task}: '
-              f'{self._heading_zero_deg:+.1f} deg')
-
-    def _run_build_phase(self):
-        self._check_active()
-        self._run_build_alignment_and_action(chassis_followup=self._run_post_build_route)
-
-    def _run_mission(self):
-        cfg = self.config
-        self.state = Task3State.TAG6_ALIGN
-        self.robot.reset_field_localization_filter()
-        self._align_delivery_tag_or_continue(
-            tag_id=cfg.build_tag_id,
-            target_distance_mm=cfg.build_tag_distance_mm,
-            heading_target_cw_deg=cfg.build_tag_heading_target_cw_deg,
-            distance_tolerance_mm=cfg.build_tag_distance_tolerance_mm,
-            lateral_tolerance_mm=cfg.build_tag_lateral_tolerance_mm,
-            heading_tolerance_deg=cfg.build_tag_heading_tolerance_deg,
-            fine_gain_scale=cfg.build_tag_fine_gain_scale,
-            vision_stale_s=cfg.build_tag_vision_stale_s,
-            lost_timeout_s=cfg.build_tag_lost_timeout_s,
-            fine_align_enabled=False,
-            stop_axes_in_tolerance=True,
-            independent_heading=True,
-        )
-        self._run_build_phase()
 
     def _building_from_result(self, result, locked_position=None):
         cfg = self.config
@@ -296,7 +129,7 @@ class Task3Program(TaskControl):
             # upper edge is the real top of the stack, not the front-face
             # boundary that biases Z low and forces a spurious forward/back.
             set_profile('building')
-        print(f'[{self.TASK_LABEL}] Building visual alignment: '
+        print(f'[{self.operation_name}] Building visual alignment: '
               f'x={cfg.building_target_x_mm:+.1f} mm, '
               f'z={cfg.building_target_z_mm:.1f} mm')
         try:
@@ -363,7 +196,7 @@ class Task3Program(TaskControl):
                     self.robot.chassis.set_speeds([0, 0, 0, 0])
                     vx = vy = wz = 0.0
                     confirmed += 1
-                    print(f'[{self.TASK_LABEL}] Building aligned '
+                    print(f'[{self.operation_name}] Building aligned '
                           f'{confirmed}/{cfg.building_confirm_frames}: '
                           f'x={x_mm:+.1f} mm, z={z_mm:.1f} mm, '
                           f'gyro={heading_error:+.1f} deg')
@@ -430,7 +263,7 @@ class Task3Program(TaskControl):
                     rpm = self.robot.chassis.mecanum_rpm(
                         vx / 10.0, vy / 10.0, wz)
                     self.robot.chassis.set_speeds(rpm)
-                    print(f'[{self.TASK_LABEL}] Building PID: '
+                    print(f'[{self.operation_name}] Building PID: '
                           f'x={x_mm:+.1f} mm, z={z_mm:.1f} mm, '
                           f'gyro={heading_error:+.1f} deg; '
                           f'vx={vx:+.0f}, vy={vy:+.0f} mm/s, '
@@ -449,95 +282,5 @@ class Task3Program(TaskControl):
             return True
         except VisualAlignmentUnavailable as exc:
             self._check_active()
-            report_visual_fallback(self.robot, self.TASK_LABEL, 'building alignment', exc)
+            report_visual_fallback(self.robot, self.operation_name, 'building alignment', exc)
             return False
-
-    def _run_build_alignment_and_action(self, *, chassis_followup=None):
-        """Approach the building after Tag6 and run the monitored Build action."""
-        cfg = self.config
-        if cfg.post_tag6_lateral_right_mm > 0.0:
-            self.state = Task3State.POST_TAG6_LATERAL
-            print(f'[{self.TASK_LABEL}] Move {cfg.post_tag6_lateral_direction} '
-                  f'{cfg.post_tag6_lateral_right_mm:.0f} mm at '
-                  f'{cfg.post_tag6_lateral_speed_mm_s:.0f} mm/s after Tag6')
-            self._checked_move(
-                cfg.post_tag6_lateral_direction, cfg.post_tag6_lateral_right_mm,
-                cfg.post_tag6_lateral_speed_mm_s)
-
-        self.state = Task3State.BUILDING_ALIGN
-        self.robot.reset_vision_filter()
-        building_aligned = self._align_building_or_continue()
-
-        self.state = Task3State.BUILD
-        if building_aligned:
-            print(f'[{self.TASK_LABEL}] Building aligned; running Build')
-        else:
-            print(f'[{self.TASK_LABEL}] Building alignment skipped; '
-                  'running Build')
-        followup = (None if chassis_followup is None
-                    else self._chassis_followup(chassis_followup))
-        self.robot.actions.build(chassis_followup=followup)
-        print(f'[{self.TASK_LABEL}] Build complete')
-
-    def _run_post_build_route(self):
-        cfg = self.config
-        print(f'[{self.TASK_LABEL}] Build released; starting chassis route')
-        self.state = Task3State.POST_BUILD_REVERSE
-        print(f'[{self.TASK_LABEL}] Reverse {cfg.post_build_reverse_mm:.0f} mm '
-              'after Build')
-        self._checked_move(
-            'backward', cfg.post_build_reverse_mm,
-            cfg.post_build_reverse_speed_mm_s)
-
-        self.state = Task3State.POST_BUILD_TURN
-        self._check_active()
-        # Use a relative CW turn: a shortest-path absolute-heading command
-        # can choose CCW near the 180-degree boundary after building alignment.
-        self.robot.chassis.turn(
-            cfg.post_build_turn_cw_deg, cfg.delivery_turn_speed_deg_s,
-            hold_ms=0, settle_cycles=1)
-
-        self.state = Task3State.POST_BUILD_ROUTE
-        print(f'[{self.TASK_LABEL}] Left {cfg.post_build_route_distance_mm:.0f} mm '
-              f'at {cfg.post_build_route_speed_mm_s:.0f} mm/s after Build')
-        self._checked_move(
-            'left', cfg.post_build_route_distance_mm,
-            cfg.post_build_route_speed_mm_s)
-
-        self.state = Task3State.POST_BUILD_LEFT_WALL
-        self._drive_until_wall(
-            timeout_s=cfg.far_wall_timeout_s,
-            speed_mm_s=cfg.far_wall_speed_mm_s,
-            direction='left',
-            context='Post-build left wall contact',
-        )
-
-    def run(self) -> int:
-        try:
-            self._preflight()
-            self._run_mission()
-            self._check_active()
-            self.state = Task3State.FINISHED
-            return 0
-        except Exception:
-            self.state = Task3State.FAULT
-            self.robot.transport.emergency_stop()
-            raise
-
-
-class Task3_2Program(Task3Program):
-    TASK_LABEL = 'task3-2'
-
-    def __init__(self, robot, config: Task3_2Config = Task3_2Config(), *, context=None):
-        super().__init__(robot, config, context=context)
-
-
-class Task3_3Program(Task3Program):
-    TASK_LABEL = 'task3-3'
-
-    def __init__(self, robot, config: Task3_3Config = Task3_3Config(), *, context=None):
-        super().__init__(robot, config, context=context)
-
-
-__all__ = ['Task3Config', 'Task3Program', 'Task3State', 'Task3_2Config', 'Task3_2Program',
-           'Task3_3Config', 'Task3_3Program']

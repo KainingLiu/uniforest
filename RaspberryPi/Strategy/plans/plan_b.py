@@ -1,10 +1,17 @@
-"""Task2/Task4 unloading, both Task1 routes, then Task5 building cycles."""
-
+"""PlanB gathers/stages resources before the two building cycles."""
 from . import StrategyPlan
-from ..tasks import TaskStep
+from .recipes import (navigate, ground_delivery, mixed_collection,
+                      wall_unload, return_orange, staged_building)
 
-
-PLAN_B = StrategyPlan('PlanB', tuple(TaskStep(task_id) for task_id in (
-    'task0-2', 'task2-1', 'task4-1', 'task2-2', 'task4-2',
-    'task0-3', 'task1-1', 'task0-3', 'task1-2', 'task5')),
-    'Task2/Task4 unloading, both Task1 collection routes and Task5 building')
+PLAN_B = StrategyPlan('PlanB', (
+    navigate('b.depart', 'depart-b', 'depart_b', requires='start', ends='delivery_exit'),
+    *mixed_collection('b.mixed.1', 'highland-1'),
+    *wall_unload('b.stage.1', 'unload-1'),
+    *mixed_collection('b.mixed.2', 'highland-2'),
+    *wall_unload('b.stage.2', 'unload-2'),
+    *return_orange('b.return.1'),
+    *ground_delivery('b.ground.1', 'ground-1'),
+    *return_orange('b.return.2'),
+    *ground_delivery('b.ground.2', 'ground-2'),
+    *staged_building('b.towers'),
+), description='Fixed collection batches first, then staged building')

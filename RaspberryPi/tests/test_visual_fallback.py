@@ -9,21 +9,21 @@ from unittest.mock import Mock, patch
 
 import numpy as np
 
-from Strategy.competition import CompetitionProgram, FirstTaskConfig, SearchRangeExhausted
+from Strategy.controllers import RobotController
+from Strategy.errors import SearchRangeExhausted
+from Strategy.settings import (GroundCollectionConfig, GroundCollection2Config,
+                               GroundCollection3Config, HighlandCollectionConfig,
+                               HighlandCollection2Config, BuildingConfig)
 from Strategy.common import VisualAlignmentUnavailable
 from Strategy.orange_search import OrangeSearchRecovery
-from Strategy.task0 import Task0Program
-from Strategy.task1 import Task1_2Program, Task1_3Program
-from Strategy.task2 import Task2Program, Task2_2Program
-from Strategy.task3 import Task3Program, Task3Config
-from Strategy.context import TaskContext
-from Strategy.runner import run_tasks
+from Strategy.context import ExecutionContext
+from Strategy.runner import run_selection
 from protocol.commands import ACTION_DONE
 from vision.orange_cluster import Detector
 from vision.orange_config import config_for
 from vision.cube_detector import VisionResult
 from control.carried_cube_inspection import inspect_carried_cubes
-from tests.test_strategy_composition import robot_fixture
+from tests.test_strategy_composition import FakeActionSession, robot_fixture
 
 
 def block(y=120):
@@ -32,7 +32,7 @@ def block(y=120):
 
 
 class SearchReplay:
-    def __init__(self, frames, *, config=None, x=200, program=CompetitionProgram):
+    def __init__(self, frames, *, config=None, x=200):
         self.now, self.start, self.x, self.speed = 100.0, 100.0, float(x), 0.0
         self.commands, self.positions = [], []
         self.frames, self.frozen_telem = frames, False
@@ -40,7 +40,7 @@ class SearchReplay:
         self.transport = SimpleNamespace(connected=True, emergency_stop_generation=0)
         self.chassis = SimpleNamespace(mecanum_rpm=lambda vx, vy, wz: (vy*10, 0, 0, 0),
                                       set_speeds=self.command)
-        self.task = program(self, config or FirstTaskConfig())
+        self.task = RobotController(self, config or GroundCollectionConfig())
         self.task._capture_lateral_origin = lambda: 0
         self.task._measure_lateral_displacement_mm = lambda origin: self.x - origin
         self.task._orange_recovery = OrangeSearchRecovery(origin=0)
@@ -74,7 +74,7 @@ class SearchReplay:
 
     def run(self, limit=300):
         with patch('Strategy.orange_search.time', self.clock), \
-             patch('Strategy.competition.time', self.clock), \
+             patch('Strategy.controllers.time', self.clock), \
              patch('Strategy.cube_tracker.time', self.clock):
             return self.task._find_cube(color_name='orange', min_confidence=25,
                                        search_direction=1, max_distance_mm=limit)
@@ -149,8 +149,8 @@ class VisualTests(unittest.TestCase):
                 self.assertEqual(cubes, [])
                 self.assertEqual(info['left_clipped_y_range'], (low, high))
                 replay = SearchReplay(lambda r: r.frame(band=info['left_clipped_y_range']),
-                                      program=Task2Program if profile == 'task2_orange'
-                                      else CompetitionProgram)
+                                      config=(HighlandCollectionConfig() if profile == 'task2_orange'
+                                              else GroundCollectionConfig()))
                 with self.assertRaises(SearchRangeExhausted):
                     replay.run()
                 self.assertTrue(any(speed < 0 for _, speed in replay.commands))
@@ -165,11 +165,12 @@ class VisualTests(unittest.TestCase):
             _, info = detector.detect(np.zeros((480, 640, 3), np.uint8))
         self.assertIsNone(info['left_clipped_y_range'])
 
-    def test_all_orange_tasks_use_same_search_and_stop_for_confirmation(self):
-        for program in (CompetitionProgram, Task1_2Program, Task1_3Program,
-                        Task2Program, Task2_2Program):
-            with self.subTest(program=program.__name__):
-                replay = SearchReplay(lambda r: r.frame([block()]), program=program)
+    def test_all_orange_profiles_use_same_search_and_stop_for_confirmation(self):
+        for config in (GroundCollectionConfig(), GroundCollection2Config(),
+                       GroundCollection3Config(), HighlandCollectionConfig(),
+                       HighlandCollection2Config()):
+            with self.subTest(profile=type(config).__name__):
+                replay = SearchReplay(lambda r: r.frame([block()]), config=config)
                 replay.run()
                 self.assertTrue(all(speed == 0 for _, speed in replay.commands))
                 self.assertGreater(replay.now, replay.start)
@@ -260,13 +261,26 @@ class VisualTests(unittest.TestCase):
     def test_orange_budget_exhaustion_skips_count_and_returns_to_route(self):
         robot = robot_fixture()
         robot.check_carried_cube_count = Mock()
-        task = CompetitionProgram(robot)
-        task._collect_orange_with_count_check(3, Mock(side_effect=SearchRangeExhausted()))
+        from Strategy.flows.model import ActionSpec
+        from Strategy.flows.operations import (begin_collection, acquire_cube,
+                                                grab_cube, inspect_cargo)
+        controller = RobotController(robot)
+        controller._capture_lateral_origin = Mock(return_value=0)
+        controller._find_cube = Mock(side_effect=SearchRangeExhausted())
+        environment = SimpleNamespace(robot=robot, data={},
+            control=lambda profile: controller, phase=Mock())
+        spec = ActionSpec('begin_collection', 'ground-pickup', 'ground-1',
+                          {'color': 'orange', 'method': 'grap3'})
+        begin_collection(environment, spec)
+        self.assertFalse(acquire_cube(environment, replace(spec, kind='acquire_cube')))
+        self.assertFalse(grab_cube(environment, replace(spec, kind='grab_cube')))
+        self.assertIsNone(inspect_cargo(environment, replace(spec, kind='inspect_cargo')))
+        self.assertTrue(environment.data['collection']['exhausted'])
         robot.check_carried_cube_count.assert_not_called()
 
     def test_tag_and_building_only_catch_typed_visual_failures(self):
         robot = robot_fixture()
-        task = Task3Program(robot, context=TaskContext(robot))
+        task = RobotController(robot, context=ExecutionContext(robot))
         for method, wrapper in (('_align_delivery_tag', task._align_delivery_tag_or_continue),
                                 ('_align_building', task._align_building_or_continue)):
             with patch.object(task, method, side_effect=VisualAlignmentUnavailable('target lost')):
@@ -285,10 +299,10 @@ class VisualTests(unittest.TestCase):
         robot = robot_fixture()
         robot.has_vision = robot.has_field_localization = False
         robot.field_pose = robot.vision_result = None
-        task = Task3Program(robot, replace(Task3Config(), delivery_tag_lost_timeout_s=.1,
+        task = RobotController(robot, replace(BuildingConfig(), delivery_tag_lost_timeout_s=.1,
                                           building_lost_timeout_s=.1))
         task._heading_zero_deg = 0
-        with patch('Strategy.competition.time', clock), patch('Strategy.task3.time', clock):
+        with patch('Strategy.controllers.time', clock), patch('Strategy.building_alignment.time', clock):
             self.assertFalse(task._align_delivery_tag_or_continue())
             self.assertFalse(task._align_building_or_continue())
         self.assertGreaterEqual(now[0], 100.2)
@@ -305,33 +319,35 @@ class VisualTests(unittest.TestCase):
         self.assertLessEqual(replay.now-replay.start, 13.1)
 
     def test_whole_classic_sequence_continues_without_cameras(self):
-        # Run actual Task0/1/2/3 route methods; only physical control is replaced.
+        # Run actual PlanA functional actions; only physical control is replaced.
         robot = robot_fixture()
         robot.has_vision = robot.has_field_localization = False
         robot.move_chassis = Mock(return_value=SimpleNamespace(timed_out=False, cancelled=False))
         robot.check_carried_cube_count = Mock(return_value=None)
         events = []
-        def build(**kwargs):
+        def begin(action_id):
             events.append('build')
-            if kwargs.get('chassis_followup'): kwargs['chassis_followup'](lambda: None)
-        robot.actions.build = build
+            return FakeActionSession()
+        robot.actions.begin = begin
         robot.actions.hatch_open = Mock()
         robot.actions.hatch_close = Mock()
-        def move(task, direction, distance, speed, **kwargs): events.append((task.TASK_LABEL, direction, distance))
-        with patch('Strategy.competition.TaskControl._checked_move', move), \
-             patch('Strategy.competition.TaskControl._drive_until_wall'), \
-             patch('Strategy.competition.TaskControl._turn_to_heading'), \
-             patch('Strategy.competition.TaskControl._capture_lateral_origin', return_value=0), \
-             patch('Strategy.competition.TaskControl._measure_lateral_displacement_mm', return_value=0), \
-             patch('Strategy.competition.TaskControl._recalibrate_heading_zero'), \
-             patch('Strategy.competition.TaskControl._find_cube', side_effect=SearchRangeExhausted()), \
-             patch('Strategy.competition.TaskControl._align_delivery_tag', side_effect=VisualAlignmentUnavailable('no tag')), \
-             patch('Strategy.competition.TaskControl._chassis_followup', side_effect=lambda callback: lambda check: callback()), \
-             patch.object(Task3Program, '_align_building', side_effect=VisualAlignmentUnavailable('no building')):
-            self.assertEqual(run_tasks(robot, 'classic'), 0)
+        def move(task, direction, distance, speed, **kwargs): events.append((task.operation_name, direction, distance))
+        with patch('Strategy.controllers.RobotController._checked_move', move), \
+             patch('Strategy.controllers.RobotController._drive_until_wall'), \
+             patch('Strategy.controllers.RobotController._turn_to_heading'), \
+             patch('Strategy.controllers.RobotController._capture_lateral_origin', return_value=0), \
+             patch('Strategy.controllers.RobotController._measure_lateral_displacement_mm', return_value=0), \
+             patch('Strategy.controllers.RobotController._recalibrate_heading_zero'), \
+             patch('Strategy.controllers.RobotController._find_cube', side_effect=SearchRangeExhausted()), \
+             patch('Strategy.controllers.RobotController._align_delivery_tag', side_effect=VisualAlignmentUnavailable('no tag')), \
+             patch('Strategy.controllers.RobotController._chassis_followup', side_effect=lambda callback: lambda check: callback()), \
+             patch.object(RobotController, '_align_building', side_effect=VisualAlignmentUnavailable('no building')):
+            self.assertEqual(run_selection(robot, 'PlanA'), 0)
         self.assertEqual(events.count('build'), 3)
-        self.assertIn(('task3-2', 'left', 2200), events)
-        self.assertIn(('task3-3', 'left', 3000), events)
+        self.assertTrue(any(isinstance(event, tuple) and event[1:] == ('left', 2200)
+                            for event in events))
+        self.assertTrue(any(isinstance(event, tuple) and event[1:] == ('left', 3000)
+                            for event in events))
         robot.transport.emergency_stop.assert_not_called()
         robot.set_cube_detection_profile.assert_not_called()
 

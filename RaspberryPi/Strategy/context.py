@@ -1,5 +1,4 @@
-"""One execution's hardware guard and explicit Task2 -> Task3/Task4 handoff."""
-
+"""Ephemeral execution state; persistent world state belongs to strategy."""
 from dataclasses import dataclass, field
 import math
 import threading
@@ -7,29 +6,21 @@ import time
 from typing import Optional
 
 
-@dataclass(frozen=True)
-class BuildApproach:
-    """Task2 exit at 180 degrees; Task3/Task4 preserve its calibrated yaw zero."""
-    heading_zero_deg: float
-    source_task: str
-
-    def __post_init__(self):
-        if not math.isfinite(self.heading_zero_deg):
-            raise ValueError('heading zero must be finite')
-
-
 @dataclass
-class TaskContext:
+class ExecutionContext:
     robot: object
     cancel_event: threading.Event = field(default_factory=threading.Event)
-    build_approach: Optional[BuildApproach] = None
-    current_task: str = ''
+    heading_zero_deg: Optional[float] = None
+    anchor: str = 'start'
+    current_action: str = ''
     closed: bool = False
     _last_uptime: Optional[int] = field(default=None, init=False)
     _link_generation: Optional[int] = field(default=None, init=False)
     _stop_generation: int = field(init=False)
 
     def __post_init__(self):
+        if self.heading_zero_deg is not None and not math.isfinite(self.heading_zero_deg):
+            raise ValueError('heading zero must be finite')
         self._stop_generation = self.robot.transport.emergency_stop_generation
 
     def check_active(self, *, require_telemetry=True):
@@ -56,17 +47,5 @@ class TaskContext:
             raise RuntimeError('A-board restarted during strategy')
         self._last_uptime = telem.uptime_ms
 
-    def publish_build_approach(self, heading_zero_deg):
-        self.check_active()
-        self.build_approach = BuildApproach(heading_zero_deg, self.current_task)
-
-    def take_build_approach(self):
-        self.check_active()
-        if self.build_approach is None:
-            raise RuntimeError('Task3/Task4 needs the Task2 exit heading handoff')
-        handoff, self.build_approach = self.build_approach, None
-        return handoff
-
     def close(self):
-        self.build_approach = None
         self.closed = True

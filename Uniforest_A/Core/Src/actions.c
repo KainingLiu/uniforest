@@ -7,7 +7,8 @@
 /* Distances, tenths of degrees and dwell times migrated from Pi actions.py.
  * All waits run in the main loop; TIM7 and the communication watchdog stay live. */
 enum { END, HOME, HATCH, ANGLE, PUMP, RELEASE, WAIT, MOVE, DUAL, DUAL2, DUAL3,
-       DUAL3_ASYNC, WAIT_PROGRESS, JOIN, DUAL_ASYNC, CHASSIS_READY };
+       DUAL3_ASYNC, WAIT_PROGRESS, JOIN, DUAL_ASYNC, CHASSIS_READY,
+       WAIT_FIRST_SEGMENT };
 typedef struct { uint8_t op; uint16_t p[11]; } ActionStep;
 #define H STEPPER_HORIZ
 #define V STEPPER_VERT
@@ -31,18 +32,20 @@ typedef struct { uint8_t op; uint16_t p[11]; } ActionStep;
 
 static const ActionStep grap1[] = {
     {PUMP,{0}}, {HOME,{0}}, {HATCH,{0}},
-    D(H,22,F,V,18.5,R,5), D(V,18.5,F,H,22,R,5),
+    D(H,22,F,V,18.5,R,5), D_OP(DUAL_ASYNC,V,18.5,F,H,22,R,5),
+    {WAIT_FIRST_SEGMENT,{V}}, {CHASSIS_READY,{0}}, {JOIN,{0}},
     DROP, {HOME,{0}}, {END,{0}}
 };
 static const ActionStep grap2[] = {
     {PUMP,{0}}, {HOME,{0}}, {HATCH,{0}},
     D(H,27,F,V,18.5,R,10), D_OP(DUAL_ASYNC,V,18.5,F,H,27,R,5),
-    {WAIT_PROGRESS,{V,S(5),F}}, {CHASSIS_READY,{0}}, {JOIN,{0}},
+    {WAIT_FIRST_SEGMENT,{V}}, {CHASSIS_READY,{0}}, {JOIN,{0}},
     DROP, {HOME,{0}}, {END,{0}}
 };
 static const ActionStep grap3[] = {
     {PUMP,{0}}, {HOME,{0}}, A(1,450), A(0,522), {HATCH,{0}},
-    D(H,27,F,V,9,R,17), D3(V,9,F,9,R,H,21.5,R,5,16),
+    D(H,27,F,V,9,R,17), D3_OP(DUAL3_ASYNC,V,9,F,9,R,H,21.5,R,5,16),
+    {WAIT_FIRST_SEGMENT,{V}}, {CHASSIS_READY,{0}}, {JOIN,{0}},
     DROP, D_OP(DUAL_ASYNC,V,9,F,H,5.5,R,0),
     {WAIT_PROGRESS,{V,S(5),F}}, A(1,900), {JOIN,{0}},
     {HOME,{0}}, {END,{0}}
@@ -139,6 +142,10 @@ void Actions_Update(void)
     while (Actions_IsBusy()) {
         const ActionStep *s = &sequence[status.stage];
         const uint16_t *p = s->p;
+        if (s->op == WAIT_FIRST_SEGMENT && !Stepper_FirstSegmentDone(p[0])) {
+            if (!waiting_move) Actions_Abort(ACTION_TIMEOUT);
+            return;
+        }
         if (s->op == WAIT_PROGRESS) {
             /* Read pulse-count progress in the main loop, never block the ISR. */
             int64_t progress = (int64_t)Stepper_GetPosition(p[0]) - move_origin[p[0]];
@@ -160,7 +167,7 @@ void Actions_Update(void)
         }
         status.stage++;
         switch (s->op) {
-        case WAIT_PROGRESS: case JOIN: break;
+        case WAIT_PROGRESS: case WAIT_FIRST_SEGMENT: case JOIN: break;
         case CHASSIS_READY: status.state = ACTION_CHASSIS_READY; break;
         case HOME: Servo_HomeAll(); break;
         case HATCH:

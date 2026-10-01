@@ -1,29 +1,25 @@
-"""Top-level RoboGame competition state machine."""
+"""Reusable robot control algorithms with no mission sequence ownership."""
 
 from __future__ import annotations
 
 from collections import deque
-from dataclasses import dataclass
 from enum import Enum, auto
-import time
 from statistics import median
+import time
 from typing import TYPE_CHECKING, Optional
 
-from control.chassis import (
-    LONG_DISTANCE_FORWARD_ACCEL_MS,
-    LONG_DISTANCE_MOVE_SPEED_MM_S,
-    NORMAL_DISTANCE_MOVE_SPEED_MM_S,
-    NORMAL_DISTANCE_MOVE_ACCEL_MS,
-)
-from .common import TaskStateReporting, minimum_command, slew_command, wrap_angle
+from control.chassis import LONG_DISTANCE_MOVE_SPEED_MM_S
+from .common import minimum_command, slew_command, wrap_angle
 from .common import VisualAlignmentUnavailable, report_visual_fallback
 from .tag_alignment import median_translation, translation_jump
 from .tag_controller import PID as _Pid, TagPidSet, AxisToleranceHold, profiled_command
 from .cube_tracker import CubeTargetTracker, select_tracked_block
 from .wall_approach import velocity_for_direction
 from .wall_controller import StallConfirmation
-from .vision_targets import TASK1_ORANGE
 from .orange_search import OrangeSearchRecovery, find_orange
+from .errors import SearchRangeExhausted
+from .settings import CommonControlConfig, GroundCollectionConfig
+from .building_alignment import BuildingAlignment
 
 if TYPE_CHECKING:
     from robot import Robot
@@ -31,16 +27,8 @@ if TYPE_CHECKING:
     from vision.field_localizer import TagSolution
 
 
-# Preserve the physical stopping points tuned with the old 60-degree tag
-# camera model after adopting the specified 125-degree horizontal FOV.
-TAG_FOV_RETUNE_SCALE = 0.300549527
-
-
-class SearchRangeExhausted(RuntimeError):
-    """The cumulative search budget was consumed without acquiring a cube."""
-
-
-class CompetitionState(Enum):
+class Phase(Enum):
+    """Diagnostic progress labels, with no mission transition semantics."""
     STARTUP = auto()
     READY = auto()
     WALL_APPROACH = auto()
@@ -55,177 +43,99 @@ class CompetitionState(Enum):
     PRE_FINAL_TURN_LATERAL = auto()
     FINISHED = auto()
     FAULT = auto()
+    INITIAL_MOVE = auto()
+    LATERAL_MOVE = auto()
+    FINAL_TURN = auto()
+    TURN_TO_START = auto()
+    LEFT_WALL_APPROACH = auto()
+    TURN_TO_COLLECTION = auto()
+    TAG_ALIGN = auto()
+    WALL_PREMOVE = auto()
+    PURPLE_SEARCH = auto()
+    PURPLE_ALIGN = auto()
+    POST_GRAB_REVERSE = auto()
+    TURN_RIGHT = auto()
+    RETURN_MOVE = auto()
+    FINAL_WALL_APPROACH = auto()
+    ORANGE_GRAB = auto()
+    POST_ORANGE_REVERSE = auto()
+    POST_ORANGE_LATERAL = auto()
+    BUILD_ROUTE = auto()
+    TAG6_ALIGN = auto()
+    POST_TAG6_LATERAL = auto()
+    BUILDING_ALIGN = auto()
+    BUILD = auto()
+    POST_BUILD_REVERSE = auto()
+    POST_BUILD_TURN = auto()
+    POST_BUILD_ROUTE = auto()
+    POST_BUILD_LEFT_WALL = auto()
+    INITIAL_LATERAL = auto()
+    POST_WALL_LATERAL = auto()
+    FORWARD_WALL_APPROACH = auto()
+    FINAL_LATERAL = auto()
+    INITIAL_LEFT = auto()
+    HATCH_OPEN = auto()
+    HATCH_CLOSE = auto()
+    BACKWARD = auto()
+    BUILD_APPROACH = auto()
+    FIRST_BUILD_LEFT = auto()
+    SECOND_LOAD_APPROACH = auto()
+    FINAL_LEFT = auto()
 
 
-@dataclass(frozen=True)
-class FirstTaskConfig:
-    target_cube_count: int = 3
-    far_wall_speed_mm_s: float = 300.0
-    far_wall_timeout_s: float = 4.0
-    near_wall_speed_mm_s: float = 150.0
-    near_wall_timeout_s: float = 1.0
-    wall_timeout_is_success: bool = True
-    wall_settle_s: float = 0.0
-    stall_startup_grace_s: float = 0.5
-    stall_confirm_s: float = 0.3
-    stall_dropout_s: float = 0.08
-    pre_grab_stall_startup_grace_s: float = 0.1
-    pre_grab_stall_confirm_s: float = 0.15
-    pre_grab_wall_settle_s: float = 0.0
-    telemetry_stale_s: float = 0.3
-    stall_speed_rpm: int = 80
-    stall_current_raw: int = 2500
-    # Default/lateral-wall confirmation remains the original three-wheel
-    # criterion. Forward contact uses the two rear wheel indices explicitly.
-    stall_motor_count: int = 3
-    search_speed_mm_s: float = 300.0
-    search_max_distance_mm: float = 1800.0
-    search_control_period_s: float = 0.02
-    vision_observe_s: float = 0.35
-    vision_stale_s: float = 0.5
-    orange_min_confidence: float = 25.0
-    # Keep the initially selected cube when several orange cubes are visible.
-    orange_search_lock_x_jump_mm: float = 80.0
-    orange_search_lock_z_jump_mm: float = 100.0
-    orange_search_lock_lost_frames: int = 3
-    orange_search_confirm_frames: int = 2
-    orange_edge_confirm_frames: int = 3
-    orange_edge_speed_mm_s: float = 200.0
-    orange_edge_max_distance_mm: float = 1000.0
-    orange_edge_timeout_s: float = 6.0
-    orange_edge_stop_s: float = 0.10
-    orange_edge_origin_margin_mm: float = 10.0
-    orange_edge_retry_spacing_mm: float = 100.0
-    # Absolute camera-X windows are maintained in vision_targets.py.
-    align_min_x_mm: float = TASK1_ORANGE.align_min_x_mm
-    align_max_x_mm: float = TASK1_ORANGE.align_max_x_mm
-    align_target_x_mm: float = TASK1_ORANGE.target_x_mm
-    align_confirm_frames: int = 2
-    orange_coarse_align_timeout_s: float = 5.0
-    orange_fine_align_timeout_s: float = 0.5
-    orange_fine_timeout_retry_count: int = 2
-    orange_fine_min_x_mm: float = TASK1_ORANGE.fine_min_x_mm
-    orange_fine_max_x_mm: float = TASK1_ORANGE.fine_max_x_mm
-    align_kp: float = 1.5
-    # Integral action is disabled for lateral visual pickup: camera latency
-    # and the minimum breakout speed make accumulated error overshoot-prone.
-    align_ki: float = 0.0
-    align_kd: float = 0.0
-    align_integral_limit: float = 300.0
-    align_min_speed_mm_s: float = 100.0
-    align_creep_min_speed_mm_s: float = 100.0
-    align_start_speed_mm_s: float = 80.0
-    align_max_speed_mm_s: float = 250.0
-    align_fast_speed_mm_s: float = 500.0
-    # Shorter approach ramp; retain the near-target breakout speed.
-    align_slowdown_start_mm: float = 150.0
-    align_creep_start_mm: float = 30.0
-    align_accel_mm_s2: float = 800.0
-    # One-frame control feedback avoids commanding motion from an old median
-    # while preserving target confirmation in the search tracker.
-    align_filter_frames: int = 1
-    align_track_max_x_jump_mm: float = 45.0
-    align_track_max_z_jump_mm: float = 80.0
-    # Zero keeps the legacy nearest-candidate behavior. Task2 overrides this
-    # for its adjacent orange-cube pickup area.
-    align_track_ambiguity_margin_mm: float = 12.0
-    align_window_hysteresis_mm: float = 5.0
-    align_window_hold_s: float = 0.20
-    align_control_period_s: float = 0.03
-    align_lost_timeout_s: float = 0.5
-    align_timeout_s: float = 10.0
-    post_grab_settle_s: float = 0.0
-    delivery_reverse_mm: float = 400.0
-    delivery_reverse_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
-    delivery_turn_deg: float = 90.0
-    delivery_turn_speed_deg_s: float = 120.0
-    delivery_turn_heading_hold_ms: int = 0
-    delivery_forward_base_mm: float = 2800.0
-    delivery_forward_speed_mm_s: float = LONG_DISTANCE_MOVE_SPEED_MM_S
-    delivery_tag_id: int = 6
-    delivery_tag_distance_mm: float = 425.0
-    delivery_tag_distance_tolerance_mm: float = 8.0
-    delivery_tag_lateral_tolerance_mm: float = 8.0
-    delivery_tag_distance_deadband_mm: float = 5.0 * TAG_FOV_RETUNE_SCALE
-    delivery_tag_lateral_deadband_mm: float = 5.0 * TAG_FOV_RETUNE_SCALE
-    delivery_heading_target_cw_deg: float = 180.0
-    delivery_heading_tolerance_deg: float = 3.0
-    delivery_heading_deadband_deg: float = 0.5
-    delivery_tag_confirm_frames: int = 4
-    delivery_tag_fine_align_timeout_s: float = 1.0
-    delivery_tag_fine_gain_scale: float = 1.5
-    delivery_tag_vision_stale_s: float = 0.3
-    delivery_tag_lost_timeout_s: float = 1.0
-    delivery_tag_align_timeout_s: float = 12.0
-    delivery_tag_control_period_s: float = 0.05
-    delivery_tag_translation_median_frames: int = 3
-    delivery_tag_max_distance_jump_mm: float = 250.0 * TAG_FOV_RETUNE_SCALE
-    delivery_tag_max_lateral_jump_mm: float = 250.0 * TAG_FOV_RETUNE_SCALE
-    delivery_tag_distance_kp: float = 0.8 / TAG_FOV_RETUNE_SCALE
-    delivery_tag_distance_ki: float = 0.0
-    delivery_tag_distance_kd: float = 0.0
-    delivery_tag_lateral_kp: float = 1.2 / TAG_FOV_RETUNE_SCALE
-    delivery_tag_lateral_ki: float = 0.0
-    delivery_tag_lateral_kd: float = 0.0
-    delivery_heading_kp: float = 1.5
-    delivery_heading_ki: float = 0.02
-    delivery_heading_kd: float = 0.03
-    # Tag6 gyro hold uses angular-speed units, independent of visual updates.
-    tag6_heading_kp: float = 6.0
-    tag6_heading_ki: float = 0.0
-    tag6_heading_kd: float = 0.0
-    tag6_heading_control_period_s: float = 0.02
-    delivery_tag_linear_integral_limit: float = (
-        500.0 * TAG_FOV_RETUNE_SCALE)
-    delivery_heading_integral_limit: float = 100.0
-    delivery_tag_max_forward_mm_s: float = 250.0
-    delivery_tag_max_lateral_mm_s: float = 200.0
-    delivery_tag_fast_forward_mm_s: float = 350.0
-    delivery_tag_fast_lateral_mm_s: float = 280.0
-    delivery_tag_slowdown_distance_mm: float = 100.0
-    delivery_tag_slowdown_lateral_mm: float = 80.0
-    delivery_tag_creep_distance_mm: float = 25.0
-    delivery_tag_creep_lateral_mm: float = 20.0
-    delivery_heading_max_yaw_deg_s: float = 45.0
-    delivery_tag_min_linear_mm_s: float = 100.0
-    delivery_heading_min_yaw_deg_s: float = 8.0
-    delivery_tag_linear_accel_mm_s2: float = 300.0
-    delivery_heading_yaw_accel_deg_s2: float = 90.0
-    post_tag_lateral_right_mm: float = 100.0
-    post_tag_lateral_direction: str = 'right'
-    post_tag_lateral_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
-    unload_reverse_mm: float = 300.0
-    unload_reverse_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
-    pre_final_turn_lateral_left_mm: float = 100.0
-    pre_final_turn_lateral_direction: str = 'left'
-    pre_final_turn_lateral_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
-    delivery_linear_accel_ms: int = NORMAL_DISTANCE_MOVE_ACCEL_MS
-    long_distance_forward_accel_ms: int = LONG_DISTANCE_FORWARD_ACCEL_MS
+class RobotController(BuildingAlignment):
+    """Bounded motion and alignment operations shared by functional actions.
 
-
-class TaskControl(TaskStateReporting):
-    """Shared control procedures; no complete task route is executed here."""
+    A controller owns local visual-search state. The execution context owns
+    the heading anchor so constructing another action preserves that anchor.
+    """
 
     TELEMETRY_WAIT_S = 2.0
-    TASK_LABEL = 'task1-1'
-    CUBE_VISION_PIPELINE_VERSION = 'task1-cube-lock-v3'
+    CUBE_VISION_PIPELINE_VERSION = 'cube-lock-v3'
 
     def __init__(self, robot: Robot,
-                 config: FirstTaskConfig = FirstTaskConfig(), *, context=None):
+                 config: CommonControlConfig = GroundCollectionConfig(), *,
+                 context=None, operation_name: str = 'action'):
         self.robot = robot
         self.context = context
         self.config = config
-        self.state = CompetitionState.STARTUP
+        self.operation_name = operation_name
+        self.state = Phase.STARTUP
         self._search_position_mm = 0.0
         self._orange_recovery = OrangeSearchRecovery()
         self._cube_lateral_displacement_mm: Optional[float] = None
-        self._heading_zero_deg: Optional[float] = None
-        # The fine-align stage must inherit the target observed at the end of
-        # coarse alignment, rather than the stale search acquisition sample.
+        self._local_heading_zero_deg: Optional[float] = None
         self._last_alignment_block = None
         self._last_alignment_frame_timestamp = None
         self._last_alignment_timed_out = False
         self._alignment_valid_frames = 0
+
+    @property
+    def state(self):
+        return self._state
+
+    @state.setter
+    def state(self, value):
+        self._state = value
+        report = getattr(self.robot, 'set_collection_context', None)
+        if report is not None:
+            report(task=self.operation_name, phase=value.name)
+
+    @property
+    def _heading_zero_deg(self):
+        context = getattr(self, 'context', None)
+        if context is not None:
+            return context.heading_zero_deg
+        return self._local_heading_zero_deg
+
+    @_heading_zero_deg.setter
+    def _heading_zero_deg(self, value):
+        context = getattr(self, 'context', None)
+        if context is not None:
+            context.heading_zero_deg = value
+        else:
+            self._local_heading_zero_deg = value
+
 
     def _check_active(self, *, require_telemetry=True):
         context = getattr(self, "context", None)
@@ -241,10 +151,10 @@ class TaskControl(TaskStateReporting):
         if self.robot.telem is None:
             raise RuntimeError('A-board telemetry unavailable')
         if not self.robot.has_vision:
-            report_visual_fallback(self.robot, self.TASK_LABEL, 'startup',
+            report_visual_fallback(self.robot, self.operation_name, 'startup',
                                    'cube camera unavailable; use bounded search')
         if not self.robot.has_field_localization:
-            report_visual_fallback(self.robot, self.TASK_LABEL, 'startup',
+            report_visual_fallback(self.robot, self.operation_name, 'startup',
                                    'tag camera unavailable; alignment may be skipped')
 
         self._check_active()
@@ -256,17 +166,10 @@ class TaskControl(TaskStateReporting):
         if setter is not None:
             setter(profile)
 
-    def _preflight(self):
-        self._wait_ready()
-        self._heading_zero_deg = self.robot.telem.yaw_deg
-        self.state = type(self.state).READY
-        print(f'[{self.TASK_LABEL}] Preflight complete; heading zero='
-              f'{self._heading_zero_deg:+.1f} deg')
-
     @staticmethod
     def _orange_from_result(result, min_confidence: float,
                             max_age_s: float) -> Optional['BlockInfo']:
-        return TaskControl._block_from_result(
+        return RobotController._block_from_result(
             result, 'orange', min_confidence, max_age_s)
 
     @staticmethod
@@ -286,15 +189,15 @@ class TaskControl(TaskStateReporting):
 
     @staticmethod
     def _tracked_orange_from_result(result, reference_x: float,
-                                    cfg: FirstTaskConfig):
-        return TaskControl._tracked_block_from_result(
+                                    cfg: CommonControlConfig):
+        return RobotController._tracked_block_from_result(
             result, 'orange', reference_x, cfg.orange_min_confidence, cfg)
 
     @staticmethod
     def _tracked_block_from_result(result, color_name: str,
                                    reference_x: float,
                                    min_confidence: float,
-                                   cfg: FirstTaskConfig,
+                                   cfg: CommonControlConfig,
                                    reference_z: Optional[float] = None,
                                    ambiguity_margin_mm: Optional[float] = None):
         return select_tracked_block(
@@ -302,7 +205,7 @@ class TaskControl(TaskStateReporting):
             reference_z, ambiguity_margin_mm)
 
     @staticmethod
-    def _stall_sample(telem, cfg: FirstTaskConfig,
+    def _stall_sample(telem, cfg: CommonControlConfig,
                       direction: str = 'forward') -> bool:
         # A-board motor order is TL(1), TR(0), BL(2), BR(3); forward contact
         # is confirmed by the rear pair while lateral contact keeps 3/4.
@@ -361,30 +264,30 @@ class TaskControl(TaskStateReporting):
                               and self._stall_sample(telem, cfg, direction))
                 if stall_tracker.update(is_stalled, time.monotonic(), confirm_s,
                                         dropout_s=cfg.stall_dropout_s):
-                    print(f'[{self.TASK_LABEL}] {context} confirmed')
+                    print(f'[{self.operation_name}] {context} confirmed')
                     return
                 time.sleep(0.01)
         finally:
             self.robot.chassis.set_speeds([0, 0, 0, 0])
         if timeout_is_success:
-            print(f'[{self.TASK_LABEL}] {context} timed out after '
+            print(f'[{self.operation_name}] {context} timed out after '
                   f'{timeout_s:.1f}s; accepting wall contact')
             return
         raise RuntimeError('wall contact was not detected before timeout')
 
     def _recalibrate_heading_zero(self, reference_cw_deg: float = 0.0):
-        """Assign the current gyro reading to a known clockwise task heading."""
+        """Assign the current gyro reading to a known clockwise route heading."""
         telem = self.robot.telem
         if telem is None:
             raise RuntimeError('telemetry unavailable for heading recalibration')
         previous_zero = self._heading_zero_deg
-        # Task heading is clockwise-positive; gyro yaw is CCW-positive.
+        # Route heading is clockwise-positive; gyro yaw is CCW-positive.
         # yaw(reference) = zero - reference, hence zero = yaw + reference.
         self._heading_zero_deg = self._wrap_angle(
             telem.yaw_deg + reference_cw_deg)
         correction = (0.0 if previous_zero is None else
                       self._wrap_angle(self._heading_zero_deg - previous_zero))
-        print(f'[{self.TASK_LABEL}] Heading zero recalibrated: '
+        print(f'[{self.operation_name}] Heading zero recalibrated: '
               f'{self._heading_zero_deg:+.1f} deg '
               f'(reference {reference_cw_deg:.1f} deg CW, '
               f'correction {correction:+.1f} deg)')
@@ -396,9 +299,8 @@ class TaskControl(TaskStateReporting):
                 route()
         return followup
 
-    def _grab_with_wall_press(self, grab, *, recalibrate_heading_zero=False,
-                              chassis_followup=None):
-        """Start the short press with Grap; poll both on the action wait loop."""
+    def _grab_press_step(self, *, recalibrate_heading_zero=False):
+        """Return the existing nonblocking wall-press phase for an action session."""
         cfg = self.config
         rpm = self.robot.chassis.mecanum_rpm(
             cfg.near_wall_speed_mm_s / 10.0, 0.0, 0.0)
@@ -415,7 +317,7 @@ class TaskControl(TaskStateReporting):
                 return now - finished_at >= cfg.pre_grab_wall_settle_s
             if started is None:
                 started = last_telem_time = now
-                print(f'[{self.TASK_LABEL}] Grab started; short wall press '
+                print(f'[{self.operation_name}] Grab started; short wall press '
                       f'at {cfg.near_wall_speed_mm_s:.0f} mm/s')
             telem = self.robot.telem
             contact = False
@@ -437,7 +339,7 @@ class TaskControl(TaskStateReporting):
                     raise RuntimeError('grab wall contact timed out')
                 finished_at = now
                 outcome = 'confirmed' if contact else 'timeout accepted'
-                print(f'[{self.TASK_LABEL}] Grab wall press {outcome}; '
+                print(f'[{self.operation_name}] Grab wall press {outcome}; '
                       'chassis stopped')
                 if recalibrate_heading_zero:
                     self._recalibrate_heading_zero()
@@ -446,11 +348,27 @@ class TaskControl(TaskStateReporting):
                 raise RuntimeError('failed to send grab wall press speed')
             return False
 
+        return press_step
+
+    def _grab_with_wall_press(self, grab, *, recalibrate_heading_zero=False,
+                              chassis_followup=None):
+        """Blocking compatibility API; phased flows use _grab_press_step directly."""
+        cfg = self.config
+        press_step = self._grab_press_step(
+            recalibrate_heading_zero=recalibrate_heading_zero)
+        pose_begin = getattr(self.robot, 'begin_cube_camera_pose_change', None)
+        pose_end = getattr(self.robot, 'end_cube_camera_pose_change', None)
+        pose_token = pose_begin('grab') if pose_begin is not None else None
         try:
             kwargs = {'parallel_step': press_step}
             if chassis_followup is not None:
                 kwargs['chassis_followup'] = self._chassis_followup(chassis_followup)
             grab(**kwargs)
+            # Existing whole-action completion and the calibrated settling
+            # interval are prerequisites. Faults deliberately leave vision shut.
+            if pose_end is not None:
+                if pose_end(pose_token, settle_s=cfg.post_grab_settle_s) is False:
+                    raise RuntimeError('cube camera pose token changed during grab')
         finally:
             # Zero speed leaves the mechanism alone; Actions handles emergency
             # cancellation on errors. No worker may re-send motion afterward.
@@ -477,7 +395,7 @@ class TaskControl(TaskStateReporting):
             progress = (abs(result.estimated_chassis_distance_mm)
                         / max(abs(distance_mm), 1.0))
             if progress >= 0.90:
-                print(f'[{self.TASK_LABEL}] chassis timeout accepted: '
+                print(f'[{self.operation_name}] chassis timeout accepted: '
                       f'{direction} {result.estimated_chassis_distance_mm:.1f}/'
                       f'{distance_mm:.1f} mm ({progress * 100:.0f}%)')
                 return result
@@ -493,12 +411,12 @@ class TaskControl(TaskStateReporting):
         """Shared hatch unloading: open 300 ms, reverse, close without waiting."""
         cfg = self.config
         self._check_active()
-        print(f'[{self.TASK_LABEL}] Unload: open hatches')
+        print(f'[{self.operation_name}] Unload: open hatches')
         self.robot.actions.hatch_open(settle_ms=300)
         self._checked_move(
             'backward', cfg.unload_reverse_mm, cfg.unload_reverse_speed_mm_s)
         self._check_active()
-        print(f'[{self.TASK_LABEL}] Unload: close hatches')
+        print(f'[{self.operation_name}] Unload: close hatches')
         self.robot.actions.hatch_close(settle_ms=0)
         self._check_active()
 
@@ -546,7 +464,7 @@ class TaskControl(TaskStateReporting):
             if block is None:
                 raise SearchRangeExhausted('orange cube not found within search range')
             return block
-        print(f'[{self.TASK_LABEL}] {display_color} not visible; '
+        print(f'[{self.operation_name}] {display_color} not visible; '
               f'continuous search {direction_name} '
               f'from {self._search_position_mm:.0f}/'
               f'{search_limit_mm:.0f} mm')
@@ -563,7 +481,7 @@ class TaskControl(TaskStateReporting):
                     elapsed_s = time.monotonic() - started
                     self._search_position_mm += min(
                         remaining_mm, elapsed_s * cfg.search_speed_mm_s)
-                    print(f'[{self.TASK_LABEL}] {display_color} acquired: '
+                    print(f'[{self.operation_name}] {display_color} acquired: '
                           f'x={block.x:+.0f} mm, '
                           f'confidence={block.confidence:.0f}%, '
                           f'position={self._search_position_mm:.0f} mm')
@@ -577,7 +495,7 @@ class TaskControl(TaskStateReporting):
 
     @staticmethod
     def _alignment_speed(x_error: float, integral: float,
-                         derivative: float, cfg: FirstTaskConfig,
+                         derivative: float, cfg: CommonControlConfig,
                          minimum_speed_mm_s: Optional[float] = None) -> float:
         speed = (cfg.align_kp * x_error
                  + cfg.align_ki * integral
@@ -592,7 +510,7 @@ class TaskControl(TaskStateReporting):
 
     @staticmethod
     def _slew_alignment_speed(desired: float, previous: float, dt: float,
-                              cfg: FirstTaskConfig) -> float:
+                              cfg: CommonControlConfig) -> float:
         if desired == 0.0:
             return 0.0
         if previous == 0.0:
@@ -621,8 +539,8 @@ class TaskControl(TaskStateReporting):
         seed_block = (self._last_alignment_block
                       if self._last_alignment_block is not None
                       else initial_block)
-        # Task2 has a separate calibrated orange target; Task1 uses its
-        # general calibrated target because it has no orange override.
+        # Mixed-color collection has a separate orange calibration; ground
+        # collection uses its general target when no orange override is set.
         orange_target_x = getattr(cfg, 'orange_align_target_x_mm',
                                   cfg.align_target_x_mm)
         aligned = self._align_cube(
@@ -652,7 +570,7 @@ class TaskControl(TaskStateReporting):
                 and 0.0 <= time.time() - self._last_alignment_frame_timestamp
                 < cfg.vision_stale_s
                 and coarse_min <= last_block.x <= coarse_max):
-            print(f'[{self.TASK_LABEL}] Fine alignment timed out; '
+            print(f'[{self.operation_name}] Fine alignment timed out; '
                   f'coarse position x={last_block.x:+.0f} mm is acceptable')
             return True
         return False
@@ -750,7 +668,7 @@ class TaskControl(TaskStateReporting):
                     self._last_alignment_block = None
                     self._last_alignment_frame_timestamp = None
                     if now - last_seen >= cfg.align_lost_timeout_s:
-                        print(f'[{self.TASK_LABEL}] {display_color} lost; '
+                        print(f'[{self.operation_name}] {display_color} lost; '
                               'resume search')
                         return False
                     time.sleep(cfg.align_control_period_s)
@@ -779,7 +697,7 @@ class TaskControl(TaskStateReporting):
                     previous_error = None
                     confirmed += 1
                     self._last_alignment_block = block
-                    print(f'[{self.TASK_LABEL}] Alignment sample {confirmed}/'
+                    print(f'[{self.operation_name}] Alignment sample {confirmed}/'
                           f'{cfg.align_confirm_frames}: x={block.x:+.0f} mm')
                     if confirmed >= cfg.align_confirm_frames:
                         return True
@@ -797,7 +715,7 @@ class TaskControl(TaskStateReporting):
                         commanded_speed = 0.0
                         integral = 0.0
                         previous_error = None
-                        print(f'[{self.TASK_LABEL}] Alignment edge hold: '
+                        print(f'[{self.operation_name}] Alignment edge hold: '
                           f'x={filtered_x:+.0f} mm')
                     else:
                         alignment_window_latched = False
@@ -823,7 +741,7 @@ class TaskControl(TaskStateReporting):
                         rpm = self.robot.chassis.mecanum_rpm(
                             0.0, commanded_speed / 10.0, 0.0)
                         self.robot.chassis.set_speeds(rpm)
-                        print(f'[{self.TASK_LABEL}] Visual PID recovery: '
+                        print(f'[{self.operation_name}] Visual PID recovery: '
                               f'x={filtered_x:+.0f} mm, '
                               f'vy={commanded_speed:+.0f} mm/s')
                 else:
@@ -852,7 +770,7 @@ class TaskControl(TaskStateReporting):
                     rpm = self.robot.chassis.mecanum_rpm(
                         0.0, commanded_speed / 10.0, 0.0)
                     self.robot.chassis.set_speeds(rpm)
-                    print(f'[{self.TASK_LABEL}] Visual PID: '
+                    print(f'[{self.operation_name}] Visual PID: '
                           f'x={filtered_x:+.0f} mm, '
                           f'vy={commanded_speed:+.0f} mm/s')
                     previous_error = x_error
@@ -862,41 +780,15 @@ class TaskControl(TaskStateReporting):
             self.robot.chassis.set_speeds([0, 0, 0, 0])
         if timeout_returns_false:
             self._last_alignment_timed_out = True
-            print(f'[{self.TASK_LABEL}] {display_color} alignment timed out; '
+            print(f'[{self.operation_name}] {display_color} alignment timed out; '
                   'resume search')
             return False
         if timeout_is_success:
             self._last_alignment_timed_out = True
-            print(f'[{self.TASK_LABEL}] {display_color} alignment '
+            print(f'[{self.operation_name}] {display_color} alignment '
                   f'time reached; accepting position')
             return True
         raise RuntimeError(f'{color_name} visual alignment timed out')
-
-
-    def _collect_orange_with_count_check(self, initial_target, grab_one,
-                                       *, chassis_followup=None):
-        """Keep one search budget/origin across initial collection and refill."""
-        remaining = initial_target
-        while True:
-            for index in range(1, remaining + 1):
-                print(f'[{self.TASK_LABEL}] Orange pickup {index}/{remaining}')
-                try:
-                    grab_one()
-                except SearchRangeExhausted:
-                    print(f'[{self.TASK_LABEL}] Orange search range exhausted; '
-                          'skip count inspection and continue route')
-                    return
-            self.state = type(self.state).COUNT_CHECK
-            count = self.robot.check_carried_cube_count(
-                chassis_followup=chassis_followup, allow_visual_failure=True)
-            if count is None or count == 3:
-                print(f'[{self.TASK_LABEL}] Carried count={count}; continue route')
-                return
-            if count not in (0, 1, 2):
-                raise RuntimeError(f'invalid carried cube count: {count}')
-            remaining = 3 - count
-            print(f'[{self.TASK_LABEL}] Carried count={count}; refill {remaining}')
-
 
     @staticmethod
     def _wrap_angle(angle_deg: float) -> float:
@@ -920,7 +812,7 @@ class TaskControl(TaskStateReporting):
         self._check_active()
         error_ccw_deg = self._heading_error(target_cw_deg)
         clockwise_delta_deg = -error_ccw_deg
-        print(f'[{self.TASK_LABEL}] Gyro heading target '
+        print(f'[{self.operation_name}] Gyro heading target '
               f'{target_cw_deg:.0f} deg CW from startup '
               f'(correction {clockwise_delta_deg:+.1f} deg CW)')
         self.robot.chassis.turn(
@@ -1046,7 +938,7 @@ class TaskControl(TaskStateReporting):
             self.robot.chassis.set_speeds(self.robot.chassis.mecanum_rpm(
                 vx / 10.0, vy / 10.0, wz))
 
-        print(f'[{self.TASK_LABEL}] Align tag {tag_id} at '
+        print(f'[{self.operation_name}] Align tag {tag_id} at '
               f'{target_distance_mm:.0f} mm')
         try:
             while time.monotonic() - started < cfg.delivery_tag_align_timeout_s:
@@ -1129,7 +1021,7 @@ class TaskControl(TaskStateReporting):
                         else:
                             relock_candidate = current
                             relock_count = 1
-                        print(f'[{self.TASK_LABEL}] Reject tag jump: '
+                        print(f'[{self.operation_name}] Reject tag jump: '
                               f'd={distance_jump:.0f} mm, '
                               f'x={lateral_jump:.0f} mm '
                               f'(relock {relock_count}/3)')
@@ -1138,7 +1030,7 @@ class TaskControl(TaskStateReporting):
                             translation_samples.clear()
                             relock_candidate = None
                             relock_count = 0
-                            print(f'[{self.TASK_LABEL}] '
+                            print(f'[{self.operation_name}] '
                                   'Tag translation relocked')
                         time.sleep(control_period)
                         continue
@@ -1184,7 +1076,7 @@ class TaskControl(TaskStateReporting):
                         vx = vy = wz = 0.0
                         pids.reset()
                     confirmed += 1
-                    print(f'[{self.TASK_LABEL}] Tag {tag_id} aligned '
+                    print(f'[{self.operation_name}] Tag {tag_id} aligned '
                           f'{confirmed}/{cfg.delivery_tag_confirm_frames}: '
                           f'd={distance_mm:.0f} mm, x={lateral_mm:+.0f} mm, '
                           f'gyro={heading_error_deg:+.1f} deg')
@@ -1204,11 +1096,11 @@ class TaskControl(TaskStateReporting):
                 if within_tolerance and fine_align_enabled:
                     if fine_started is None:
                         fine_started = now
-                        print(f'[{self.TASK_LABEL}] Tag within tolerance; '
+                        print(f'[{self.operation_name}] Tag within tolerance; '
                               'fine alignment')
                     if precision_ok:
                         confirmed += 1
-                        print(f'[{self.TASK_LABEL}] Tag '
+                        print(f'[{self.operation_name}] Tag '
                               f'{tag_id} precision '
                               f'{confirmed}/{cfg.delivery_tag_confirm_frames}: '
                               f'd={distance_mm:.0f} mm, '
@@ -1221,7 +1113,7 @@ class TaskControl(TaskStateReporting):
                             >= cfg.delivery_tag_fine_align_timeout_s):
                         self.robot.chassis.set_speeds([0, 0, 0, 0])
                         if not precision_ok:
-                            print(f'[{self.TASK_LABEL}] '
+                            print(f'[{self.operation_name}] '
                                   'Fine alignment time reached; '
                                   'accepting position within tolerance')
                         return
@@ -1291,7 +1183,7 @@ class TaskControl(TaskStateReporting):
                     rpm = self.robot.chassis.mecanum_rpm(
                         vx / 10.0, vy / 10.0, wz)
                     self.robot.chassis.set_speeds(rpm)
-                print(f'[{self.TASK_LABEL}] Tag PID: '
+                print(f'[{self.operation_name}] Tag PID: '
                       f'd={distance_mm:.0f} mm, '
                       f'x={lateral_mm:+.0f} mm, '
                       f'gyro={heading_error_deg:+.1f} deg; '
@@ -1309,158 +1201,5 @@ class TaskControl(TaskStateReporting):
             return True
         except VisualAlignmentUnavailable as exc:
             self._check_active()
-            report_visual_fallback(self.robot, self.TASK_LABEL, 'tag alignment', exc)
+            report_visual_fallback(self.robot, self.operation_name, 'tag alignment', exc)
             return False
-
-
-class CompetitionProgram(TaskControl):
-    """Task1 orange collection and delivery, using shared control procedures."""
-
-    def _run_first_task(self):
-        cfg = self.config
-        set_profile = self._set_cube_profile
-        if set_profile is not None:
-            set_profile('default')
-        print(f'[{self.TASK_LABEL}] Cube vision pipeline '
-              f'{self.CUBE_VISION_PIPELINE_VERSION}')
-        self.state = CompetitionState.WALL_APPROACH
-        print(f'[{self.TASK_LABEL}] Slow approach until motor stall')
-        self._drive_until_wall()
-        time.sleep(cfg.wall_settle_s)
-        self._recalibrate_heading_zero()
-        self.robot.reset_vision_filter()
-
-        self._search_position_mm = 0.0
-        lateral_origin = self._capture_lateral_origin()
-        self._orange_recovery = OrangeSearchRecovery(origin=lateral_origin)
-        reverse_done = False
-
-        def start_delivery():
-            nonlocal reverse_done
-            # Freeze the search measurement before any delivery movement.
-            self._cube_lateral_displacement_mm = (
-                self._measure_lateral_displacement_mm(lateral_origin))
-            if cfg.delivery_forward_base_mm <= self._cube_lateral_displacement_mm:
-                raise RuntimeError('delivery forward distance must be positive')
-            self._run_delivery_reverse()
-            reverse_done = True
-
-        self._collect_orange_with_count_check(
-            cfg.target_cube_count, self._grab_task1_orange,
-            chassis_followup=start_delivery)
-
-        if not reverse_done:
-            self._cube_lateral_displacement_mm = (
-                self._measure_lateral_displacement_mm(lateral_origin))
-        print(f'[{self.TASK_LABEL}] Encoder-measured cube lateral displacement: '
-              f'{self._cube_lateral_displacement_mm:+.0f} mm '
-              '(right positive)')
-        return reverse_done
-
-    def _grab_task1_orange(self):
-        cfg = self.config
-        while True:
-            self.state = CompetitionState.ORANGE_SEARCH
-            block = self._find_orange()
-            self.state = CompetitionState.ORANGE_ALIGN
-            if self._align_orange(block):
-                break
-        self.state = CompetitionState.GRAB
-        print(f'[{self.TASK_LABEL}] Orange aligned; running Grap3 with short wall press')
-        self._grab_with_wall_press(
-            self.robot.actions.grap3, recalibrate_heading_zero=True)
-        self.robot.reset_vision_filter()
-        time.sleep(cfg.post_grab_settle_s)
-
-    def _run_delivery_reverse(self):
-        cfg = self.config
-        self.state = CompetitionState.DELIVERY_ROUTE
-        print(f'[{self.TASK_LABEL}] Delivery: reverse {cfg.delivery_reverse_mm:.0f} mm')
-        self._checked_move(
-            'backward', cfg.delivery_reverse_mm,
-            cfg.delivery_reverse_speed_mm_s)
-
-    def _run_delivery_route(self, *, reverse_done=False):
-        cfg = self.config
-        self.state = CompetitionState.DELIVERY_ROUTE
-        if self._cube_lateral_displacement_mm is None:
-            raise RuntimeError('cube lateral encoder measurement unavailable')
-        delivery_forward_mm = (
-            cfg.delivery_forward_base_mm
-            - self._cube_lateral_displacement_mm)
-        if delivery_forward_mm <= 0.0:
-            raise RuntimeError(
-                'delivery forward distance must be positive: '
-                f'{cfg.delivery_forward_base_mm:.0f} - '
-                f'{self._cube_lateral_displacement_mm:.0f} = '
-                f'{delivery_forward_mm:.0f} mm')
-
-        if not reverse_done:
-            self._run_delivery_reverse()
-
-        self._turn_to_heading(
-            cfg.delivery_turn_deg,
-            hold_ms=cfg.delivery_turn_heading_hold_ms)
-
-        print(f'[{self.TASK_LABEL}] Delivery: forward {delivery_forward_mm:.0f} mm '
-              f'({cfg.delivery_forward_base_mm:.0f} calibration base - '
-              f'encoder lateral '
-              f'{self._cube_lateral_displacement_mm:.0f} mm)')
-        self._checked_move(
-            'forward', delivery_forward_mm,
-            cfg.delivery_forward_speed_mm_s)
-
-        self._turn_to_heading(cfg.delivery_turn_deg * 2.0)
-
-        self.state = CompetitionState.DELIVERY_TAG_ALIGN
-        self.robot.reset_field_localization_filter()
-        self._align_delivery_tag_or_continue(
-            fine_align_enabled=False, stop_axes_in_tolerance=True,
-            independent_heading=True)
-
-        if cfg.post_tag_lateral_right_mm > 0.0:
-            self.state = CompetitionState.POST_TAG_LATERAL
-            print(f'[{self.TASK_LABEL}] Move {cfg.post_tag_lateral_direction} '
-                  f'{cfg.post_tag_lateral_right_mm:.0f} mm at '
-                  f'{cfg.post_tag_lateral_speed_mm_s:.0f} mm/s after Tag6')
-            self._checked_move(
-                cfg.post_tag_lateral_direction, cfg.post_tag_lateral_right_mm,
-                cfg.post_tag_lateral_speed_mm_s)
-
-        self.state = CompetitionState.WALL_APPROACH
-        print(f'[{self.TASK_LABEL}] Delivery: approach unload wall')
-        self._drive_until_wall(
-            timeout_s=cfg.far_wall_timeout_s,
-            speed_mm_s=cfg.far_wall_speed_mm_s,
-            context='Unload wall contact',
-        )
-        self._recalibrate_heading_zero(
-            reference_cw_deg=cfg.delivery_heading_target_cw_deg)
-
-        self.state = CompetitionState.UNLOAD
-        self._unload_cubes()
-        if cfg.pre_final_turn_lateral_left_mm > 0.0:
-            self.state = CompetitionState.PRE_FINAL_TURN_LATERAL
-            print(f'[{self.TASK_LABEL}] Move {cfg.pre_final_turn_lateral_direction} '
-                  f'{cfg.pre_final_turn_lateral_left_mm:.0f} mm at '
-                  f'{cfg.pre_final_turn_lateral_speed_mm_s:.0f} mm/s '
-                  'after unloading; finish at heading 180 deg')
-            self._checked_move(
-                cfg.pre_final_turn_lateral_direction, cfg.pre_final_turn_lateral_left_mm,
-                cfg.pre_final_turn_lateral_speed_mm_s)
-        self._check_active()
-
-    def _run_mission(self):
-        reverse_done = self._run_first_task()
-        self._run_delivery_route(reverse_done=reverse_done)
-
-    def run(self) -> int:
-        try:
-            self._preflight()
-            self._run_mission()
-            self.state = CompetitionState.FINISHED
-            return 0
-        except Exception:
-            self.state = CompetitionState.FAULT
-            self.robot.transport.emergency_stop()
-            raise

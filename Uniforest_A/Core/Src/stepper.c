@@ -39,6 +39,7 @@ typedef struct {
     uint8_t  dir;           /* STEP_DIR_FORWARD / STEP_DIR_REVERSE */
     uint32_t step_idx;      /* steps completed in this segment */
     uint32_t seg_steps;     /* total steps in this segment */
+    volatile uint8_t first_segment_done; /* latched across queued reversals */
 
     /* S-curve profile (all in timer ticks, except stored originals in µs) */
     uint16_t start_delay;    /* ticks at ramp start */
@@ -280,6 +281,7 @@ void Stepper_Tick(void)
         if (ctx->step_idx >= ctx->seg_steps)
         {
             /* Segment complete */
+            ctx->first_segment_done = 1;
             Stepper_LED_Off(m);
 
             if (ctx->has_next)
@@ -450,6 +452,7 @@ void Stepper_StartMove(uint8_t motor, uint8_t dir, uint32_t steps,
     if (accel_steps  == 0) accel_steps  = g_default_accel_steps;
 
     /* Reset linked-move state */
+    ctx->first_segment_done = 0;
     ctx->has_next   = 0;
     ctx->link_motor = 0;
     ctx->link_trigger = 0;
@@ -626,6 +629,12 @@ uint8_t Stepper_IsBusy(uint8_t motor)
 {
     if (motor >= STEPPER_COUNT) return 0;
     return (g_stepper[motor].phase != SM_IDLE) ? 1 : 0;
+}
+
+uint8_t Stepper_FirstSegmentDone(uint8_t motor)
+{
+    if (motor >= STEPPER_COUNT) return 0;
+    return g_stepper[motor].first_segment_done;
 }
 
 int32_t Stepper_GetPosition(uint8_t motor)

@@ -31,6 +31,7 @@
 import cv2
 import numpy as np
 import json
+import math
 import os
 import sys
 import threading
@@ -82,6 +83,10 @@ class VisionResult:
     fps: float = 0.0
     # Full-frame pixel rows of a substantial orange component cut off at left.
     orange_left_clipped_y_range: Optional[Tuple[float, float]] = None
+    # Host acquisition time (VideoCapture.read completion), distinct from the
+    # existing wall-clock processing timestamp. It is not an exposure timestamp.
+    captured_monotonic: float = 0.0
+    pose_epoch: int = 0
 
 
 # ============================================================
@@ -722,6 +727,10 @@ class CubeDetector:
         self._morph_kernel_size, self._morph_iterations = morphology_for("default")
         self._max_front_aspect_ratio = max_front_aspect_for("default")
         self._profile_generation = 0
+        self._pose_epoch = 0
+        self._active_pose_token: Optional[int] = None
+        self._pose_blocked = False
+        self._pose_ready_after = 0.0
 
         # Calibration file path
         if calibration_file is None:
@@ -758,6 +767,7 @@ class CubeDetector:
         """打开摄像头并启动后台检测线程。"""
         if self._running:
             return True
+        self._invalidate_camera_session()
 
         # CAP_ANY may select the GStreamer backend on Raspberry Pi.  For UVC
         # cameras this can produce a 0x0 stream or fail after opening; use the
@@ -838,6 +848,7 @@ class CubeDetector:
     def stop(self):
         """停止检测线程并释放摄像头。"""
         self._running = False
+        self._invalidate_camera_session()
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=2.0)
         if self._cap:
@@ -911,6 +922,64 @@ class CubeDetector:
             with self._result_lock:
                 self._result = None
 
+    def begin_pose_change(self, reason: str = 'arm_motion') -> int:
+        """Hide geometry before moving the arm-mounted camera; return a token.
+
+        A newer call supersedes an older token. Raw frames remain available for
+        inspection and recording. This gate controls vision only; callers must
+        independently wait for the cube-clearance milestone before chassis use.
+        """
+        with self._profile_lock:
+            self._pose_epoch += 1
+            self._active_pose_token = self._pose_epoch
+            self._pose_blocked = True
+            self._pose_ready_after = float('inf')
+            self._profile_generation += 1
+            with self._result_lock:
+                self._result = None
+            return self._active_pose_token
+
+    def end_pose_change(self, token: int, *, settle_s: float = 0.0) -> bool:
+        """Allow fresh geometry after caller-confirmed whole-arm restoration.
+
+        This method provides no physical confirmation of arm position. The
+        caller must ensure the full calibrated pose is restored; sending PWM
+        or receiving an arbitrary action DONE alone does not establish that.
+        A frame read must start after the optional settling interval, and its
+        pose token must remain current throughout detection. Stale tokens are
+        rejected, including tokens retained across detector stop/start.
+        """
+        if not math.isfinite(settle_s) or settle_s < 0:
+            raise ValueError('camera settling time must be finite and nonnegative')
+        with self._profile_lock:
+            if token is None or token != self._active_pose_token:
+                return False
+            self._active_pose_token = None
+            self._pose_blocked = False
+            self._pose_ready_after = time.monotonic() + settle_s
+            self._profile_generation += 1
+            with self._result_lock:
+                self._result = None
+            return True
+
+    @property
+    def camera_pose_ready(self) -> bool:
+        """A fresh frame has been processed in the restored calibrated pose."""
+        with self._profile_lock:
+            with self._result_lock:
+                return (not self._pose_blocked and self._result is not None
+                        and self._result.pose_epoch == self._pose_epoch)
+
+    def _invalidate_camera_session(self):
+        """Discard session data/tokens without clearing an active pose block."""
+        with self._profile_lock:
+            self._pose_epoch += 1
+            self._active_pose_token = None
+            self._profile_generation += 1
+            with self._result_lock:
+                self._result = None
+                self._raw_frame = None
+
     # ================== Background Loop =====================================
 
     def _capture_loop(self):
@@ -921,6 +990,21 @@ class CubeDetector:
         while self._running:
             if self._cap is None:
                 break
+
+            # Snapshot before the blocking read. A read spanning arm movement
+            # or restoration must not become geometry in the new camera pose.
+            with self._profile_lock:
+                profile_name = self._detection_profile
+                profile_generation = self._profile_generation
+                pose_epoch = self._pose_epoch
+                pose_blocked = self._pose_blocked
+                pose_ready_after = self._pose_ready_after
+                color_profiles = self._color_profiles
+                roi_top_ratio = self._roi_top_ratio
+                morph_kernel_size = self._morph_kernel_size
+                morph_iterations = self._morph_iterations
+                max_front_aspect_ratio = self._max_front_aspect_ratio
+            read_started_monotonic = time.monotonic()
 
             ret, frame = self._cap.read()
             if not ret:
@@ -936,23 +1020,27 @@ class CubeDetector:
             state["cx"] = w / 2.0
             state["cy"] = h / 2.0
 
+            geometry_allowed = (not pose_blocked
+                                and read_started_monotonic >= pose_ready_after)
             with self._profile_lock:
-                profile_name = self._detection_profile
-                profile_generation = self._profile_generation
-                color_profiles = self._color_profiles
-                roi_top_ratio = self._roi_top_ratio
-                morph_kernel_size = self._morph_kernel_size
-                morph_iterations = self._morph_iterations
-                max_front_aspect_ratio = self._max_front_aspect_ratio
+                geometry_allowed = (geometry_allowed
+                                    and profile_generation == self._profile_generation)
             sink = self._frame_sink
             if sink is not None:
                 try:
+                    camera_metadata = {
+                        **self._camera_metadata,
+                        'camera_pose': {'epoch': pose_epoch,
+                                        'geometry_allowed': geometry_allowed},
+                    }
                     sink(frame, captured_monotonic, captured_at,
-                         profile_name, self._camera_metadata)
+                         profile_name, camera_metadata)
                 except Exception as exc:
                     # A recorder fault must not terminate the vision/control loop.
                     self._frame_sink = None
                     print(f'[Dataset] Raw-frame consumer disabled: {exc}')
+            if not geometry_allowed:
+                continue
             if profile_generation != applied_profile_generation:
                 state["ema_pos"] = None
                 state["history"].clear()
@@ -1011,6 +1099,8 @@ class CubeDetector:
                 fps=state["fps"],
                 orange_left_clipped_y_range=state["orange_diagnostics"].get(
                     "left_clipped_y_range"),
+                captured_monotonic=captured_monotonic,
+                pose_epoch=pose_epoch,
             )
 
             # Publish under the profile lock so a frame computed with the old

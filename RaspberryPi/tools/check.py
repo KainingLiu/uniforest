@@ -29,8 +29,10 @@ def main():
     args = parser.parse_args()
     results = {}
     files = sorted(ROOT.glob('*.py'))
-    for directory in ('control', 'protocol', 'Strategy', 'vision', 'sensors', 'utils', 'tools', 'tests', 'agent'):
-        files.extend(sorted((ROOT / directory).rglob('*.py')))
+    for directory in ('control', 'protocol', 'Strategy', 'vision', 'sensors', 'utils', 'tools', 'tests'):
+        files.extend(sorted(path for path in (ROOT / directory).rglob('*.py')
+                            if not any(part in ('.venv', 'venv', '__pycache__')
+                                       for part in path.relative_to(ROOT).parts)))
     results['syntax'] = True
     for path in files:
         try:
@@ -51,7 +53,19 @@ def main():
         sys.executable, '-m', 'unittest', 'tests.test_tag6_completion', '-q'])
     results['strategy'] = run('Strategy composition', [
         sys.executable, '-m', 'unittest', 'tests.test_strategy_composition',
-        'tests.test_plan_b', '-q'])
+        'tests.test_plan_b', 'tests.test_functional_operations',
+        'tests.test_route_speed_profiles', 'tests.test_task5', '-q'])
+    results['execution'] = run('Execution and camera contracts', [
+        sys.executable, '-m', 'unittest', 'tests.test_execution',
+        'tests.test_action_sessions', 'tests.test_camera_pose_gate',
+        'tests.test_blind_transition', '-q'])
+    results['transitions'] = run('Registered pickup and inspection transitions', [
+        sys.executable, '-m', 'unittest', 'tests.test_pickup_motion',
+        'tests.test_inspection_session', 'tests.test_registered_pickup_transitions',
+        'tests.test_registered_inspection_transitions', 'tests.test_transition_config', '-q'])
+    results['curves'] = run('Continuous trajectories and route integration', [
+        sys.executable, '-m', 'unittest', 'tests.test_continuous_trajectory',
+        'tests.test_curve_routes', '-q'])
     results['visual_fallback'] = run('Search recovery and visual fallback', [
         sys.executable, '-m', 'unittest', 'tests.test_visual_fallback', '-q'])
     firmware = ROOT.parent / 'Uniforest_A'

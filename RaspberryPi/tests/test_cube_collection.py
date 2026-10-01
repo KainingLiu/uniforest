@@ -312,38 +312,36 @@ class WorkflowIntegrationTests(unittest.TestCase):
         self.assertFalse(robot._vision.is_running)
         collector.start.assert_not_called()
 
-    def test_existing_task_states_are_reported_without_motion(self):
-        from Strategy.competition import CompetitionProgram, CompetitionState
-        from Strategy.task2 import Task2_2Program, Task2State
-        from Strategy.task3 import Task3_2Program, Task3State
-        from Strategy.task0 import Task0Program, Task0State
+    def test_functional_action_phases_are_reported_without_motion(self):
+        from Strategy.controllers import RobotController, Phase
+        from Strategy.settings import PROFILES
         reporter = Mock()
         robot = SimpleNamespace(set_collection_context=reporter)
-        program = CompetitionProgram(robot)
-        program.state = CompetitionState.ORANGE_SEARCH
-        reporter.assert_called_with(task='task1-1', phase='ORANGE_SEARCH')
-        program = Task2_2Program(robot)
-        program.state = Task2State.ORANGE_SEARCH
-        reporter.assert_called_with(task='task2-2', phase='ORANGE_SEARCH')
-        program = Task3_2Program(robot)
-        program.state = Task3State.BUILDING_ALIGN
-        reporter.assert_called_with(task='task3-2', phase='BUILDING_ALIGN')
-        program = Task0Program(robot)
-        program.state = Task0State.INITIAL_MOVE
-        reporter.assert_called_with(task='task0', phase='INITIAL_MOVE')
-        # Existing fake/legacy robot facades without a collector remain usable.
-        self.assertEqual(CompetitionProgram(SimpleNamespace()).state,
-                         CompetitionState.STARTUP)
+        for profile, operation, phase in (
+                ('ground-1', 'orange.acquire', Phase.ORANGE_SEARCH),
+                ('highland-2', 'mixed.acquire', Phase.ORANGE_SEARCH),
+                ('building-2', 'building.align', Phase.BUILDING_ALIGN),
+                ('depart-a', 'departure', Phase.INITIAL_MOVE)):
+            controller = RobotController(robot, PROFILES[profile], operation_name=operation)
+            controller.state = phase
+            reporter.assert_called_with(task=operation, phase=phase.name)
+        # A robot facade without a recorder remains usable for control replays.
+        self.assertEqual(RobotController(SimpleNamespace()).state, Phase.STARTUP)
 
-    def test_agent_repeated_workflows_get_distinct_flow_ids(self):
-        from Strategy.runner import run_tasks
+    def test_repeated_workflows_get_distinct_flow_ids(self):
+        from Strategy.runner import run_plan
+        from Strategy.plans import StrategyPlan
+        from Strategy.flows.model import ActionSpec
         from tests.test_strategy_composition import robot_fixture
         reporter = Mock()
         robot = robot_fixture()
         robot.set_collection_context = reporter
-        with patch('Strategy.task1.Task1Program.run', return_value=0):
-            self.assertEqual(run_tasks(robot, 'task1-1'), 0)
-            self.assertEqual(run_tasks(robot, 'task1-1'), 0)
+        robot.move_chassis = Mock(return_value=SimpleNamespace(timed_out=False, cancelled=False))
+        plan = StrategyPlan('repeat', (
+            ActionSpec('navigate', 'depart', 'depart-a', {'route': 'depart_a'}),
+        ))
+        self.assertEqual(run_plan(robot, plan), 0)
+        self.assertEqual(run_plan(robot, plan), 0)
         flows = [call.kwargs['flow_id'] for call in reporter.call_args_list
                  if 'flow_id' in call.kwargs]
         self.assertEqual(len(set(flows)), 2)
