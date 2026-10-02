@@ -1,21 +1,35 @@
-# 上位机运行指南
+# game 上位机运行指南
 
-## 2026-10-02：日志与 main 最新标定同步
+本文件只说明 game 实现的启动、优化开关、日志和验证要求。
 
-保留本次读取的 game 工作区实现，自动日志增加 `runtime: game` 标识。
-同步 GitHub main cefa25a 的相机曝光、Task1/Task2 固定几何、标定记录及橙色零偏置；
-其他 game 策略、路线和增强功能保持。主分支的 Task0 距离与对准减速参数未全局覆盖 game。
-旧接口固件 actions.c 跟随 main cefa25a 的 Build 第 4 步逻辑 4°；
-扩展动作表保留 game 的原参数。仅原接口差分基线更新，增强动作未声称现场验证。
-原 schema v3 协议未变，game 会话扩展继续独立启用；日志与标定同步无协议变化。
-在主分支内嵌部署时，此目录位于 RaspberryPi/game，启动使用
-`python main.py --runtime game --strategy PlanA --show-plan`（在上层 RaspberryPi 执行）。
-独立 game 分支继续使用原命令；两种布局均保存 logs/runs 中最近 100 次运行。
-本次按用户要求同步本地、GitHub 与树莓派，仅运行无硬件验证；未烧录或执行实机动作。
-详细验证限制见 [INTEGRATION_VALIDATION.md](INTEGRATION_VALIDATION.md)。
+## 选择 game
 
+在树莓派的上层 `RaspberryPi/` 目录，通过参数显式启动 game：
 
-在 `RaspberryPi/` 执行，先 `source .venv/bin/activate`。
+```bash
+cd /home/uniforest/Uniforest/RaspberryPi
+source .venv/bin/activate
+python main.py --runtime game --strategy PlanA --show-plan
+python main.py --runtime game --strategy PlanB --show-plan
+```
+
+确认预览与车辆起始状态后，去掉 `--show-plan` 才执行动作。
+同样可以使用 `python task2_main.py --runtime game --variant 1 --show-plan`；
+`python robot.py --runtime game --help` 查看 game 的调试入口。
+
+## 本文其余命令的执行目录
+
+下面的优化和工具示例都在 **game 实现目录内**执行，可直接使用该目录的入口：
+
+```bash
+cd /home/uniforest/Uniforest/RaspberryPi/game
+source ../.venv/bin/activate
+python main.py --strategy PlanA --show-plan
+```
+
+已检出独立 `game` Git 分支时，game 实现位于其 `RaspberryPi/` 根目录；
+进入该目录并 `source .venv/bin/activate` 后，后面的命令同样适用。
+相对配置路径按执行命令时的当前目录解释；切换实现前先停止并退出原任务。
 
 ## 运行方式与优化插拔
 
@@ -112,12 +126,13 @@ PlanB 将上面命令中的 PlanA 换成 PlanB。运行期用连续编码器/IMU
 
 ## 自动运行日志
 
-直接运行 `main.py`、`task2_main.py` 或 `robot.py` 时自动保存日志，桌面和后台服务启动同样生效，无需额外参数。
-日志在 `RaspberryPi/logs/runs/时间-入口-编号/`，按北京时间命名，每次运行一个目录：
+运行 game 的 `main.py`、`task2_main.py` 或 `robot.py` 时自动保存日志，无需额外参数。
+内嵌部署时目录为 `RaspberryPi/game/logs/runs/时间-入口-编号/`；独立 game 分支则为
+`RaspberryPi/logs/runs/时间-入口-编号/`。按北京时间命名，每次运行一个目录：
 
 - `console.log`：Python 终端输出、报错和未捕获异常；终端仍正常显示。
 - `diagnostics.jsonl`：本次运行的结构化诊断事件。
-- `run.json`：入口、开始/结束时间、进程号与退出码。
+- `run.json`：入口、开始/结束时间、进程号与退出码，`runtime` 为 `game`。
 
 自动保留最近 **100 次运行**，在启动和结束时清理更早记录；正在运行的日志受保护，结束后补清理。
 帮助、预览和启动失败也各算一次。强制断电/杀进程可能丢失末尾内容或结束记录，已落盘的日志仍可查看。
@@ -126,7 +141,14 @@ PlanB 将上面命令中的 PlanA 换成 PlanB。运行期用连续编码器/IMU
 
 ## 验证与启动顺序
 
-代码检查→`python tools/check.py`→Debug 构建→设备/标定检查→小范围动作→完整任务。固件经 CLion 烧录。
+在本节约定的 game 目录运行 `python tools/check.py`。完成代码检查、配套 Debug 构建、设备与标定检查后，
+先做小范围动作，再进入完整任务。固件通过 CLion 的 OpenOCD + DAPLink 配置烧录。
+内嵌部署的可选固件工程位于开发机 `Uniforest_A/game/`；独立 game 分支位于 `Uniforest_A/`。
+game 比赛入口要求扩展会话固件，握手失败会拒绝启动。当前尚未完成实机验证。
+
+2026-10-02 同步了 GitHub 新场地视觉标定和视觉坐标补偿，未重新调整机械偏置。
+game 全量测试仍有已记录的失败；本地 ARM 编译环境也缺交叉编译器，
+详细结果见 [整合验证记录](INTEGRATION_VALIDATION.md)，不能将代码上传等同于实机验证通过。
 
 Ctrl+C 停止。切换需重启；异常后不自动续跑。
 
