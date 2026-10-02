@@ -32,7 +32,7 @@ class Task0State(Enum):
 
 @dataclass(frozen=True)
 class Task0Config:
-    distance_mm: float = 1200.0
+    distance_mm: float = 1150.0
     speed_mm_s: float = LONG_DISTANCE_MOVE_SPEED_MM_S
     hold_ms: int = 0
     accel_ms: int = LONG_DISTANCE_FORWARD_ACCEL_MS

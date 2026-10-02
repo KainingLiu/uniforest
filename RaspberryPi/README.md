@@ -174,6 +174,7 @@ python main.py --task task2-2
 
 `PlanB: task0-2 → task2-1 → task4-1 → task2-2 → task4-2 → task0-3 → task1-1 → task0-3 → task1-2 → task5`
 
+Task0-1 以 1000 mm/s 前进 1150 mm，加速 800 ms。
 Task0-2 以 1000 mm/s 前进 900 mm、右移 2700 mm，两段均使用 800 ms 加速。
 右移结束后以 120°/s 转到相对启动零点的 180°，再进入 Task2。
 Task0-3 从 Task4/Task1 的 180°结束朝向进入：先转到 0°，以 1000 mm/s 左移 2600 mm，
@@ -536,7 +537,11 @@ python robot.py --action build
 
 橙色使用 `vision/opencv/orange_cluster.py` 识别顶面簇左首方块，通过 `vision/opencv/orange_fixed_geometry.py` 内嵌的 Task1/Task2 独立固定平面投影定位；不会每帧重新估计整个平面。`vision/opencv/` 中两份 `task*_orange_fixed_calibration.json` 记录标定资料，运行时矩阵以 Python 常量为准。
 
-`vision/opencv/orange_config.py` 管理 HSV、面积、形态学和两任务独立 X 偏置；当前两个偏置均为 +5.0 mm，仅影响橙色返回值。`default` 对应 Task1，`task2_orange` 对应 Task2。固定置信度 80 只代表通过几何门槛，不代表测量准确率；视角改变、遮挡或图像裁边后需复测。
+2026-10-02 Task2 顶面几何按新场地单块重标定，ROI=0.5；24 帧回放通过，留出帧角点最大偏差约 0.45 px，树莓派共用检测线程 60/60 帧有效。HSV 保持原值，两任务 X 偏置仍为 0；实际抓取精度待验证。
+
+2026-10-02 Task1 顶面几何按新场地完整单块重标定：24 帧静态图像，12 帧拟合、12 帧留出验证，角点最大偏差约 0.37 px；Task1 与 Task2 独立标定。沿用 100 mm 方块尺寸和已有内参，尚未通过实测距离或抓取动作确认绝对精度；树莓派部署状态见 CHANGELOG。
+
+`vision/opencv/orange_config.py` 管理 HSV、面积、形态学和两任务独立 X 偏置；当前两个偏置均为 0.0 mm，返回前额外的 +5 mm 已删除，总偏置为 0 mm，等待重新校准。`default` 对应 Task1，`task2_orange` 对应 Task2。固定置信度 80 只代表通过几何门槛，不代表测量准确率；视角改变、遮挡或图像裁边后需复测。
 
 `cube_tracker.py` 管理连续确认、X/Z 跳变拒绝、丢帧保持、候选歧义和位置平滑。
 对准时 X/Z 跳变门槛为 45/80 mm，置信度至少 25%，位置滤波窗口为 1 帧。
@@ -550,7 +555,7 @@ python robot.py --action build
 横移指令经麦克纳姆解算转为四轮 RPM，下位机以 1 kHz 速度环执行。
 
 - 基础比例增益 Kp=1.5，Ki=Kd=0；基础输出限幅 250 mm/s。
-- 距目标 150 mm 及以上时期望速度 500 mm/s，30–150 mm 间随距离收缩；
+- 距目标 120 mm 及以上时期望速度 500 mm/s，30–120 mm 间随距离收缩；
   30 mm 内、尚未进入合格窗口时期望速度为 100 mm/s。最终期望上限为 500 mm/s。
   距离分段给出速度下限，再与基础比例输出取较大值，因此 Kp 不变也会改变速度曲线。
 - 从静止起步指令为 80 mm/s，速度变化限制为 800 mm/s²；反向前先发零速度。
@@ -582,7 +587,7 @@ python robot.py --action build
 重新计算中心。成功、搜索耗尽或异常退出后恢复 `default`，切换时清除旧检测结果。
 `task2_orange` 仍屏蔽上方 50%，`default`/`building` 不屏蔽。紫色色带未调整。
 
-cube Linux 曝光配置为 `exposure=312`、`gain=32`、自动白平衡，保存于 `vision/opencv/camera_settings.json`。光照、镜头、相机位置或曝光改变后须重新核对色带与平面标定；软件配置不等于已验证的硬件事实。
+cube Linux 曝光配置为 `exposure=100`（约 10 ms）、`gain=32`、自动白平衡，保存于 `vision/opencv/camera_settings.json`。2026-10-02 新场地 Task1 曝光调整时及 Task2 重标定后，共用检测线程各 60 帧验证通过；紫色静态检测 868/868 帧有效。各颜色 HSV 保持原值，紫色实际由 `camera_calib.json` 加载 `(110,50,30)`～`(145,255,255)`。这些结果仅覆盖当时静态场景；光照、镜头、相机位置或曝光改变后须重新核对色带与平面标定。
 
 ### 建筑
 

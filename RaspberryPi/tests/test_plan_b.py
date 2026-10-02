@@ -38,7 +38,7 @@ class PlanBTests(unittest.TestCase):
         self.assertEqual(RobotToolExecutor(dry_run=True).run_strategy('PlanB').value['tasks'], expected)
 
     def test_task0_routes_use_requested_distances_speed_and_acceleration(self):
-        for task_type, legs in ((Task0_1Program, [('forward', 1200)]),
+        for task_type, legs in ((Task0_1Program, [('forward', 1150)]),
                                (Task0_2Program, [('forward', 900), ('right', 2700)])):
             with self.subTest(task=task_type.TASK_LABEL):
                 robot = robot_fixture()

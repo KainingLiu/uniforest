@@ -5,7 +5,7 @@
     "white_balance": 4500
   },
   "linux": {
-    "exposure": 312.0,
+    "exposure": 100.0,
     "gain": 32.0,
     "white_balance": null
   }

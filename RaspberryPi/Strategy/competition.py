@@ -118,7 +118,7 @@ class FirstTaskConfig:
     align_max_speed_mm_s: float = 250.0
     align_fast_speed_mm_s: float = 500.0
     # Shorter approach ramp; retain the near-target breakout speed.
-    align_slowdown_start_mm: float = 150.0
+    align_slowdown_start_mm: float = 120.0
     align_creep_start_mm: float = 30.0
     align_accel_mm_s2: float = 800.0
     # One-frame control feedback avoids commanding motion from an old median

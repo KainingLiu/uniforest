@@ -50,7 +50,7 @@ static const ActionStep grap3[] = {
 static const ActionStep build[] = {
     /* Only pickup-pose and LIFT waits remain; no post-stepper settle. */
     {HOME,{0}}, {HATCH,{0}}, {PUMP,{0}}, M(H,F,3.5),
-    A(1,1000), A(0,1022), W(500), A(0,952), LIFT(30),
+    A(1,1000), A(0,1022), W(500), A(0,952), LIFT(40),
     D(H,19,F,V,19,R,3), {RELEASE,{0}},
     D3(V,10,F,2,R,H,22.5,R,3,19.5),
     {PUMP,{0}}, A(1,950), A(0,1022), W(500), A(0,972), LIFT(0),

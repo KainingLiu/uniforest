@@ -583,9 +583,6 @@ def detect_all_blocks(frame, state, color_profiles=None,
                 # Demo camera Y points down; competition Y points up. cm -> mm.
                 x, y, z = np.asarray(cube.cam_xyz) * (10.0, -10.0, 10.0)
                 x += float(getattr(orange_cfg, "X_OFFSET_MM", 0.0))
-                # Field calibration: orange pickup center is 5 mm to the
-                # right of the camera-frame reference for both task profiles.
-                x += 5.0
                 if not np.isfinite([x, y, z]).all() or not 20 < z < 5000:
                     continue
                 quad = np.asarray(cube.top_quad, np.float32) / info["scale"]
