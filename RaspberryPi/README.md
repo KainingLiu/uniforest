@@ -1,9 +1,8 @@
 # Raspberry Pi 上位机程序
 
-2026-10-02 增量整合：默认继续运行本主分支；添加 `--runtime game` 可选择独立 game 实现。
-两套均自动保存运行日志，原有命令继续有效。用法、标定来源、固件前提与验证记录见 [双运行时说明](RUNTIMES.md)。
+本文件只说明主分支上位机的安装、运行、视觉参数和日志。原有启动命令继续有效。
 
-当前源码基线：2026-09-27。历史参数和验证结果集中在 [CHANGELOG.md](CHANGELOG.md)，下位机接口见开发电脑上的 `Uniforest_A/PROJECT.md`。树莓派只部署上位机，不保留下位机源码副本。
+当前源码基线：2026-10-02。历史参数和验证结果集中在 [CHANGELOG.md](CHANGELOG.md)，下位机接口见开发电脑上的 `Uniforest_A/PROJECT.md`。树莓派只部署上位机，不保留下位机源码副本。
 
 模块化策略说明与扩展入口见 [Strategy/README.md](Strategy/README.md)。本次拆分已于 2026-09-26 定向同步树莓派，远端无硬件检查通过，现场动作待验证。
 
@@ -220,13 +219,26 @@ python main.py --task task3-2 --show-plan
 cd /home/uniforest/Uniforest/RaspberryPi && .venv/bin/python -u main.py --strategy PlanA
 ```
 
-可选诊断日志：
+### 自动运行日志
+
+直接启动 `main.py`、`task2_main.py` 或 `robot.py` 时自动保存本次运行日志，
+原有桌面入口也会保存，无需增加参数。默认目录为
+`RaspberryPi/logs/runs/时间-入口-编号/`，时间使用北京时间。
+
+- `console.log`：终端输出、错误和异常。
+- `diagnostics.jsonl`：连接、动作进度、任务状态等结构化诊断。
+- `run.json`：运行入口、开始与结束时间、进程号、退出码，`runtime` 为 `main`。
+
+保留最近 100 次运行，正在写入的记录受保护。日志目录可用 `UNIFOREST_RUN_LOG_DIR` 修改。
+默认日志目录不提交 Git；存储失败时告警，保留原入口的执行与控制行为。
+
+需要额外保存一份诊断日志时使用原参数：
 
 ```bash
 python main.py --strategy PlanA --diagnostics-log /tmp/uniforest-run.jsonl
 ```
 
-日志记录连接、定距请求/实际进度、耗时、任务状态和异常类型；默认不写日志。
+显式指定的诊断文件额外写入相同事件，不参与自动清理；默认运行日志仍保留。
 
 ## 底盘参数
 
