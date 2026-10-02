@@ -6,9 +6,8 @@
             "hidden": true,
             "generator": "Ninja",
             "binaryDir": "${sourceDir}/build/${presetName}",
-		    "toolchainFile": "${sourceDir}/cmake/gcc-arm-none-eabi.cmake",
-            "cacheVariables": {
-            }
+            "toolchainFile": "${sourceDir}/cmake/gcc-arm-none-eabi.cmake",
+            "cacheVariables": {}
         },
         {
             "name": "Debug",
@@ -23,6 +22,16 @@
             "cacheVariables": {
                 "CMAKE_BUILD_TYPE": "Release"
             }
+        },
+        {
+            "name": "DebugEnhanced",
+            "inherits": "Debug",
+            "cacheVariables": {}
+        },
+        {
+            "name": "ReleaseEnhanced",
+            "inherits": "Release",
+            "cacheVariables": {}
         }
     ],
     "buildPresets": [
@@ -33,6 +42,14 @@
         {
             "name": "Release",
             "configurePreset": "Release"
+        },
+        {
+            "name": "DebugEnhanced",
+            "configurePreset": "DebugEnhanced"
+        },
+        {
+            "name": "ReleaseEnhanced",
+            "configurePreset": "ReleaseEnhanced"
         }
     ]
 }

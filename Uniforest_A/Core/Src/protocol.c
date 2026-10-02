@@ -15,6 +15,7 @@
 
 #include "protocol.h"
 #include "actions.h"
+#include "execution_session.h"
 #include "motor3508.h"
 #include "servo.h"
 #include "suction.h"
@@ -474,6 +475,16 @@ static void send_action_status(uint8_t seq, ActionStatus_t s)
 
 static void Protocol_Dispatch(const ProtoFrame_t *f)
 {
+    ExecutionSession_Poll();
+    if (ExecutionSession_Handle(f)) return;
+    /* An unwrapped old-client frame takes ownership immediately. A new
+     * client's entire command stream is wrapped, including its heartbeat. */
+    ExecutionSession_LegacyTakeover();
+    Protocol_DispatchLegacy(f);
+}
+
+void Protocol_DispatchLegacy(const ProtoFrame_t *f)
+{
     const uint8_t *d = f->data;
     uint8_t status = ACK_OK;
 
@@ -823,6 +834,7 @@ void Protocol_Init(void)
 
 void Protocol_RxPoll(void)
 {
+    ExecutionSession_Poll();
     /* Latch a lost link before a newly arrived heartbeat can revive it. */
     if (!Protocol_IsAlive()) {
         Motor3508_StopAll();
@@ -845,6 +857,9 @@ uint8_t Protocol_IsAlive(void)
     }
     return 1;
 }
+
+uint16_t Protocol_GetTelemetryRate(void) { return g_telem_rate_hz; }
+void Protocol_RestoreTelemetryRate(uint16_t rate) { g_telem_rate_hz=rate; }
 
 uint32_t Protocol_LastFrameAge(void)
 {

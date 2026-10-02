@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import time
 
-from protocol.commands import ACTION_DONE
+from protocol.commands import ACTION_DONE, ACTION_IDLE
 from vision.carried_cube_count import observe, classify
 
 CONFIG_PATH = Path(__file__).resolve().parents[1] / 'tools/carried_cube_count_config.json'
@@ -24,10 +24,15 @@ class CarriedInspectionSession:
     available to confirm the physical arm or camera pose.
     """
 
-    def __init__(self, robot, config, *, allow_visual_failure=False):
+    def __init__(self, robot, config, *, allow_visual_failure=False, allow_idle=False):
+        if type(allow_idle) is not bool:
+            raise ValueError('allow_idle must be an explicit boolean')
         self.robot, self.config = robot, config
         self.transport, self.actions = robot.transport, robot.actions
         self.allow_visual_failure = allow_visual_failure
+        # Only a caller with zero completed pickups may opt in. IDLE still
+        # needs the same three fresh, stationary telemetry samples as DONE.
+        self.allow_idle = allow_idle
         self._generation = self.transport.emergency_stop_generation
         self._link_generation = robot.inspection_link_snapshot()[3]
         self._owns_lock = False
@@ -63,18 +68,18 @@ class CarriedInspectionSession:
     def _servo(self, servo_id, angle):
         self.transport.set_servo_angle_checked(servo_id, angle, self._check)
 
-    def inspect(self):
+    def inspect(self, *, chassis_followup=None):
         """Count from fresh raw frames and begin restoration without joining it."""
         try:
             self._check()
             if self.inspected:
                 raise RuntimeError('carried-count inspection already performed')
-            return self._inspect()
+            return self._inspect(chassis_followup=chassis_followup)
         except BaseException:
             self.abort()
             raise
 
-    def _inspect(self):
+    def _inspect(self, *, chassis_followup=None):
         robot, transport, config = self.robot, self.transport, self.config
         check, wait, servo = self._check, self._wait, self._servo
         allow_visual_failure = self.allow_visual_failure
@@ -86,7 +91,7 @@ class CarriedInspectionSession:
             check()
             status = transport.get_action_status()
             if status is not None and status[1] >= probe_at:
-                if status[0].state != ACTION_DONE:
+                if status[0].state != ACTION_DONE and not (self.allow_idle and status[0].state == ACTION_IDLE):
                     raise RuntimeError(f'A-board action not complete before inspection: {status[0].state}')
                 break
             if time.monotonic() - probe_at > .15:
@@ -136,15 +141,28 @@ class CarriedInspectionSession:
             classify([observe(sample[0], config)[0]], config)
             servo(0, 37.2)
             pose_started = True
-            wait(.200)
-            servo(1, 120)
-            wait(.300)
-            first_after = time.monotonic()
-            last_timestamp = first_after
+            lowering_started = time.monotonic()
+            lower_at = lowering_started + .200
+            lower_sent = False
+            ready_at = None
+            first_after = last_timestamp = None
             skipped = 0
-            while len(observations) < 8:
+            moving_frames = 0
+
+            def advance_lowering_and_count():
+                nonlocal lower_sent, ready_at, first_after, last_timestamp, skipped, moving_frames
                 check()
-                if time.monotonic() - first_after > 4:
+                now = time.monotonic()
+                if not lower_sent and now >= lower_at:
+                    lower_sent = True
+                    servo(1, 120)
+                    ready_at = time.monotonic() + .300
+                    robot.diagnostics.write('inspection_head_down',at_s=time.monotonic())
+                if ready_at is None or now < ready_at or len(observations) >= 8:
+                    return
+                if first_after is None:
+                    first_after = last_timestamp = now
+                if now - first_after > 4:
                     raise InspectionVisionUnavailable('inspection fresh camera frames timed out')
                 sample = robot.cube_raw_frame
                 if sample is not None and sample[1] > last_timestamp:
@@ -153,7 +171,29 @@ class CarriedInspectionSession:
                         skipped += 1
                     else:
                         observations.append(observe(frame, config)[0])
+                        telem = check()
+                        moving_frames += any(abs(m.speed_rpm) > 10 for m in telem.motors)
+
+            if chassis_followup is not None:
+                robot.diagnostics.write('inspection_overlap_start',at_s=lowering_started)
+                # The route owns chassis motion. Its existing cooperative
+                # monitor advances servo deadlines and frame collection in
+                # the same thread, without a competing motor writer.
+                try:
+                    with robot.chassis.monitor_action(advance_lowering_and_count):
+                        chassis_followup()
+                except BaseException:
+                    # A visual fault inside a moving route must never be
+                    # swallowed as a count fallback while a setpoint is live.
+                    self.abort()
+                    raise
+                robot.diagnostics.write('inspection_overlap_retreat_done',at_s=time.monotonic())
+            while len(observations) < 8:
+                advance_lowering_and_count()
                 wait(.005)
+            robot.diagnostics.write('inspection_sampling',started_s=first_after,
+                finished_s=time.monotonic(),frames=len(observations),moving_frames=moving_frames,
+                overlapping_retreat=chassis_followup is not None)
             result = classify(observations, config)
         except InspectionVisionUnavailable as exc:
             if not allow_visual_failure:
@@ -255,11 +295,11 @@ class CarriedInspectionSession:
         return False
 
 
-def begin_carried_inspection(robot, *, allow_visual_failure=False):
+def begin_carried_inspection(robot, *, allow_visual_failure=False, allow_idle=False):
     """Acquire mechanism ownership for a phased inspection; no pose move yet."""
     config = json.loads(CONFIG_PATH.read_text(encoding='utf-8'))
     session = CarriedInspectionSession(robot, config,
-                                       allow_visual_failure=allow_visual_failure)
+                                       allow_visual_failure=allow_visual_failure, allow_idle=allow_idle)
     if not robot.actions._action_lock.acquire(blocking=False):
         raise RuntimeError('another mechanical action is running')
     session._owns_lock = True
@@ -271,13 +311,13 @@ def begin_carried_inspection(robot, *, allow_visual_failure=False):
     return session
 
 
-def inspect_carried_cubes(robot, *, chassis_followup=None, allow_visual_failure=False):
+def inspect_carried_cubes(robot, *, chassis_followup=None, allow_visual_failure=False, allow_idle=False):
     """Legacy blocking API using the same phased session and guarded restore.
 
     Full/unknown counts may overlap restoration with a chassis-only callback.
     Partial counts finish restoration before returning for another pickup.
     """
-    session = begin_carried_inspection(robot, allow_visual_failure=allow_visual_failure)
+    session = begin_carried_inspection(robot, allow_visual_failure=allow_visual_failure, allow_idle=allow_idle)
     try:
         count = session.inspect()
         if chassis_followup is not None and count in (None, 3):

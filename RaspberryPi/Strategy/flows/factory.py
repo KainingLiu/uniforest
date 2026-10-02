@@ -109,12 +109,17 @@ def validate_spec(spec):
 class ActionEnvironment:
     """One action flow's hardware bindings and transient collection measurements."""
 
-    def __init__(self, robot, context, *, transition_config=None):
+    def __init__(self, robot, context, *, transition_config=None, motion_planning=None):
         self.robot, self.context = robot, context
         self.data = {}
         self._controllers = {}
         self._mechanisms = {}
         self.transition_config = transition_config or TransitionConfig()
+        from ..optimizations.motion_planning import MotionPlanning
+        self.motion_planning = motion_planning or MotionPlanning(enabled=self.transition_config.motion_planning_enabled)
+        # Configuration is the master switch, including injected optimizers.
+        if not self.transition_config.motion_planning_enabled:
+            self.motion_planning = MotionPlanning(enabled=False)
         self.transitions = ActionTransitions(self)
         for key in self.transition_config.curves:
             profile, route = key.split('/')
@@ -142,9 +147,11 @@ class ActionEnvironment:
         self.context.check_active()
         if 'collection' in self.data:
             self.data['collection']['acquired'] = False
-        curve=self.transition_config.curves.get(f'{profile}/{route}')
-        result = (run_curve(self,route,profile,curve) if curve is not None
-                  else ROUTES[route](self, profile))
+        if self.transition_config.motion_planning_enabled:
+            result = self.motion_planning.run(self,route,profile,classic_routes=ROUTES)
+        else:
+            from ..optimizations.motion_planning import MotionPlanning
+            result = MotionPlanning(enabled=False).run(self,route,profile,classic_routes=ROUTES)
         self.context.check_active()
         return result
 
@@ -222,6 +229,10 @@ class ActionEnvironment:
 
     def _start_build(self, spec):
         self._enter(spec)
+        if self.data.get('purple_grabbed') is False:
+            raise RuntimeError('required purple pickup missing; mixed-cube building is prohibited')
+        if self.data.get('purple_grabbed') is True and self.data.get('carried_count') != 3:
+            raise RuntimeError('mixed cargo count must be confirmed before building')
         self.phase(self.control(spec.profile), 'BUILD')
         begin_pose = getattr(self.robot, 'begin_cube_camera_pose_change', None)
         pose = begin_pose('build') if begin_pose else None
@@ -267,6 +278,8 @@ class ActionEnvironment:
                       body=lambda: self._ordinary(spec), context=metadata)
 
     def compile(self, plan):
+        from ..transition_switches import transition_enabled, validate_transition_selection
+        validate_transition_selection(self.transition_config, plan)
         specs = {spec.name: spec for spec in plan.steps}
 
         def overlap(previous, following, context):
@@ -279,7 +292,8 @@ class ActionEnvironment:
 
         def matches(previous, following, context):
             target = specs[following.name]
-            return (following.context.get('after_build') is True and
+            return (transition_enabled(self.transition_config, 'build-return', specs[previous.name]) and
+                    following.context.get('after_build') is True and
                     (target.requires_anchor is None or target.requires_anchor == self.context.anchor))
 
         registry = TransitionRegistry((*self.transitions.registry(plan.steps),Transition(

@@ -44,7 +44,10 @@ def fixture(route, profile, *, heading_cw=0, lateral=0, config_overrides=None):
     control._checked_move = Mock(side_effect=lambda *a, **kw: events.append(('move', *a)))
     control._recalibrate_heading_zero = Mock(side_effect=lambda: events.append(('rebase',)))
     env = ActionEnvironment(robot, context, transition_config=TransitionConfig(
-        curves={f'{profile}/{route}': calibration()}))
+        curves={f'{profile}/{route}': calibration()}, motion_planning_enabled=True))
+    # These tests cover the explicit legacy curve backend, not default dispatch.
+    from Strategy.optimizations.motion_planning import MotionPlanning, CalibratedCurves
+    env.motion_planning = MotionPlanning(optimizers=[CalibratedCurves()])
     env._controllers[profile] = control
     env.record_transition = Mock()
     env.data.update(ground_origin=object(), purple_origin=object(), orange_origin=object())
@@ -183,7 +186,7 @@ class CurveRouteTests(unittest.TestCase):
         env.robot.chassis.follow_trajectory.assert_not_called()
         env, _, _, _ = fixture('depart_a', 'depart-a')
         broken = replace(calibration(), points=(point(), point(dx_scale=.8)))
-        env.transition_config = TransitionConfig(curves={'depart-a/depart_a': broken})
+        env.transition_config = TransitionConfig(curves={'depart-a/depart_a': broken}, motion_planning_enabled=True)
         with self.assertRaisesRegex(ValueError, 'endpoint'):
             env.run_route('depart_a', 'depart-a')
         env.robot.chassis.follow_trajectory.assert_not_called()

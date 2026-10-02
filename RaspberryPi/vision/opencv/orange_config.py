@@ -4,8 +4,8 @@ Camera capture/exposure and other color profiles are not changed here.
 """
 from types import SimpleNamespace
 
-TASK1_X_OFFSET_MM = 5.0
-TASK2_X_OFFSET_MM = 5.0
+TASK1_X_OFFSET_MM = 0.0
+TASK2_X_OFFSET_MM = 0.0
 
 
 def config_for(profile, width):

@@ -13,6 +13,8 @@ from Strategy.common import VisualAlignmentUnavailable
 from Strategy.context import ExecutionContext
 from Strategy.controllers import RobotController
 from Strategy.runner import resolve_selection, run_plan
+from Strategy.transition_config import TransitionConfig
+from Strategy.transition_switches import TransitionSwitches
 from tests.test_strategy_composition import FakeActionSession, robot_fixture
 
 
@@ -59,7 +61,8 @@ def flow_fixture():
     def run():
         with patch.object(RobotController, '_drive_until_wall', flow.wall), \
              patch.object(RobotController, '_align_building', flow.align):
-            return run_plan(robot, plan, context=context)
+            return run_plan(robot, plan, context=context, transition_config=TransitionConfig(
+                switches=TransitionSwitches(overrides={'build-return': True})))
     flow.run = run
     return robot, context, flow, events
 

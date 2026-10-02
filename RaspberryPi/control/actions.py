@@ -50,7 +50,7 @@ class ActionSession:
         self._closed = False
         self.cleanup_error = None
         self._abort_succeeded = True
-        self._pickup_full_lift_validated = actions.pickup_full_lift_validated
+        self._pickup_full_lift_allowed = actions.pickup_full_lift_validated or actions.pickup_trial_enabled
 
     @property
     def chassis_ready(self):
@@ -73,6 +73,9 @@ class ActionSession:
 
     def _start(self):
         self._check_live()
+        if (self._pickup_full_lift_allowed and hasattr(self._t, 'execution_active')
+                and not self._t.execution_active):
+            raise RuntimeError('full-lift pickup requires a negotiated additive session')
         probe_at = time.monotonic()
         self._actions._query()
         while True:
@@ -145,7 +148,7 @@ class ActionSession:
                     pickup = self.action_id in (ACTION_GRAP1, ACTION_GRAP2, ACTION_GRAP3)
                     released = (status.state == ACTION_DONE or
                                 (status.state == ACTION_CHASSIS_READY and
-                                 (not pickup or self._pickup_full_lift_validated)))
+                                 (not pickup or self._pickup_full_lift_allowed)))
                     self._chassis_ready = self._chassis_ready or released
                 elif self._accepted and received_at >= self._started:
                     raise RuntimeError('A-board action token or identity changed')
@@ -246,7 +249,10 @@ class ActionSession:
 
 class Actions:
     def __init__(self, servo, stepper, telem_getter=None, transport=None, *,
-                 pickup_full_lift_validated=False):
+                 pickup_full_lift_validated=False, pickup_trial_enabled=False):
+        if type(pickup_trial_enabled) is not bool:
+            raise TypeError('pickup_trial_enabled must be an explicit bool')
+        self.pickup_trial_enabled = pickup_trial_enabled
         if not isinstance(pickup_full_lift_validated, bool):
             raise TypeError('pickup_full_lift_validated must be an explicit bool')
         self.servo = servo

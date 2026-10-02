@@ -28,8 +28,9 @@ def _selected_pickup(env, spec, controller):
     index = params.get('index', 1)
     if params.get('conditional_on_purple', False):
         cfg = controller.config
-        limit = (cfg.orange_target_count if env.data.get('purple_grabbed', False)
-                 else cfg.orange_target_count_without_purple)
+        if not env.data.get('purple_grabbed', False):
+            raise RuntimeError('required purple pickup missing; orange substitution is prohibited')
+        limit = cfg.orange_target_count
     else:
         limit = params.get('max_count', index)
     return index <= limit
@@ -88,8 +89,33 @@ def begin_collection(env, spec):
     return color
 
 
-def _acquire_purple(env, controller):
+def _fast_align(env, controller, block, color, profile):
+    from ..optimizations.fast_alignment import align_cube
+    return align_cube(controller, block, color_name=color,
+                      phase_origin=env.data['collection']['origin'], profile=profile,
+                      neighbor_observer=_neighbor_observer(env, color))
+
+
+def _neighbor_observer(env, color):
+    """Start one preview history for this acquisition, including moving handoff."""
+    from ..optimizations.adaptive_blind import NeighborObserver
+    collection = env.data['collection']
+    collection.pop('neighbor_observer', None)
+    if color != 'orange':
+        return None
+    profile = collection['profile']
+    config = env.transition_config
+    policy = config.pickup(profile, 'grap3' if profile.startswith('ground-') else 'grap1')
+    if policy is None or policy.next_adaptive is None or config.alignment(profile, color) is None:
+        return None
+    observer = NeighborObserver(policy.next_adaptive)
+    collection['neighbor_observer'] = observer
+    return observer
+
+
+def _acquire_purple(env, controller, alignment=None):
     cfg = controller.config
+    attempts = 0
     while True:
         env.phase(controller, 'PURPLE_SEARCH')
         block = controller._find_cube(
@@ -97,15 +123,23 @@ def _acquire_purple(env, controller):
             search_direction=-1.0,
             max_distance_mm=cfg.purple_search_max_distance_mm)
         env.phase(controller, 'PURPLE_ALIGN')
+        if alignment is not None:
+            if _fast_align(env,controller,block,'purple',alignment):
+                return True
+            attempts += 1
+            if attempts >= alignment.max_attempts:
+                raise RuntimeError('required purple alignment failed; stop before leaving purple area')
+            continue
         if controller._align_cube(
                 block, color_name='purple', min_confidence=cfg.purple_min_confidence,
                 timeout_s=cfg.purple_align_timeout_s, timeout_is_success=True):
             return True
 
 
-def _acquire_orange(env, controller):
+def _acquire_orange(env, controller, alignment=None):
     cfg = controller.config
     separate_orange_target = hasattr(cfg, 'orange_align_target_x_mm')
+    attempts = 0
     while True:
         env.phase(controller, 'ORANGE_SEARCH')
         search = {
@@ -117,6 +151,13 @@ def _acquire_orange(env, controller):
             search['ambiguity_margin_mm'] = cfg.orange_track_ambiguity_margin_mm
         block = controller._find_cube(**search)
         env.phase(controller, 'ORANGE_ALIGN')
+        if alignment is not None:
+            if _fast_align(env,controller,block,'orange',alignment):
+                return True
+            attempts += 1
+            if attempts >= alignment.max_attempts:
+                return False
+            continue
         if not separate_orange_target:
             if controller._align_orange(block):
                 return True
@@ -137,13 +178,16 @@ def acquire_cube(env, spec):
     controller = env.control(spec.profile)
     collection = _collection(env, spec)
     collection['acquired'] = False
+    collection.pop('neighbor_observer', None)
     if collection['exhausted'] or not _selected_pickup(env, spec, controller):
         return False
     controller._set_cube_profile(collection['detector_profile'])
+    config = getattr(env,'transition_config',None)
+    alignment = config.alignment(spec.profile,collection['color']) if config is not None else None
     try:
-        acquired = (_acquire_purple(env, controller)
+        acquired = (_acquire_purple(env, controller, alignment)
                     if collection['color'] == 'purple'
-                    else _acquire_orange(env, controller))
+                    else _acquire_orange(env, controller, alignment))
         collection['acquired'] = acquired
         return acquired
     except SearchRangeExhausted:
@@ -207,7 +251,8 @@ def inspect_cargo(env, spec):
         while not collection['exhausted']:
             env.phase(controller, 'COUNT_CHECK')
             count = env.robot.check_carried_cube_count(
-                chassis_followup=callback, allow_visual_failure=True)
+                chassis_followup=callback, allow_visual_failure=True,
+                allow_idle=collection.get('pickups') == 0)
             env.data['carried_count'] = count
             if count is None or count == 3:
                 return count

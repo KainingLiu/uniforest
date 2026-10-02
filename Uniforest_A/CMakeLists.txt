@@ -12,6 +12,8 @@ set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS ON)
 
+# One additive firmware; original wire commands always keep main semantics.
+file(WRITE "${CMAKE_BINARY_DIR}/execution-profile.txt" "profile=ADDITIVE_V1\nmain_baseline=cefa25a\n")
 
 # Define the build type
 if(NOT CMAKE_BUILD_TYPE)
@@ -45,6 +47,8 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     Core/Src/actions.c
+    Core/Src/actions_extended.c
+    Core/Src/execution_session.c
 )
 
 # Add include paths

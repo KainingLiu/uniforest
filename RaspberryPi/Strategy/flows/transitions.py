@@ -9,6 +9,8 @@ from protocol.commands import ACTION_GRAP1, ACTION_GRAP2, ACTION_GRAP3
 from ..execution import Transition
 from ..execution.blind import BlindSample, run_blind_transition
 from ..execution.pickup_motion import acquire_after_blind
+from ..transition_switches import transition_enabled
+from ..optimizations.adaptive_blind import expected_blind_distance
 from . import operations
 
 
@@ -24,6 +26,7 @@ class PendingGrab:
     restore_s: float
     reset_at: float | None = None
     restored: bool = False
+    next_observation: object = None
 
 
 class ActionTransitions:
@@ -47,13 +50,23 @@ class ActionTransitions:
             return
         collection['acquired'] = False
         env.phase(c, 'GRAB')
+        # Consume before begin_pose_change invalidates the arm-camera geometry.
+        observation = None
+        observer = collection.pop('neighbor_observer', None)
+        if observer is not None:
+            frame = env.robot.vision_result
+            _, _, _, link_epoch = env.robot.inspection_link_snapshot()
+            observation = observer.consume(now=time.monotonic(),
+                pose_epoch=getattr(frame, 'pose_epoch', None), link_epoch=link_epoch,
+                stop_generation=env.robot.transport.emergency_stop_generation)
         begin = getattr(env.robot, 'begin_cube_camera_pose_change', None)
         pose = begin('grab') if begin else None
         press = c._grab_press_step(recalibrate_heading_zero=collection['color'] == 'orange')
         session = env.robot.actions.begin(GRABS[spec.parameters['method']])
         policy = self.policy(spec)
         restore = policy.arm_restore_s if policy else c.config.post_grab_settle_s
-        self.grabs[spec.name] = PendingGrab(spec, session, pose, press, restore)
+        self.grabs[spec.name] = PendingGrab(spec, session, pose, press, restore,
+                                           next_observation=observation)
 
     def check_grab(self, pending):
         self.env.context.check_active()
@@ -104,10 +117,11 @@ class ActionTransitions:
 
     def _enabled(self, source):
         return (self.grabs.get(source.name) is not None and self.policy(source) is not None
-                and self.env.robot.actions.pickup_full_lift_validated)
+                and (self.env.robot.actions.pickup_full_lift_validated or
+                     self.env.transition_config.trial_run and getattr(self.env.robot.actions,'pickup_trial_enabled',False)))
 
     def next_matches(self, source, target):
-        if not self._enabled(source):
+        if not self._enabled(source) or not transition_enabled(self.env.transition_config, 'next-cube', source):
             return False
         policy = self.policy(source)
         following = self._next_effective(source)
@@ -134,6 +148,8 @@ class ActionTransitions:
         budget_at = time.monotonic()
         last_command = 0.0
         blind_owns_motion = True
+        last_feedback = None
+        minimum_progress = minimum_velocity = 0.0
 
         def consume_blind_budget():
             nonlocal budget_position, budget_at
@@ -157,12 +173,43 @@ class ActionTransitions:
             env.stop()
             env.record_transition('grab_to_next_cube',source.name,'search_boundary_fallback')
             return
+        expected_distance = policy.next_cube_distance_mm
+        adaptive = (policy.next_adaptive if
+                    env.transition_config.alignment(source.profile, 'orange') is not None else None)
+        if adaptive is not None:
+            _, _, _, link_epoch = env.robot.inspection_link_snapshot()
+            expected_distance, reason = expected_blind_distance(adaptive, pending.next_observation,
+                position_mm=budget_position, yaw_deg=yaw, now=time.monotonic(),
+                link_epoch=link_epoch, stop_generation=env.robot.transport.emergency_stop_generation,
+                expected_pose_epoch=pending.pose, legacy_distance_mm=policy.next_cube_distance_mm)
+            with suppress(Exception):
+                env.record_transition('adaptive_blind', source.name, f'{reason}:{expected_distance:.1f}mm')
+            if expected_distance <= 0:
+                self.finish_grab(source)
+                env.stop()
+                return
+            if pending.next_observation is not None:
+                time_left = min(time_left, adaptive.max_prediction_age_s
+                                - (time.monotonic()-pending.next_observation.captured_s))
+                if time_left <= policy.next_blind.tick_s + policy.next_blind.max_command_delay_s:
+                    self.finish_grab(source)
+                    env.stop()
+                    return
         blind_profile = replace(policy.next_blind,
-                                max_distance_mm=min(policy.next_blind.max_distance_mm,remaining),
+                                # The blind controller reserves braking_margin
+                                # inside its envelope; keep the desired travel
+                                # separate from that already calibrated margin.
+                                max_distance_mm=min(policy.next_blind.max_distance_mm,remaining,
+                                    expected_distance+policy.next_blind.braking_margin_mm),
                                 max_duration_s=min(policy.next_blind.max_duration_s,time_left))
 
         def check():
             self.check_grab(pending)
+            if adaptive is not None and pending.next_observation is not None and blind_owns_motion:
+                current_yaw = env.robot.telem.yaw_deg
+                if (not math.isfinite(current_yaw) or abs(c._wrap_angle(
+                        current_yaw-pending.next_observation.yaw_deg)) > adaptive.max_yaw_change_deg):
+                    raise RuntimeError('adaptive blind heading exceeded the observation envelope')
 
         def command(speed):
             nonlocal last_command
@@ -182,16 +229,23 @@ class ActionTransitions:
             return sent
 
         def sample():
+            nonlocal last_feedback, minimum_progress, minimum_velocity
             check()
             consume_blind_budget()
             _, received_at, _, _ = env.robot.inspection_link_snapshot()
             frame = env.robot.vision_result
-            return BlindSample(
+            last_feedback = BlindSample(
                 pending.session.token, pending.pose, received_at,
                 c._measure_lateral_displacement_mm(origin),
                 env.robot.chassis.measured_body_velocity().vy_mm_s,
                 pending.session.chassis_ready, pending.restored, pending.reset_at,
-                getattr(frame,'captured_monotonic',None), getattr(frame,'pose_epoch',None))
+                getattr(frame,'captured_monotonic',None), getattr(frame,'pose_epoch',None),
+                target_visible=any(getattr(b,'color_name','').casefold() == 'orange'
+                    and getattr(b,'confidence',0) >= c.config.orange_min_confidence
+                    for b in getattr(frame,'all_blocks',())))
+            minimum_progress = min(minimum_progress, last_feedback.displacement_mm * blind_profile.direction)
+            minimum_velocity = min(minimum_velocity, last_feedback.velocity_mm_s * blind_profile.direction)
+            return last_feedback
 
         def handoff(speed):
             nonlocal acquired, blind_owns_motion
@@ -202,14 +256,37 @@ class ActionTransitions:
                 arm_reset_at_s=pending.reset_at, phase_origin=phase_origin,
                 profile=policy.next_acquire, heading_yaw_deg=yaw,
                 command_speed=command, stop=env.stop,
-                clock=time.monotonic, sleep=time.sleep)
+                clock=time.monotonic, sleep=time.sleep,
+                alignment=env.transition_config.alignment(source.profile,'orange'),
+                neighbor_observer=operations._neighbor_observer(env, 'orange'))
             return True  # A bounded search failure still accepted ownership.
 
-        with env.robot.chassis.monitor_action(check):
-            result = run_blind_transition(
-                blind_profile,token=pending.session.token,epoch=pending.pose,
-                read_sample=sample,command_speed=command,stop=env.stop,
-                guard=check,handoff=handoff,clock=time.monotonic,sleep=time.sleep)
+        result = None
+        try:
+            with env.robot.chassis.monitor_action(check):
+                result = run_blind_transition(
+                    blind_profile,token=pending.session.token,epoch=pending.pose,
+                    read_sample=sample,command_speed=command,stop=env.stop,
+                    guard=check,handoff=handoff,clock=time.monotonic,sleep=time.sleep)
+        finally:
+            diagnostics = getattr(env.robot, 'diagnostics', None)
+            if diagnostics is not None and last_feedback is not None:
+                # One event per blind leg, including the raw signed feedback
+                # on failure. Diagnostic I/O must not interrupt arm restoration.
+                with suppress(Exception):
+                    diagnostics.write('blind_feedback', source=source.name,
+                        outcome=result.status.value if result is not None else 'fault',
+                        reason=result.reason if result is not None else 'exception',
+                        requested_distance_mm=expected_distance,
+                        duration_s=result.duration_s if result is not None else None,
+                        displacement_mm=last_feedback.displacement_mm,
+                        velocity_mm_s=last_feedback.velocity_mm_s,
+                        minimum_progress_mm=minimum_progress, minimum_velocity_mm_s=minimum_velocity,
+                        last_command_mm_s=last_command, lifted=last_feedback.lifted,
+                        arm_reset=last_feedback.arm_reset, token=last_feedback.token,
+                        epoch=last_feedback.epoch,
+                        feedback_position_tolerance_mm=blind_profile.feedback_position_tolerance_mm,
+                        feedback_speed_tolerance_mm_s=blind_profile.feedback_speed_tolerance_mm_s)
         consume_blind_budget()
         self.finish_grab(source)
         if acquired:
@@ -218,7 +295,7 @@ class ActionTransitions:
         env.record_transition('grab_to_next_cube', source.name, result.status.value)
 
     def route_matches(self, source, target):
-        return (self._enabled(source) and self.policy(source).departure
+        return (self._enabled(source) and transition_enabled(self.env.transition_config, 'purple-departure', source)
                 and target.parameters.get('route') == source.parameters.get('followup_route')
                 and target.profile == source.profile)
 
@@ -231,9 +308,13 @@ class ActionTransitions:
         self.env.record_transition('grab_to_route',source.name,'joined')
 
     def last_matches(self, source, target):
-        if not self._enabled(source) or not self.policy(source).last_departure:
+        if not self._enabled(source) or not transition_enabled(self.env.transition_config, 'last-departure', source):
             return False
         following = self._next_effective(source)
+        # One retreat has one owner: when inspection overlap is requested,
+        # reserve it for lowering/counting instead of consuming it beforehand.
+        if following is not None and transition_enabled(self.env.transition_config, 'inspect-departure', following):
+            return False
         return (following is not None and following.kind == 'inspect_cargo'
                 and following.profile == source.profile
                 and following.parameters.get('exit_route') in
@@ -277,13 +358,33 @@ class ActionTransitions:
         try:
             while not collection['exhausted']:
                 env.phase(c,'COUNT_CHECK')
-                session = env.robot.begin_carried_cube_inspection(allow_visual_failure=True)
+                session = env.robot.begin_carried_cube_inspection(
+                    allow_visual_failure=True, allow_idle=collection.get('pickups') == 0)
                 self.inspections[spec.name] = session
-                count = session.inspect()
+                route = spec.parameters.get('exit_route')
+                overlap = (transition_enabled(env.transition_config,'inspect-departure',spec)
+                           and route in ('ground_delivery_reverse','orange_depart_reverse')
+                           and self.early_departure is None)
+
+                def retreat():
+                    chassis = env.robot.chassis
+                    origin = chassis.capture_motor_positions()
+                    started = time.monotonic()
+                    env.run_route(route,spec.profile)
+                    distance = -chassis.forward_displacement_mm(origin)
+                    if not math.isfinite(distance) or distance < 0:
+                        raise RuntimeError('inspection retreat moved in the wrong direction')
+                    self.early_departure = (spec.profile,distance,route)
+                    env.robot.diagnostics.write('inspection_retreat',source=spec.name,
+                        started_s=started,finished_s=time.monotonic(),distance_mm=distance)
+
+                count = session.inspect(chassis_followup=retreat) if overlap else session.inspect()
                 if count is not None and (type(count) is not int or not 0 <= count <= 3):
                     raise RuntimeError(f'invalid carried cube count: {count}')
                 env.data['carried_count'] = count
                 if count is None or count == 3:
+                    if count is None and env.data.get('purple_grabbed') is True:
+                        raise RuntimeError('mixed cargo count unconfirmed; building is prohibited')
                     self.early_departure = None
                     return count
                 self.finish_inspection(spec)
@@ -310,7 +411,8 @@ class ActionTransitions:
 
     def inspect_matches(self, source, target):
         session = self.inspections.get(source.name)
-        return (session is not None and session.count in (None,3)
+        return (transition_enabled(self.env.transition_config, 'inspect-departure', source)
+                and session is not None and session.count in (None,3)
                 and source.profile == target.profile
                 and source.parameters.get('exit_route') in ('ground_delivery_reverse','orange_depart_reverse')
                 and target.parameters.get('route') in ('ground_to_delivery','orange_to_build'))

@@ -1,0 +1,459 @@
+{
+  "version": 1,
+  "simulation_only": true,
+  "name": "nominal_no_opponent_full_match",
+  "units": "mm",
+  "coordinate_system": {
+    "x": "right",
+    "y": "down",
+    "yaw_zero": "right",
+    "yaw_positive": "clockwise"
+  },
+  "start_pose": {
+    "x_mm": 700,
+    "y_mm": 6500,
+    "yaw_deg": 270,
+    "assumed": true
+  },
+  "assumptions": [
+    "This is a nominal no-opponent scenario, with successful sensing and mechanical transfers unless an explicit simulated failure is supplied.",
+    "Initial cube counts are from the rules; their exact slot positions are evenly spaced display assumptions and are not surveyed placements.",
+    "Cargo is a bottom-to-top list. Each successful Grap appends one cube on top. Build removes the current top cube at each release. Firmware does not identify cube order, color, pickup success or final placement.",
+    "An unload preserves the cargo stack order. A staged load recovers that stack in the same bottom-to-top order. These physical outcomes are assumptions, not sensor observations.",
+    "Build adds at most the actually available cargo cubes to an actually existing base. A missing base contributes zero layers; no six-layer structure is created from the Build call alone.",
+    "An orange-only base of three cubes plus cargo [purple,orange,orange] produces the nominal layer order [orange,orange,orange,orange,orange,purple] only when all assumed transfers succeed.",
+    "Placement x coordinates follow configured lateral offsets and CAD side contact. Placement y=6250 is a display choice, one half cube inside the nominal building platform front edge.",
+    "World target placements annotate material destinations. They must not teleport the chassis or alter the production route calibration.",
+    "Nominal durations, release timestamps and clearance timestamps are editable simulation inputs, not hardware timings or measured race performance.",
+    "Every cube id has one owner. Resource, carried, deposited, building and lost sets must remain disjoint and together contain all 23 initial cube ids.",
+    "Carried cubes include cubes held by the arm; arm-to-storage motion changes compartment, not the competition carrying count."
+  ],
+  "durations_s": {
+    "search": 0.35,
+    "align_cube": 0.5,
+    "align_tag": 0.8,
+    "align_building": 0.8,
+    "inspect": 1.2,
+    "unload": 0.5,
+    "load": 0.8,
+    "grap1": 3.2,
+    "grap2": 3.8,
+    "grap3": 4.0,
+    "build": 12.0
+  },
+  "duration_scope": {
+    "unload": "Nominal non-chassis handling budget; the production 300 mm retreat is timed by the motion simulator separately.",
+    "load": "Nominal non-chassis handling budget; wall approach is timed separately.",
+    "other": "Nominal action/sensing duration unless the engine simulates that motion separately."
+  },
+  "grab_clearance_s": {
+    "grap1": 2.0,
+    "grap2": 2.2,
+    "grap3": 2.4
+  },
+  "build_release_s": [
+    4.0,
+    7.5,
+    10.0
+  ],
+  "build_chassis_ready_s": 10.0,
+  "build_cleanup_s": 2.0,
+  "cargo_order": "bottom_to_top",
+  "build_take_order": "top_first",
+  "resources": [
+    {
+      "id": "o01",
+      "color": "orange",
+      "x": 600.0,
+      "y": 4850.0,
+      "z_mm": 350,
+      "region": "ground",
+      "assumed_placement": true
+    },
+    {
+      "id": "o02",
+      "color": "orange",
+      "x": 755.556,
+      "y": 4850.0,
+      "z_mm": 350,
+      "region": "ground",
+      "assumed_placement": true
+    },
+    {
+      "id": "o03",
+      "color": "orange",
+      "x": 911.111,
+      "y": 4850.0,
+      "z_mm": 350,
+      "region": "ground",
+      "assumed_placement": true
+    },
+    {
+      "id": "o04",
+      "color": "orange",
+      "x": 1066.667,
+      "y": 4850.0,
+      "z_mm": 350,
+      "region": "ground",
+      "assumed_placement": true
+    },
+    {
+      "id": "o05",
+      "color": "orange",
+      "x": 1222.222,
+      "y": 4850.0,
+      "z_mm": 350,
+      "region": "ground",
+      "assumed_placement": true
+    },
+    {
+      "id": "o06",
+      "color": "orange",
+      "x": 1377.778,
+      "y": 4850.0,
+      "z_mm": 350,
+      "region": "ground",
+      "assumed_placement": true
+    },
+    {
+      "id": "o07",
+      "color": "orange",
+      "x": 1533.333,
+      "y": 4850.0,
+      "z_mm": 350,
+      "region": "ground",
+      "assumed_placement": true
+    },
+    {
+      "id": "o08",
+      "color": "orange",
+      "x": 1688.889,
+      "y": 4850.0,
+      "z_mm": 350,
+      "region": "ground",
+      "assumed_placement": true
+    },
+    {
+      "id": "o09",
+      "color": "orange",
+      "x": 1844.444,
+      "y": 4850.0,
+      "z_mm": 350,
+      "region": "ground",
+      "assumed_placement": true
+    },
+    {
+      "id": "o10",
+      "color": "orange",
+      "x": 2000.0,
+      "y": 4850.0,
+      "z_mm": 350,
+      "region": "ground",
+      "assumed_placement": true
+    },
+    {
+      "id": "o11",
+      "color": "orange",
+      "x": 2800.0,
+      "y": 2350.0,
+      "z_mm": 350,
+      "region": "highland",
+      "assumed_placement": true
+    },
+    {
+      "id": "o12",
+      "color": "orange",
+      "x": 2955.556,
+      "y": 2350.0,
+      "z_mm": 350,
+      "region": "highland",
+      "assumed_placement": true
+    },
+    {
+      "id": "o13",
+      "color": "orange",
+      "x": 3111.111,
+      "y": 2350.0,
+      "z_mm": 350,
+      "region": "highland",
+      "assumed_placement": true
+    },
+    {
+      "id": "o14",
+      "color": "orange",
+      "x": 3266.667,
+      "y": 2350.0,
+      "z_mm": 350,
+      "region": "highland",
+      "assumed_placement": true
+    },
+    {
+      "id": "o15",
+      "color": "orange",
+      "x": 3422.222,
+      "y": 2350.0,
+      "z_mm": 350,
+      "region": "highland",
+      "assumed_placement": true
+    },
+    {
+      "id": "o16",
+      "color": "orange",
+      "x": 3577.778,
+      "y": 2350.0,
+      "z_mm": 350,
+      "region": "highland",
+      "assumed_placement": true
+    },
+    {
+      "id": "o17",
+      "color": "orange",
+      "x": 3733.333,
+      "y": 2350.0,
+      "z_mm": 350,
+      "region": "highland",
+      "assumed_placement": true
+    },
+    {
+      "id": "o18",
+      "color": "orange",
+      "x": 3888.889,
+      "y": 2350.0,
+      "z_mm": 350,
+      "region": "highland",
+      "assumed_placement": true
+    },
+    {
+      "id": "o19",
+      "color": "orange",
+      "x": 4044.444,
+      "y": 2350.0,
+      "z_mm": 350,
+      "region": "highland",
+      "assumed_placement": true
+    },
+    {
+      "id": "o20",
+      "color": "orange",
+      "x": 4200.0,
+      "y": 2350.0,
+      "z_mm": 350,
+      "region": "highland",
+      "assumed_placement": true
+    },
+    {
+      "id": "p01",
+      "color": "purple",
+      "x": 2400.0,
+      "y": 3290.0,
+      "z_mm": 350,
+      "region": "purple",
+      "assumed_placement": true
+    },
+    {
+      "id": "p02",
+      "color": "purple",
+      "x": 2400.0,
+      "y": 3600.0,
+      "z_mm": 350,
+      "region": "purple",
+      "assumed_placement": true
+    },
+    {
+      "id": "p03",
+      "color": "purple",
+      "x": 2400.0,
+      "y": 3910.0,
+      "z_mm": 350,
+      "region": "purple",
+      "assumed_placement": true
+    }
+  ],
+  "placements": [
+    {
+      "id": "base-1",
+      "x": 3400,
+      "y": 6250,
+      "z_mm": 100,
+      "role": "base",
+      "assumed": true
+    },
+    {
+      "id": "base-2",
+      "x": 3100,
+      "y": 6250,
+      "z_mm": 100,
+      "role": "base",
+      "assumed": true
+    },
+    {
+      "id": "base-3",
+      "x": 4000,
+      "y": 6250,
+      "z_mm": 100,
+      "role": "base",
+      "assumed": true
+    },
+    {
+      "id": "stage-1",
+      "x": 4178.425,
+      "y": 6250,
+      "z_mm": 100,
+      "role": "staged",
+      "assumed": true
+    },
+    {
+      "id": "stage-2",
+      "x": 3878.425,
+      "y": 6250,
+      "z_mm": 100,
+      "role": "staged",
+      "assumed": true
+    }
+  ],
+  "transfers": {
+    "PlanA": {
+      "a.1.ground.unload": {
+        "operation": "deposit",
+        "placement": "base-1",
+        "count": 3
+      },
+      "a.1.tower.build": {
+        "operation": "build",
+        "placement": "base-1",
+        "target": "tower-1",
+        "base": "base-1",
+        "count": 3
+      },
+      "a.2.ground.unload": {
+        "operation": "deposit",
+        "placement": "base-2",
+        "count": 3
+      },
+      "a.2.tower.build": {
+        "operation": "build",
+        "placement": "base-2",
+        "target": "tower-2",
+        "base": "base-2",
+        "count": 3
+      },
+      "a.3.ground.unload": {
+        "operation": "deposit",
+        "placement": "base-3",
+        "count": 3
+      },
+      "a.3.tower.build": {
+        "operation": "build",
+        "placement": "base-3",
+        "target": "tower-3",
+        "base": "base-3",
+        "count": 3
+      }
+    },
+    "PlanB": {
+      "b.stage.1.unload": {
+        "operation": "deposit",
+        "placement": "stage-1",
+        "count": 3
+      },
+      "b.ground.1.unload": {
+        "operation": "deposit",
+        "placement": "base-1",
+        "count": 3
+      },
+      "b.towers.load.1": {
+        "operation": "load",
+        "placement": "stage-1",
+        "count": 3
+      },
+      "b.towers.build.1": {
+        "operation": "build",
+        "placement": "base-1",
+        "target": "tower-1",
+        "base": "base-1",
+        "count": 3
+      },
+      "b.stage.2.unload": {
+        "operation": "deposit",
+        "placement": "stage-2",
+        "count": 3
+      },
+      "b.ground.2.unload": {
+        "operation": "deposit",
+        "placement": "base-2",
+        "count": 3
+      },
+      "b.towers.load.2": {
+        "operation": "load",
+        "placement": "stage-2",
+        "count": 3
+      },
+      "b.towers.build.2": {
+        "operation": "build",
+        "placement": "base-2",
+        "target": "tower-2",
+        "base": "base-2",
+        "count": 3
+      }
+    }
+  },
+  "source_fixed_waits_s": {
+    "unload_hatch_open": 0.3,
+    "unload_hatch_close": 0,
+    "load_hatch_open": 0.2,
+    "load_hatch_close": 0.4,
+    "inspection_first_pose": 0.2,
+    "inspection_second_pose": 0.3,
+    "inspection_restore_before_final_servo": 0.2,
+    "build_declared_wait_sum": 2.5,
+    "build_wait_overlapped_with_stepper": 0.5
+  },
+  "expected_nominal": {
+    "PlanA": {
+      "initial_total": 23,
+      "orange_taken": 15,
+      "purple_taken": 3,
+      "remaining_ground_orange": 1,
+      "remaining_highland_orange": 4,
+      "remaining_purple": 0,
+      "cargo_at_finish": 0,
+      "loose_deposits_at_finish": 0,
+      "towers": 3,
+      "layers_per_tower": [
+        6,
+        6,
+        6
+      ],
+      "condition": "Only if all nominal pickup/stack/load/build assumptions succeed."
+    },
+    "PlanB": {
+      "initial_total": 23,
+      "orange_taken": 10,
+      "purple_taken": 2,
+      "remaining_ground_orange": 4,
+      "remaining_highland_orange": 6,
+      "remaining_purple": 1,
+      "cargo_at_finish": 0,
+      "loose_deposits_at_finish": 0,
+      "towers": 2,
+      "layers_per_tower": [
+        6,
+        6
+      ],
+      "condition": "Only if all nominal pickup/stack/load/build assumptions succeed; this fixed plan does not exhaust the field."
+    }
+  },
+  "source_notes": {
+    "plan_actions": [
+      "Strategy/plans/plan_a.py",
+      "Strategy/plans/plan_b.py",
+      "Strategy/plans/recipes.py"
+    ],
+    "mechanism_events": "Uniforest_A/Core/Src/actions.c: Grap1/2/3 each contain one DROP into storage; Build contains three RELEASE operations, then CHASSIS_READY before cleanup. Code gives command order, not cube identification or success feedback.",
+    "placement_x": "base-1/2/3 = configured Tag6 x3500 minus right offsets100/400 or plus left500 for a down-facing robot; stage-1 = right inner wall4400 minus CAD robot width/2, stage-2 = stage-1 minus300.",
+    "placement_y": "All deposit/tower centers at y6250 and base z100 are nominal display positions; neither chassis odometry nor building vision confirms these world coordinates.",
+    "timing": "Build has 2500 ms of explicit wait instructions, including 500 ms overlapped with stepper travel. The 12 s action and event timestamps are separate simulation assumptions.",
+    "field": "field_model.json and field_sources.md retain CAD/rule size conflicts and unverified slot placement.",
+    "robot": "robot_model.json contains the published-plan CAD envelope and limitations; its width is only used for the nominal side-contact construction."
+  }
+}

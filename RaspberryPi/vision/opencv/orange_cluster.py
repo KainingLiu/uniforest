@@ -9,26 +9,28 @@
   -> 固定平面单应映射到位姿 (R,t)
   -> 只输出每簇左侧第一个方块（由左缘定位），供机器人对准
 
-简化策略：机器人从左向右搜索，最先看到的是每簇的左缘。纯视觉拆分多块
-不可靠，因此不做拆分——簇的左缘就是首块左边界，首块跨 [start_x, start_x+CUBE]。
+机器人从左向右搜索，原抓取目标继续只取每簇首块。
+额外的 lookahead_cubes 只用完整外缘/实测暗缝提供相邻块预观测，不改变抓取目标。
 左缘被画面裁剪时不输出坐标，而是发布所在行的像素范围，供策略执行有界回找。
 """
 import numpy as np
 import cv2
 try:
     from .orange_fixed_geometry import image_to_world, world_to_camera, world_to_image
+    from .orange_lookahead import row_previews, continuous_row
 except ImportError:
     from orange_fixed_geometry import image_to_world, world_to_camera, world_to_image
+    from orange_lookahead import row_previews, continuous_row
 
 
 class Cube:
     __slots__ = ("index", "center_px", "world_xy", "cam_xyz",
                  "distance", "along_cm", "top_quad", "clipped",
-                 "visible_ratio", "position_valid", "left_cm")
+                 "visible_ratio", "position_valid", "left_cm", "continuous_row")
 
     def __init__(self, index, center_px, world_xy, cam_xyz, top_quad,
                  clipped=False, visible_ratio=1.0, position_valid=True,
-                 left_cm=None):
+                 left_cm=None, continuous_row=False):
         self.index = index
         self.center_px = center_px
         self.world_xy = world_xy
@@ -40,6 +42,7 @@ class Cube:
         self.clipped = bool(clipped)
         self.visible_ratio = float(np.clip(visible_ratio, 0.0, 1.0))
         self.left_cm = float(left_cm) if left_cm is not None else None
+        self.continuous_row = bool(continuous_row)
 
 
 def _fit_line_general(pts):
@@ -152,7 +155,8 @@ class Detector:
         cubes = []
         info = {"status": "empty", "n_clusters": 0, "message": "",
                 "mask": mask, "scale": frame.shape[1] / float(orig_w),
-                "left_clipped_y_range": None}
+                "left_clipped_y_range": None, "lookahead_cubes": [],
+                "lookahead_complete": True}
 
         if np.count_nonzero(mask) < self.cfg.MIN_MASK_FRAC * H_img * W_img:
             info["message"] = "视野中无橙色方块"
@@ -228,6 +232,8 @@ class Detector:
                 found = None
             if found:
                 cubes.extend(found)
+            else:
+                info["lookahead_complete"] = False
 
         # 过滤异常结果（NaN / 离原点太近 / 太远）
         cubes = [c for c in cubes
@@ -236,6 +242,8 @@ class Detector:
                      and 5.0 < c.distance < 500.0)]
 
         info["n_clusters"] = n_clusters
+        if info["left_clipped_y_range"] is not None:
+            info["lookahead_complete"] = False
         # 按沿槽位置升序排序：index 0 = 画面最左的方块 = 机器人从左向右搜索
         # 时最先遇到的左首方块
         cubes.sort(key=lambda c: c.along_cm)
@@ -411,4 +419,26 @@ class Detector:
                                [start_x + CUBE, CUBE], [start_x, CUBE]])
         quad = np.array([world_to_image(p, W_img, H_img, geometry_profile)
                          for p in quad_world], np.float32)
-        return [Cube(0, px, (xw, yw), cam, quad, left_cm=start_x)]
+        # Independent previews: failure cannot remove a legacy first-cube target.
+        try:
+            previews = row_previews(frame, corners, profile=geometry_profile,
+                                    cube_cm=CUBE, clipped_right=clipped_right)
+        except (ValueError, cv2.error, FloatingPointError):
+            previews = []
+        # An unresolved part of a row may hide a nearer cube. Do not use a
+        # farther disconnected cluster to jump across it during a blind move.
+        covered = sum(float(image_to_world(q[1], W_img, H_img, geometry_profile)[0]
+                            - image_to_world(q[0], W_img, H_img, geometry_profile)[0])
+                      for _, q in previews)
+        row_length = float(image_to_world(corners[2], W_img, H_img, geometry_profile)[0]) - start_x
+        if clipped_right or not previews or covered < row_length - .2 * CUBE:
+            info["lookahead_complete"] = False
+        for center_world, preview_quad in previews:
+            info.setdefault("lookahead_cubes", []).append(Cube(
+                0, world_to_image(center_world, W_img, H_img, geometry_profile),
+                center_world, world_to_camera(center_world, geometry_profile), preview_quad))
+        try:
+            continuing = continuous_row(frame, corners, profile=geometry_profile, cube_cm=CUBE)
+        except (ValueError, cv2.error, FloatingPointError):
+            continuing = False
+        return [Cube(0, px, (xw, yw), cam, quad, left_cm=start_x, continuous_row=continuing)]

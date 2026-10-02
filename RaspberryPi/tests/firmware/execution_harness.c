@@ -13,6 +13,7 @@
 #endif
 #include "stepper.c"
 #include "actions.c"
+#include "actions_extended.c"
 #include "motor3508.c"
 
 void Servo_HomeAll(void) {}
@@ -35,9 +36,9 @@ static void pickup(uint8_t id)
 {
     Stepper_Init();
     host_tick = 0;
-    assert(Actions_Start(100u + id, id, 0) == ACK_OK);
+    assert(ActionsEx_Start(100u + id, id, 0) == ACK_OK);
     int saw_ready = 0, saw_ascent = 0;
-    for (unsigned ms = 0; ms < 30000 && Actions_IsBusy(); ++ms) {
+    for (unsigned ms = 0; ms < 30000 && ActionsEx_IsBusy(); ++ms) {
         ticks(100);
         host_tick++;
         /* Recognize the real ascent by its commanded direction and length. */
@@ -45,31 +46,31 @@ static void pickup(uint8_t id)
                 (id == ACTION_GRAP3 ? S(9) : S(18.5))) {
             saw_ascent = 1;
         }
-        Actions_Update();
-        if (Actions_GetStatus().state == ACTION_CHASSIS_READY) {
+        ActionsEx_Update();
+        if (ActionsEx_GetStatus().state == ACTION_CHASSIS_READY) {
             assert(saw_ascent);
             if (!saw_ready) {
                 assert(Stepper_FirstSegmentDone(V));
                 assert(Stepper_IsBusy(H) || Stepper_IsBusy(V));
-                assert(Actions_Start(200u + id, id, 0) == ACK_ERR_BUSY);
+                assert(ActionsEx_Start(200u + id, id, 0) == ACK_ERR_BUSY);
             }
             saw_ready = 1;
         } else if (!saw_ready && saw_ascent &&
                    !Stepper_FirstSegmentDone(V)) {
-            assert(Actions_GetStatus().state == ACTION_RUNNING);
+            assert(ActionsEx_GetStatus().state == ACTION_RUNNING);
         }
     }
     assert(saw_ready);
-    assert(Actions_GetStatus().state == ACTION_DONE);
+    assert(ActionsEx_GetStatus().state == ACTION_DONE);
 }
 
 static void delayed_poll_after_peak(void)
 {
     Stepper_Init();
     host_tick = 0;
-    assert(Actions_Start(300, ACTION_GRAP3, 0) == ACK_OK);
-    while (!(move_parallel && sequence[status.stage].op == WAIT_FIRST_SEGMENT)) {
-        ticks(100); host_tick++; Actions_Update();
+    assert(ActionsEx_Start(300, ACTION_GRAP3, 0) == ACK_OK);
+    while (!(ex_move_parallel && ex_sequence[ex_status.stage].op == ex_WAIT_FIRST_SEGMENT)) {
+        ticks(100); host_tick++; ActionsEx_Update();
         assert(host_tick < 10000);
     }
     /* Let the interrupt finish the entire up/down move without a main poll.
@@ -77,14 +78,14 @@ static void delayed_poll_after_peak(void)
     while (Stepper_IsBusy(H) || Stepper_IsBusy(V)) {
         ticks(100); host_tick++; assert(host_tick < 20000);
     }
-    assert(Stepper_GetPosition(V) == move_origin[V]);
+    assert(Stepper_GetPosition(V) == ex_move_origin[V]);
     assert(Stepper_FirstSegmentDone(V));
-    Actions_Update();
-    assert(Actions_GetStatus().state == ACTION_CHASSIS_READY);
-    Actions_Abort(ACTION_CANCELLED);
+    ActionsEx_Update();
+    assert(ActionsEx_GetStatus().state == ACTION_CHASSIS_READY);
+    ActionsEx_Abort(ACTION_CANCELLED);
     assert(!Stepper_FirstSegmentDone(V));
-    ticks(1000); Actions_Update();
-    assert(Actions_GetStatus().state == ACTION_CANCELLED);
+    ticks(1000); ActionsEx_Update();
+    assert(ActionsEx_GetStatus().state == ACTION_CANCELLED);
 }
 
 static void timeout_and_latch_reset(void)
@@ -97,11 +98,11 @@ static void timeout_and_latch_reset(void)
     assert(!Stepper_FirstSegmentDone(V));
     Stepper_Stop(V);
     assert(!Stepper_FirstSegmentDone(V));
-    assert(Actions_Start(400, ACTION_GRAP1, 0) == ACK_OK);
-    Actions_Update();
+    assert(ActionsEx_Start(400, ACTION_GRAP1, 0) == ACK_OK);
+    ActionsEx_Update();
     host_tick += 30001;
-    Actions_Update();
-    assert(Actions_GetStatus().state == ACTION_TIMEOUT);
+    ActionsEx_Update();
+    assert(ActionsEx_GetStatus().state == ACTION_TIMEOUT);
     assert(!Stepper_IsBusy(H) && !Stepper_IsBusy(V));
 }
 
@@ -118,7 +119,7 @@ static void stop_remains_stopped(void)
         g_motor[i].pos_pid.integral = 42;
     }
     host_irq = 0;
-    Motor3508_StopAll();
+    Motor3508_StopAllEnhanced();
     assert(host_irq == 0 && host_can_irq == 1);
     for (unsigned i = 0; i < 4; ++i) {
         assert(g_motor[i].target_speed == 0);
@@ -129,7 +130,7 @@ static void stop_remains_stopped(void)
     for (unsigned i = 0; i < 50; ++i) Motor3508_UpdateAllSpeedPID(0.001f);
     for (unsigned i = 0; i < 8; ++i) assert(host_last_can[i] == 0);
     host_irq = 1;
-    Motor3508_StopAll();
+    Motor3508_StopAllEnhanced();
     assert(host_irq == 1);
 }
 

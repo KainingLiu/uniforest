@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 """RoboGame entry point for declarative strategies and functional action flows."""
 
+if __name__ == '__main__':
+    from utils.run_logs import run_entry
+    raise SystemExit(run_entry('main'))
+
 import argparse
 import sys
 
 from robot import Robot
 from Strategy.runner import SELECTION_CHOICES, resolve_selection, run_selection
 from Strategy.plans import PLANS, validate_plan
-from Strategy.transition_config import TransitionConfig
+from Strategy.cli import add_execution_arguments, load_execution_config, print_plan
 from vision import default_camera_selector
 from vision.yolo.collector import add_collection_arguments
 from utils.diagnostics import classify_failure
@@ -47,8 +51,7 @@ def parse_args(argv=None):
     parser.add_argument('--debug', action='store_true')
     parser.add_argument('--diagnostics-log', default=None,
                         help='Append JSONL diagnostics to this path')
-    parser.add_argument('--transition-config', default=None,
-                        help='JSON file of field-validated pickup/curve transitions; omitted keeps calibration gates closed')
+    add_execution_arguments(parser)
     add_collection_arguments(parser)
     return parser.parse_args(argv)
 
@@ -62,18 +65,12 @@ def main() -> int:
     selection = args.strategy or args.flow or args.task or 'PlanA'
     plan = resolve_selection(selection)
     try:
-        transitions = TransitionConfig.load(args.transition_config) if args.transition_config else TransitionConfig()
+        transitions = load_execution_config(args, plan)
     except (OSError, TypeError, ValueError, KeyError) as exc:
         print(f'[Transitions] Invalid calibration: {exc}',file=sys.stderr)
         return 2
     if args.show_plan:
-        print(f'{plan.name}: entry={plan.entry_anchor}, heading={plan.entry_heading_deg:g}')
-        for index, step in enumerate(plan.steps, 1):
-            print(f'{index:03d} {step.name}: {step.kind} [{step.profile}] {dict(step.parameters)}')
-        if plan.needs_heading_zero:
-            print('Entry requires a known --heading-zero-deg and physical placement at build approach.')
-        print('Pickup transitions: ' + (', '.join(transitions.pickups) or 'disabled: no field calibration'))
-        print('Continuous routes: ' + (', '.join(transitions.curves) or 'disabled: no field calibration'))
+        print_plan(plan, transitions)
         return 0
     try:
         validate_plan(plan, heading_zero_deg=args.heading_zero_deg)
@@ -94,9 +91,17 @@ def main() -> int:
         collect_data=False if args.no_collect_data else None,
         dataset_dir=args.dataset_dir,
         pickup_full_lift_validated=transitions.firmware_full_lift_validated,
+        pickup_trial_enabled=transitions.trial_run,
+        execution_extensions=True,
     )
 
     try:
+        if transitions.trial_run:
+            from dataclasses import asdict
+            robot.diagnostics.write('field_trial_settings',validated=False,
+                pickups={k:asdict(v) for k,v in transitions.pickups.items()},
+                alignments={k:asdict(v) for k,v in transitions.alignments.items()})
+            print('[Trial] Pickup/alignment trial parameters UNVALIDATED; route planning selected separately')
         if not robot.connect():
             return 1
         robot.start(telem_rate=args.telem_rate)
@@ -115,7 +120,3 @@ def main() -> int:
         return 1
     finally:
         robot.stop()
-
-
-if __name__ == '__main__':
-    sys.exit(main())

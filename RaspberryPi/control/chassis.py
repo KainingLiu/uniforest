@@ -15,6 +15,7 @@ from __future__ import annotations
 import math
 import time
 from dataclasses import dataclass
+from .motion_law import smoothstep, route_feedforward
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, List, Optional, Tuple
 
@@ -404,7 +405,7 @@ class Chassis:
 
     def follow_trajectory(self, waypoints, profile, *, check,
                           initial_velocity=None):
-        """Follow a validated continuous local route, without intermediate stops.
+        """Follow a configured or recipe-derived local route without intermediate stops.
 
         Waypoints use local mm forward/right and unwrapped clockwise yaw. ``check``
         must be the active execution context guard, including cancellation and
@@ -415,7 +416,7 @@ class Chassis:
             BodyVelocity, CubicRoute, PoseSample, follow_trajectory,
         )
         points = tuple(waypoints)
-        CubicRoute(points, profile)  # Reject unvalidated routes before any output.
+        CubicRoute(points, profile)  # Reject invalid profiles before any output.
         stop_generation = self._t.emergency_stop_generation
         last_uptime = None
         previous_telem = None
@@ -429,8 +430,9 @@ class Chassis:
                     or self._t.emergency_stop_generation != stop_generation):
                 raise RuntimeError('trajectory communication or emergency stop fault')
             telem = self._telem
+            received_at = self._telem_received_at
             if (telem is None or not math.isfinite(telem.yaw_deg)
-                    or not 0 <= time.monotonic()-self._telem_received_at
+                    or not 0 <= time.monotonic()-received_at
                     <= profile.max_telemetry_age_s):
                 raise RuntimeError('trajectory telemetry unavailable or stale')
             if (last_uptime is not None
@@ -487,7 +489,7 @@ class Chassis:
     @staticmethod
     def _smoothstep(r: float) -> float:
         """S-curve: r²(3-2r), zero-slope at both ends."""
-        return r * r * (3.0 - 2.0 * r)
+        return smoothstep(r)
 
     @staticmethod
     def _mm_s_to_rpm(mm_s: float) -> float:
@@ -637,8 +639,8 @@ class Chassis:
                 distance_ratio = min(1.0, max(0.0, remaining / decel_dist))
                 for pid in self.pos_pid:
                     pid.output_limit = pid_limit * ramp
-                ff = speed_rpm * min(self._smoothstep(ramp),
-                                     self._smoothstep(distance_ratio))
+                ff = route_feedforward(speed_rpm, elapsed_ms, accel_ms,
+                                       remaining, decel_dist)
             elif accel_ms > 0 and elapsed_ms < accel_ms:
                 r = elapsed_ms / accel_ms
                 for pid in self.pos_pid:

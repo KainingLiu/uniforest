@@ -268,6 +268,10 @@ void Motor3508_MecanumRPM(float vx_cm_s, float vy_cm_s, float wz_deg_s,
 int32_t Motor3508_GetAvgPosition(void);
 void    Motor3508_ResetPosition(void);
 
+/* Explicit extension entry points; Motor3508_StopAll keeps legacy semantics. */
+void Motor3508_StopAllEnhanced(void);
+uint8_t Motor3508_ExtensionCanStart(void);
+
 #ifdef __cplusplus
 }
 #endif

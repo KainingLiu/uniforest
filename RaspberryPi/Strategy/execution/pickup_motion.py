@@ -32,10 +32,11 @@ class PickupMotionProfile:
     max_command_delay_s: float
     settled_speed_mm_s: float
     validated: bool = False
+    trial_enabled: bool = False
 
     def __post_init__(self):
         for name in self.__dataclass_fields__:
-            if name != 'validated' and (
+            if name not in ('validated','trial_enabled') and (
                     not _finite(getattr(self, name)) or getattr(self, name) <= 0):
                 raise ValueError(f'{name} must be finite and positive')
         if self.braking_margin_mm >= self.max_distance_mm:
@@ -45,6 +46,8 @@ class PickupMotionProfile:
             raise ValueError('control tick must fit duration and telemetry limits')
         if type(self.validated) is not bool:
             raise ValueError('validated must be an explicit boolean')
+        if type(self.trial_enabled) is not bool:
+            raise ValueError('trial_enabled must be an explicit boolean')
 
 
 def measured_lateral_speed(robot):
@@ -81,7 +84,8 @@ def _velocity_cap(remaining, age, profile):
 def acquire_after_blind(control, *, initial_speed_mm_s, guard, pose_epoch,
                         arm_reset_at_s, phase_origin, profile,
                         heading_yaw_deg=None, command_speed=None, stop=None,
-                        clock=time.monotonic, sleep=time.sleep):
+                        clock=time.monotonic, sleep=time.sleep, alignment=None,
+                        neighbor_observer=None):
     """Acquire and align one orange cube, starting at the handed-off velocity.
 
     Return True only after fresh target confirmations at measured low speed.
@@ -100,7 +104,7 @@ def acquire_after_blind(control, *, initial_speed_mm_s, guard, pose_epoch,
     target causes bounded braking/reacquisition, then returns False to that path
     with its OrangeSearchRecovery state and cumulative budgets preserved.
     """
-    if not isinstance(profile, PickupMotionProfile) or not profile.validated:
+    if not isinstance(profile, PickupMotionProfile) or not (profile.validated or profile.trial_enabled):
         raise ValueError('pickup motion requires a field-validated profile')
     if not _finite(initial_speed_mm_s):
         raise ValueError('initial speed must be finite')
@@ -113,6 +117,15 @@ def acquire_after_blind(control, *, initial_speed_mm_s, guard, pose_epoch,
         raise TypeError('command_speed must be callable')
     if stop is not None and not callable(stop):
         raise TypeError('stop must be callable')
+
+    if alignment is not None:
+        from ..optimizations.fast_alignment import align_cube
+        return align_cube(control, color_name='orange', phase_origin=phase_origin,
+                          profile=alignment, guard=guard, initial_speed_mm_s=initial_speed_mm_s,
+                          pose_epoch=pose_epoch, arm_reset_at_s=arm_reset_at_s,
+                          search_profile=profile, heading_yaw_deg=heading_yaw_deg,
+                          command_speed=command_speed, stop=stop, clock=clock, sleep=sleep,
+                          neighbor_observer=neighbor_observer)
 
     robot, cfg, recovery = control.robot, control.config, control._orange_recovery
     stop = stop or (lambda: robot.chassis.set_speeds([0, 0, 0, 0]))

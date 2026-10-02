@@ -61,6 +61,40 @@ class Plant:
 
 
 class BlindTransitionTests(unittest.TestCase):
+    def test_near_zero_feedback_does_not_abort_a_valid_grab_handoff(self):
+        plant=Plant(lift_at=0,reset_at=3,frame_at=4)
+        def sample():
+            value=plant.sample()
+            return replace(value,displacement_mm=-.001,velocity_mm_s=-.1) if plant.index<=2 else value
+        result=plant.run(read_sample=sample)
+        self.assertEqual(result.status,BlindStatus.HANDED_OFF)
+        plant.stop.assert_not_called()
+
+    def test_bounded_reverse_feedback_returns_to_visual_adjustment(self):
+        plant=Plant(lift_at=0,reset_at=3,frame_at=4)
+        result=plant.run(read_sample=lambda:replace(plant.sample(),displacement_mm=-1.5,velocity_mm_s=-20))
+        self.assertEqual(result.status.value,'direction_recovery')
+        plant.stop.assert_called_once()
+        plant.handoff.assert_not_called()
+
+    def test_tiny_idle_feedback_before_lift_keeps_commands_zero(self):
+        plant=Plant(lift_at=2,reset_at=4,frame_at=5)
+        def sample():
+            value=plant.sample()
+            return replace(value,displacement_mm=.001,velocity_mm_s=-.1) if not value.lifted else value
+        result=plant.run(read_sample=sample)
+        self.assertEqual(result.status,BlindStatus.HANDED_OFF)
+        self.assertTrue(all(v==0 for _,v,i in plant.commands if i<2))
+
+    def test_reverse_motion_outside_recovery_envelope_remains_a_fault(self):
+        for feedback in ({'displacement_mm': -6.}, {'velocity_mm_s': -200.}):
+            with self.subTest(feedback=feedback):
+                plant = Plant(lift_at=0)
+                with self.assertRaisesRegex(BlindMotionFault, 'recovery margin'):
+                    plant.run(read_sample=lambda: replace(plant.sample(), **feedback))
+                plant.stop.assert_called_once()
+                plant.handoff.assert_not_called()
+
     def test_lift_and_camera_gates_preserve_nonzero_velocity_on_handoff(self):
         plant = Plant()
         result = plant.run()
@@ -155,7 +189,7 @@ class BlindTransitionTests(unittest.TestCase):
         variants = (
             {'token': 18}, {'epoch': 4}, {'timestamp_s': 99.0},
             {'timestamp_s': 101.0}, {'velocity_mm_s': math.nan},
-            {'displacement_mm': -1.0},
+            {'displacement_mm': -10.0},
         )
         for overrides in variants:
             with self.subTest(overrides=overrides):
@@ -226,7 +260,9 @@ class BlindTransitionTests(unittest.TestCase):
                           {'cruise_speed_mm_s': math.inf}, {'acceleration_mm_s2': math.nan},
                           {'braking_margin_mm': 1000}, {'max_command_delay_s': -1},
                           {'max_duration_s': 10 ** 1000}, {'max_command_delay_s': 1.0},
-                          {'tick_s': 0.2}, {'validated': 1}):
+                          {'tick_s': 0.2}, {'validated': 1},
+                          {'feedback_position_tolerance_mm': -1},
+                          {'feedback_speed_tolerance_mm_s': math.nan}):
             with self.subTest(overrides=overrides), self.assertRaises(ValueError):
                 profile(**overrides)
         plant = Plant()

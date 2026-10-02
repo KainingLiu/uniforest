@@ -53,12 +53,21 @@ extern "C" {
 #define CMD_ACTION_START        0x50   /* token:u32, action:u8, flags:u8 */
 #define CMD_ACTION_STATUS       0x51   /* no payload; query latched outcome */
 
+/* Additive interface; original commands above always retain main semantics. */
+#define CMD_EXEC_CAPABILITIES    0x52   /* no payload */
+#define CMD_EXEC_OPEN            0x53   /* session:u32, version:u16 */
+#define CMD_EXEC_COMMAND         0x54   /* session:u32, inner_cmd:u8, inner_data */
+#define CMD_EXEC_CLOSE           0x55   /* session:u32 */
+
 /* =================== Telemetry / Response IDs (STM32 → Pi) ================= */
 
 #define TELEM_FULL              0x80   /* full telemetry batch (80 bytes) */
 #define TELEM_ACK               0x81   /* command ACK */
 #define TELEM_PONG              0x82   /* PING response */
 #define TELEM_ACTION            0x83   /* token:u32,id:u8,state:u8,stage:u8,uptime:u32 */
+#define TELEM_EXEC_CAPABILITIES 0x84   /* version:u16,caps:u32,lease:u16,next_session:u32 */
+#define TELEM_EXEC_SESSION      0x85   /* session:u32, active:u8 */
+#define TELEM_EXEC_ACTION       0x86   /* session:u32 followed by the 11-byte action status */
 
 /* ===================== ACK Status Codes ==================================== */
 

@@ -13,6 +13,8 @@ from Strategy.flows.factory import ActionEnvironment
 from Strategy.flows.model import ActionSpec
 from Strategy.plans import StrategyPlan
 from Strategy.runner import run_plan
+from Strategy.transition_config import TransitionConfig
+from Strategy.transition_switches import TransitionSwitches
 from tests.test_strategy_composition import robot_fixture
 
 
@@ -103,7 +105,8 @@ class RegisteredInspectionReplay:
         self.robot.actions.pickup_full_lift_validated = False
         self.events, self.sessions = [], []
         self.context = ExecutionContext(self.robot, heading_zero_deg=37)
-        self.env = ActionEnvironment(self.robot, self.context)
+        self.env = ActionEnvironment(self.robot, self.context, transition_config=TransitionConfig(
+            switches=TransitionSwitches(overrides={'inspect-departure': True})))
         self.control = self.env.control(profile)
         self.profile, self.early_departure = profile, early_departure
         self.route_fault, self.refill_available = route_fault, refill_available
@@ -133,7 +136,8 @@ class RegisteredInspectionReplay:
         self.env.run_route = Mock(side_effect=self.run_route)
 
     def begin(self, **kwargs):
-        if kwargs != {'allow_visual_failure': True}:
+        if kwargs != {'allow_visual_failure': True,
+                      'allow_idle': self.env.data['collection']['pickups'] == 0}:
             raise AssertionError('competition inspection must preserve visual fallback')
         session = InspectionAdapter(self, next(self.counts), len(self.sessions))
         self.sessions.append(session)

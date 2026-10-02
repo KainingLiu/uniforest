@@ -5,7 +5,10 @@ from __future__ import annotations
 import json
 import os
 import time
+import threading
 from typing import Any, Optional
+
+from .run_logs import current_archive
 
 
 def classify_failure(exc: BaseException) -> str:
@@ -26,20 +29,26 @@ def classify_failure(exc: BaseException) -> str:
 
 
 class JsonlDiagnostics:
-    """Append-only JSONL writer. Disabled unless a path is supplied."""
+    """Write to this run's archive and, when requested, an additional path."""
 
     def __init__(self, path: Optional[str] = None):
         self.path = path
+        self.archive = current_archive()
+        self.lock = threading.Lock()
 
     def write(self, event: str, **fields: Any) -> None:
-        if not self.path:
+        if not self.path and self.archive is None:
             return
         record = {'ts': time.time(), 'event': event, **fields}
-        parent = os.path.dirname(os.path.abspath(self.path))
-        os.makedirs(parent, exist_ok=True)
-        with open(self.path, 'a', encoding='utf-8') as stream:
-            stream.write(json.dumps(record, ensure_ascii=True,
-                                    separators=(',', ':')) + '\n')
+        line = json.dumps(record, ensure_ascii=True, separators=(',', ':')) + '\n'
+        with self.lock:
+            if self.archive is not None:
+                self.archive.diagnostic(line)
+            if self.path and (self.archive is None or os.path.abspath(self.path) != str(self.archive.diagnostics_path)):
+                parent = os.path.dirname(os.path.abspath(self.path))
+                os.makedirs(parent, exist_ok=True)
+                with open(self.path, 'a', encoding='utf-8') as stream:
+                    stream.write(line)
 
 
 __all__ = ['JsonlDiagnostics', 'classify_failure']

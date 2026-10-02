@@ -38,6 +38,9 @@ class BlindMotionProfile:
     tick_s: float
     max_command_delay_s: float
     validated: bool = False
+    trial_enabled: bool = False
+    feedback_position_tolerance_mm: float = 2.0
+    feedback_speed_tolerance_mm_s: float = 10.0
 
     def __post_init__(self):
         if type(self.direction) is not int or self.direction not in (-1, 1):
@@ -55,6 +58,11 @@ class BlindMotionProfile:
             raise ValueError('tick must fit duration and telemetry freshness limits')
         if type(self.validated) is not bool:
             raise ValueError('validated must be an explicit boolean')
+        if type(self.trial_enabled) is not bool:
+            raise ValueError('trial_enabled must be an explicit boolean')
+        for name in ('feedback_position_tolerance_mm', 'feedback_speed_tolerance_mm_s'):
+            if not _finite(getattr(self, name)) or getattr(self, name) < 0:
+                raise ValueError(f'{name} must be finite and nonnegative')
 
 
 @dataclass(frozen=True)
@@ -69,6 +77,7 @@ class BlindSample:
     arm_reset_at_s: float | None = None
     frame_captured_at_s: float | None = None
     frame_epoch: int | None = None
+    target_visible: bool = True
 
 
 class BlindStatus(str, Enum):
@@ -76,6 +85,7 @@ class BlindStatus(str, Enum):
     CAMERA_READY_STOPPED = 'camera_ready_stopped'
     CAMERA_UNAVAILABLE = 'camera_unavailable'
     BOUND_REACHED = 'bound_reached'
+    DIRECTION_RECOVERY = 'direction_recovery'
 
 
 @dataclass(frozen=True)
@@ -109,7 +119,7 @@ def run_blind_transition(profile, *, token, epoch, read_sample, command_speed,
     """
     if not isinstance(profile, BlindMotionProfile):
         raise TypeError('profile must be a BlindMotionProfile')
-    if not profile.validated:
+    if not (profile.validated or profile.trial_enabled):
         raise ValueError('blind motion requires an explicitly field-validated profile')
     if type(token) is not int or not 0 < token <= 0xffffffff:
         raise ValueError('token must be a nonzero uint32 action token')
@@ -138,6 +148,7 @@ def run_blind_transition(profile, *, token, epoch, read_sample, command_speed,
         previous_command = None
         was_lifted = was_reset = False
         reset_time = None
+        peak_progress = 0.0
         while True:
             check()
             sample = read_sample()
@@ -173,14 +184,33 @@ def run_blind_transition(profile, *, token, epoch, read_sample, command_speed,
             was_lifted, was_reset = sample.lifted, sample.arm_reset
             progress = sample.displacement_mm * profile.direction
             velocity = sample.velocity_mm_s * profile.direction
-            if progress < 0 or velocity < 0:
-                raise BlindMotionFault('measured movement opposes the registered direction')
-            if not sample.lifted and (progress > 0 or velocity > 0):
-                raise BlindMotionFault('chassis moved before full lift')
-
             def result(status, reason=''):
                 return BlindResult(status, sample.displacement_mm, sample.velocity_mm_s,
                                    elapsed, reason)
+
+            # Encoder quantization and settling can cross zero. Retain raw
+            # feedback in results; use a deadband only for the direction gate.
+            position_tolerance = min(profile.feedback_position_tolerance_mm,
+                                     profile.braking_margin_mm / 2.0)
+            speed_tolerance = profile.feedback_speed_tolerance_mm_s
+            reverse_speed = max(0.0, -velocity)
+            reverse_envelope = (max(0.0, -progress)
+                                + reverse_speed * (age + profile.tick_s + profile.max_command_delay_s)
+                                + reverse_speed ** 2 / (2.0 * profile.braking_mm_s2))
+            if reverse_envelope > profile.braking_margin_mm:
+                raise BlindMotionFault(
+                    f'reverse motion exceeds recovery margin: progress={progress:.6f} mm, '
+                    f'velocity={velocity:.6f} mm/s, envelope={reverse_envelope:.3f} mm')
+            if not sample.lifted and (abs(progress) > position_tolerance
+                                      or abs(velocity) > speed_tolerance):
+                raise BlindMotionFault('chassis moved before full lift')
+            if progress < -position_tolerance or velocity < -speed_tolerance:
+                # Only relinquish the blind leg. The caller finishes the arm
+                # return and resumes visual acquisition without aborting it.
+                return result(BlindStatus.DIRECTION_RECOVERY, 'bounded_reverse_feedback')
+            peak_progress = max(peak_progress, progress)
+            progress = peak_progress
+            velocity = max(0.0, velocity)
 
             if elapsed >= profile.max_duration_s:
                 return result(BlindStatus.CAMERA_UNAVAILABLE, 'duration_limit')
@@ -198,7 +228,7 @@ def run_blind_transition(profile, *, token, epoch, read_sample, command_speed,
                 sample.arm_reset and type(sample.frame_epoch) is int
                 and sample.frame_epoch == epoch and frame_time is not None
                 and frame_time > reset_time and now - frame_time <= profile.frame_timeout_s)
-            if camera_ready:
+            if camera_ready and sample.target_visible:
                 if handoff is None:
                     return result(BlindStatus.CAMERA_READY_STOPPED)
                 check()

@@ -42,9 +42,19 @@ class TransitionConfigTests(unittest.TestCase):
         config=self.load(self.document())
         self.assertTrue(config.pickup('ground-1','grap3').last_departure)
         self.assertEqual(config.pickup('ground-1','grap3').arm_restore_s,.2)
+        self.assertEqual(config.pickup('ground-1','grap3').next_cube_distance_mm,80.0)
         self.assertIsNone(config.pickup('ground-2','grap3'))
         self.assertEqual(set(config.curves),{'building-1/build_return'})
         with self.assertRaises(TypeError):config.curves['other']=None
+
+    def test_explicit_next_cube_distance_and_invalid_values(self):
+        document=self.document()
+        document['pickups']['ground-1/grap3']['next_cube']['expected_distance_mm']=80
+        self.assertEqual(self.load(document).pickup('ground-1','grap3').next_cube_distance_mm,80)
+        for value in (0,-1,True,float('nan')):
+            document['pickups']['ground-1/grap3']['next_cube']['expected_distance_mm']=value
+            with self.subTest(value=value),self.assertRaises(ValueError):
+                self.load(document)
 
     def test_unsafe_or_incomplete_calibration_rejected_on_load(self):
         edits=(

@@ -1,6 +1,7 @@
 """Calibrated continuous route prefixes; wall contacts remain explicit barriers."""
 
 import math
+from dataclasses import dataclass
 from control.trajectory import Waypoint
 
 
@@ -21,14 +22,14 @@ def _forward_end(x, y, distance, heading):
     return x+distance*math.cos(radians), y+distance*math.sin(radians)
 
 
-def run_curve(env, route, profile, calibration):
-    """Expand geometry using the same live displacement corrections as the route.
+@dataclass(frozen=True)
+class RouteGeometry:
+    endpoint: Waypoint
+    complete: object
 
-    Configured points interpolate relative endpoint fractions plus explicit mm
-    offsets. Curves end BEFORE any wall-contact barrier; the original contact
-    and post-contact legs are then executed normally. No unregistered route is
-    synthesized. Calibration covers the entire swept curve and its load state.
-    """
+
+def prepare_route_geometry(env, route, profile):
+    """Resolve the existing recipe endpoint; defer contacts/commits until arrival."""
     c=env.control(profile)
     cfg=c.config
     data=env.data
@@ -116,6 +117,22 @@ def run_curve(env, route, profile, calibration):
     else:
         raise ValueError(f'no continuous route contract for {route}')
 
+    def complete():
+        env.context.check_active()
+        if tail:tail()
+        env.context.check_active()
+        commit()
+
+    return RouteGeometry(Waypoint(x,y,yaw),complete)
+
+
+def run_curve(env, route, profile, calibration):
+    """Run a calibrated curve, then preserve the recipe's contact barriers."""
+    geometry=prepare_route_geometry(env,route,profile)
+    if geometry is None:
+        return
+    x,y,yaw=geometry.endpoint.x_mm,geometry.endpoint.y_mm,geometry.endpoint.yaw_deg
+    chassis=env.robot.chassis
     points=tuple(Waypoint(p['x_mm']+p['dx_scale']*x,
                           p['y_mm']+p['dy_scale']*y,
                           p['yaw_deg']+p['dyaw_scale']*yaw) for p in calibration.points)
@@ -125,9 +142,6 @@ def run_curve(env, route, profile, calibration):
     result=chassis.follow_trajectory(points,calibration.profile,
                                     check=env.context.check_active,
                                     initial_velocity=chassis.measured_body_velocity())
-    env.context.check_active()
-    if tail:tail()
-    env.context.check_active()
-    commit()
+    geometry.complete()
     env.record_transition('continuous_route',route,'complete')
     return result

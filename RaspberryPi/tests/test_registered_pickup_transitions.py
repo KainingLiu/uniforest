@@ -5,6 +5,7 @@ these tests verify ownership/sequence contracts, not physical motion calibration
 """
 
 import contextlib
+from dataclasses import replace
 from types import SimpleNamespace
 import time
 import unittest
@@ -12,12 +13,13 @@ from unittest.mock import Mock, patch
 
 from Strategy.context import ExecutionContext
 from Strategy.execution import ExecutionRuntime
-from Strategy.execution.blind import BlindMotionProfile, BlindStatus
+from Strategy.execution.blind import BlindMotionProfile, BlindStatus, run_blind_transition
 from Strategy.execution.pickup_motion import PickupMotionProfile
 from Strategy.flows.factory import ActionEnvironment
 from Strategy.flows.model import ActionSpec
 from Strategy.plans import StrategyPlan
 from Strategy.transition_config import PickupCalibration, TransitionConfig
+from Strategy.transition_switches import TransitionSwitches
 
 
 def calibration(**changes):
@@ -115,8 +117,14 @@ class Fixture:
             self.robot.telem, time.monotonic(), time.monotonic(), 0)
         self.robot.vision_result = SimpleNamespace(captured_monotonic=time.monotonic(), pose_epoch=0)
         self.context = ExecutionContext(self.robot, heading_zero_deg=0.0)
-        config = TransitionConfig(True, 'synthetic-test',
-                                  {f'{profile}/{method}': policy or calibration()})
+        policy = policy or calibration()
+        config = TransitionConfig(True, 'synthetic-test', {f'{profile}/{method}': policy},
+                                  switches=TransitionSwitches(overrides={
+                                      'next-cube': policy.next_blind is not None,
+                                      'last-departure': policy.last_departure,
+                                      'purple-departure': policy.departure,
+                                      'inspect-departure': True,
+                                  }))
         self.env = ActionEnvironment(self.robot, self.context, transition_config=config)
         self.control = self.env.control(profile)
         self.control._grab_press_step = Mock(return_value=lambda: self.events.append(('press',)))
@@ -237,6 +245,28 @@ class RegisteredPickupTransitionTests(unittest.TestCase):
         self.assertFalse(f.runtime.closed)
         self.assertTrue(f.env.data['collection']['acquired'])
         f.robot.transport.emergency_stop.assert_not_called()
+
+    def test_real_blind_reverse_recovery_finishes_arm_and_acquires_next_cube(self):
+        f = Fixture()
+        f.robot.diagnostics = Mock()
+        f.control._measure_lateral_displacement_mm = lambda origin: -1.5
+        f.robot.chassis.measured_body_velocity = lambda: SimpleNamespace(vy_mm_s=-20.)
+        f.control._find_cube.side_effect = lambda **kw: (
+            f.events.append(('visual_search',)) or SimpleNamespace(x=0, z=150))
+        f.run(self.next_pair(f, follow_grab=True), blind=run_blind_transition)
+        self.assertEqual(len(f.sessions), 2)
+        self.assertTrue(all(s.done and s.closed and not s.aborted for s in f.sessions))
+        self.assertLess(f.events.index(('close_grab', 1)), f.events.index(('visual_search',)))
+        self.assertLess(f.events.index(('visual_search',)), f.events.index(('begin_grab', 2)))
+        f.control._align_orange.assert_called_once()
+        f.warm.assert_not_called()
+        f.robot.transport.emergency_stop.assert_not_called()
+        f.env.record_transition.assert_called_once_with('grab_to_next_cube', 'grab.1', 'direction_recovery')
+        feedback = next(call for call in f.robot.diagnostics.write.call_args_list
+                        if call.args == ('blind_feedback',))
+        self.assertEqual(feedback.kwargs['velocity_mm_s'], -20.)
+        self.assertEqual(feedback.kwargs['displacement_mm'], -1.5)
+        self.assertEqual(feedback.kwargs['outcome'], 'direction_recovery')
 
     def test_unsupported_firmware_finishes_grab_before_ordinary_search(self):
         f = Fixture(enabled=False)
@@ -378,6 +408,22 @@ class RegisteredPickupTransitionTests(unittest.TestCase):
                                    displacement_mm=0.0, duration_s=0.0)
         f.run(self.next_pair(f), blind=bounded)
         self.assertEqual(seen, [20.0])
+
+    def test_next_cube_expected_80mm_keeps_the_smaller_safety_limit(self):
+        for name,method in (('ground-1','grap3'),('ground-2','grap3'),('ground-3','grap3'),
+                            ('highland-1','grap1'),('highland-2','grap1')):
+            for hard_limit in (120.0,60.0):
+                with self.subTest(profile=name,hard_limit=hard_limit):
+                    policy=calibration()
+                    policy=replace(policy,next_blind=replace(policy.next_blind,max_distance_mm=hard_limit))
+                    fixture=Fixture(profile=name,method=method,policy=policy)
+                    seen=[]
+                    def bounded(config,**kwargs):
+                        seen.append(config.max_distance_mm)
+                        kwargs['stop']()
+                        return SimpleNamespace(status=BlindStatus.BOUND_REACHED)
+                    fixture.run(self.next_pair(fixture),blind=bounded)
+                    self.assertEqual(seen,[min(hard_limit,80.0+policy.next_blind.braking_margin_mm)])
 
     def test_invalid_yaw_never_reaches_warm_controller_or_next_grip(self):
         f = Fixture()

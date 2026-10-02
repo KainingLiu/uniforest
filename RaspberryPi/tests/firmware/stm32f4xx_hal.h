@@ -5,14 +5,15 @@
 #include <string.h>
 
 typedef struct { unsigned unused; } GPIO_TypeDef;
-typedef struct { unsigned Pin, Mode, Pull, Speed; } GPIO_InitTypeDef;
+typedef struct { unsigned Pin, Mode, Pull, Speed, Alternate; } GPIO_InitTypeDef;
 typedef struct {
     void *Instance;
     struct { unsigned Prescaler, CounterMode, Period, ClockDivision,
                       AutoReloadPreload; } Init;
 } TIM_HandleTypeDef;
 typedef struct { void *Instance; } CAN_HandleTypeDef;
-typedef struct { unsigned unused; } UART_HandleTypeDef;
+typedef struct { void *Instance; struct { unsigned BaudRate, WordLength, StopBits,
+    Parity, Mode, HwFlowCtl, OverSampling; } Init; } UART_HandleTypeDef;
 typedef struct { unsigned StdId, IDE, RTR, DLC; } CAN_TxHeaderTypeDef;
 typedef struct { unsigned StdId; } CAN_RxHeaderTypeDef;
 typedef struct { unsigned FilterIdHigh, FilterIdLow, FilterMaskIdHigh,
@@ -30,6 +31,8 @@ static GPIO_TypeDef host_gpio[5];
 #define GPIO_PIN_3 (1u << 3)
 #define GPIO_PIN_4 (1u << 4)
 #define GPIO_PIN_5 (1u << 5)
+#define GPIO_PIN_7 (1u << 7)
+#define GPIO_PIN_8 (1u << 8)
 #define GPIO_PIN_10 (1u << 10)
 #define GPIO_PIN_11 (1u << 11)
 #define GPIO_PIN_12 (1u << 12)
@@ -40,6 +43,21 @@ static GPIO_TypeDef host_gpio[5];
 #define GPIO_PIN_SET 1
 #define GPIO_MODE_OUTPUT_PP 0
 #define GPIO_NOPULL 0
+#define GPIO_PULLUP 0
+#define GPIO_MODE_AF_PP 0
+#define GPIO_AF8_UART7 0
+#define UART7 ((void *)7)
+#define UART7_IRQn 7
+#define UART_WORDLENGTH_8B 0
+#define UART_STOPBITS_1 0
+#define UART_PARITY_NONE 0
+#define UART_MODE_TX_RX 0
+#define UART_HWCONTROL_NONE 0
+#define UART_OVERSAMPLING_8 0
+#define UART_IT_RXNE 0
+#define __HAL_RCC_GPIOE_CLK_ENABLE() ((void)0)
+#define __HAL_RCC_UART7_CLK_ENABLE() ((void)0)
+#define __HAL_UART_ENABLE_IT(u, i) ((void)0)
 #define GPIO_SPEED_FREQ_HIGH 0
 #define GPIO_SPEED_FREQ_LOW 0
 #define TIM7 ((void *)7)
@@ -72,6 +90,17 @@ static uint32_t host_can_irq;
 static CAN_HandleTypeDef hcan1 = {CAN1};
 static uint32_t HAL_GetTick(void) { return host_tick; }
 static void HAL_Delay(uint32_t ms) { host_tick += ms; }
+static uint8_t host_uart_frames[256][86];
+static unsigned host_uart_lengths[256], host_uart_count;
+static int HAL_UART_Init(UART_HandleTypeDef *u) { (void)u; return HAL_OK; }
+static int HAL_UART_Transmit(UART_HandleTypeDef *u, uint8_t *data, unsigned n, unsigned timeout)
+{
+    (void)u; (void)timeout;
+    unsigned i=host_uart_count++ % 256;
+    host_uart_lengths[i]=n;
+    memcpy(host_uart_frames[i],data,n);
+    return HAL_OK;
+}
 static uint32_t __get_PRIMASK(void) { return host_irq; }
 static void __disable_irq(void) { host_irq = 1; }
 static void __set_PRIMASK(uint32_t value) { host_irq = value; }

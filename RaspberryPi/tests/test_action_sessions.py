@@ -350,7 +350,10 @@ class BuildSessionCleanupTests(unittest.TestCase):
         robot.chassis.monitor_action = lambda check: nullcontext()
         robot.begin_cube_camera_pose_change = Mock(return_value=10)
         robot.end_cube_camera_pose_change = Mock(return_value=True)
-        env = ActionEnvironment(robot, context)
+        from Strategy.transition_config import TransitionConfig
+        from Strategy.transition_switches import TransitionSwitches
+        env = ActionEnvironment(robot, context, transition_config=TransitionConfig(
+            switches=TransitionSwitches(overrides={'build-return': True})))
         env.run_route = Mock()
         plan = StrategyPlan('build-cleanup', (
             ActionSpec('build', 'build', 'building-1', requires_anchor='build_approach'),

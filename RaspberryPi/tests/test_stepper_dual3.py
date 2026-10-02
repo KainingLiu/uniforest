@@ -28,7 +28,7 @@ class StepperDual3ProtocolTests(unittest.TestCase):
         )
 
     def test_defaults_match_current_firmware(self):
-        firmware = Path(__file__).resolve().parents[2] / 'Uniforest_A'
+        from tests.project_paths import FIRMWARE as firmware
         if not firmware.exists():
             self.skipTest('A-board source checks run on the development checkout')
         header = (firmware / 'Core/Inc/stepper.h').read_text(encoding='utf-8')

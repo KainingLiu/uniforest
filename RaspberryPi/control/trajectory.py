@@ -1,6 +1,6 @@
 """Opt-in local cubic routes. Units: mm, seconds, unwrapped clockwise degrees.
 
-Profiles and points must be field validated before a route can use this follower.
+Profiles are field validated or explicitly generated from existing route commands.
 This is encoder/IMU tracking, with no obstacle avoidance or absolute localization.
 Acceleration limits constrain body-frame velocity command increments; traction and
 load limits still require measurement. No zero command is inserted at waypoints.
@@ -56,15 +56,23 @@ class TrajectoryProfile:
     timeout_s: float
     control_period_s: float
     max_telemetry_age_s: float
+    route_derived: bool = False
+    segment_speeds_mm_s: tuple = ()
 
     def validate(self):
-        if self.validated is not True:
+        if type(self.route_derived) is not bool or type(self.validated) is not bool:
+            raise ValueError('trajectory provenance flags must be boolean')
+        if self.validated is not True and not self.route_derived:
             raise ValueError('continuous trajectory profile requires field validation')
         for field in fields(self):
-            if field.name != 'validated':
+            if field.name not in ('validated', 'route_derived', 'segment_speeds_mm_s'):
                 value = getattr(self, field.name)
                 if isinstance(value, bool) or not math.isfinite(value) or value <= 0:
                     raise ValueError(f'{field.name} must be finite and positive')
+        if not isinstance(self.segment_speeds_mm_s,(tuple,list)) or any(
+                isinstance(v,bool) or not isinstance(v,(int,float)) or not math.isfinite(v) or not 0<v<=self.max_speed_mm_s
+                for v in self.segment_speeds_mm_s):
+            raise ValueError('invalid per-segment speed limits')
         if self.control_period_s > 0.05 or self.max_telemetry_age_s > 0.5:
             raise ValueError('trajectory period/stale limit exceeds supervision limit')
         if not 1 <= self.max_wheel_rpm <= 32767:
@@ -111,12 +119,15 @@ class CubicRoute:
         if not _finite(_components(initial_velocity)):
             raise ValueError('initial velocity must be finite')
         self.knots = [0.0]
-        for a, b in zip(self.points, self.points[1:]):
+        self.speed_limits=tuple(profile.segment_speeds_mm_s) or (profile.max_speed_mm_s,)*(len(self.points)-1)
+        if len(self.speed_limits)!=len(self.points)-1:
+            raise ValueError('one speed limit per route segment is required')
+        for a, b, speed_limit in zip(self.points, self.points[1:],self.speed_limits):
             distance = math.hypot(b.x_mm - a.x_mm, b.y_mm - a.y_mm)
             angle = abs(b.yaw_deg - a.yaw_deg)
             if distance == 0 and angle == 0:
                 raise ValueError('adjacent duplicate waypoints are invalid')
-            duration = max(1.5 * distance / profile.max_speed_mm_s,
+            duration = max(1.5 * distance / speed_limit,
                            1.5 * angle / profile.max_yaw_speed_deg_s,
                            2 * math.sqrt(distance / profile.max_accel_mm_s2),
                            2 * math.sqrt(angle / profile.max_yaw_accel_deg_s2),
@@ -126,7 +137,33 @@ class CubicRoute:
         for i in range(1, len(self.points) - 1):
             before, after = map(_components, (self.points[i-1], self.points[i+1]))
             dt = self.knots[i+1] - self.knots[i-1]
-            self.tangents.append(tuple((b-a)/dt for a, b in zip(before, after)))
+            tangent = tuple((b-a)/dt for a, b in zip(before, after))
+            if profile.segment_speeds_mm_s:
+                speed_limit=min(self.speed_limits[i-1:i+1])
+                translation_scale=min(1.,speed_limit/max(math.hypot(*tangent[:2]),1e-9))
+                tangent=(tangent[0]*translation_scale,tangent[1]*translation_scale,tangent[2])
+            if profile.route_derived:
+                # Bound the generated path's departure from its original line
+                # segments. 40 mm is a software smoothing limit, not surveyed
+                # obstacle clearance. Clearance retreats remain separate runs.
+                adjacent = max(self.knots[i]-self.knots[i-1], self.knots[i+1]-self.knots[i])
+                left,right=self.points[i-1],self.points[i+1]
+                current=self.points[i]
+                ax,ay=current.x_mm-left.x_mm,current.y_mm-left.y_mm
+                bx,by=right.x_mm-current.x_mm,right.y_mm-current.y_mm
+                straight=ax*bx+ay*by>.99999*math.hypot(ax,ay)*math.hypot(bx,by)
+                limit=(3*min(math.hypot(ax,ay)/(self.knots[i]-self.knots[i-1]),
+                             math.hypot(bx,by)/(self.knots[i+1]-self.knots[i])) if straight else 3*40.0/adjacent)
+                scale = min(1.0, limit/max(math.hypot(*tangent[:2]), 1e-9))
+                tangent = (tangent[0]*scale, tangent[1]*scale, tangent[2])
+                # A constant-heading entry span must stay constant. Central
+                # differences otherwise bend yaw the wrong way before a turn.
+                before_yaw=(current.yaw_deg-left.yaw_deg)/(self.knots[i]-self.knots[i-1])
+                after_yaw=(right.yaw_deg-current.yaw_deg)/(self.knots[i+1]-self.knots[i])
+                yaw_tangent=(0. if before_yaw*after_yaw<=0 else
+                             math.copysign(min(abs(tangent[2]),3*min(abs(before_yaw),abs(after_yaw))),before_yaw))
+                tangent=(tangent[0],tangent[1],yaw_tangent)
+            self.tangents.append(tangent)
         self.tangents.append((0.0, 0.0, 0.0))
         self.duration_s = self.knots[-1]
         if self.duration_s + profile.settle_time_s >= profile.timeout_s:
@@ -147,11 +184,16 @@ class CubicRoute:
                             + (3*u*u-4*u+1)*va + (3*u*u-2*u)*vb)
         return Waypoint(*position), BodyVelocity(*velocity)
 
+    def speed_limit_at(self, elapsed_s):
+        i=max(0,min(len(self.speed_limits)-1,bisect.bisect_right(self.knots,elapsed_s)-1))
+        return self.speed_limits[i]
 
-def _limited(velocity, previous, profile, dt, wheel_rpm):
+
+def _limited(velocity, previous, profile, dt, wheel_rpm, *, speed_limit=None):
     """Project into a convex speed envelope, then slew inside that envelope."""
     vx, vy, wz = _components(velocity)
-    ratio = max(1.0, math.hypot(vx, vy) / profile.max_speed_mm_s,
+    speed_limit=profile.max_speed_mm_s if speed_limit is None else min(speed_limit,profile.max_speed_mm_s)
+    ratio = max(1.0, math.hypot(vx, vy) / speed_limit,
                 abs(wz) / profile.max_yaw_speed_deg_s)
     requested = BodyVelocity(vx/ratio, vy/ratio, wz/ratio)
     rpms = tuple(wheel_rpm(requested))
@@ -189,9 +231,9 @@ def follow_trajectory(points, profile, *, read_pose, send_velocity, wheel_rpm,
         last_tick, settled_at = started, None
         last_stamp = None
         while True:
-            now = clock()
             check()
             pose = read_pose()
+            now = clock()
             if (not _finite((pose.x_mm, pose.y_mm, pose.yaw_deg, pose.received_at,
                              *_components(pose.velocity)))
                     or not 0 <= now-pose.received_at <= profile.max_telemetry_age_s):
@@ -224,7 +266,8 @@ def follow_trajectory(points, profile, *, read_pose, send_velocity, wheel_rpm,
                 desired = BodyVelocity(math.cos(angle)*vx + math.sin(angle)*vy,
                                        -math.sin(angle)*vx + math.cos(angle)*vy,
                                        feedforward.yaw_deg_s + profile.yaw_gain_s*yaw_error)
-            command = _limited(desired, previous, profile, dt, wheel_rpm)
+            command = _limited(desired, previous, profile, dt, wheel_rpm,
+                               speed_limit=route.speed_limit_at(elapsed))
             check()
             if send_velocity(command) is not True:
                 raise RuntimeError('trajectory velocity send failed')

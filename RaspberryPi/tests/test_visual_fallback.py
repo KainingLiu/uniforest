@@ -190,32 +190,34 @@ class VisualTests(unittest.TestCase):
         replay = SearchReplay(lambda r: r.frame([block()], stamp=r.start))
         with self.assertRaises(SearchRangeExhausted): replay.run(limit=90)
 
-    def test_recovery_respects_origin_and_does_not_repeat_on_continuous_clipping(self):
+    def test_recovery_respects_local_distance_and_does_not_repeat_on_continuous_clipping(self):
         replay = SearchReplay(lambda r: r.frame(band=(100, 200)), x=30)
         with self.assertRaises(SearchRangeExhausted): replay.run(limit=90)
-        self.assertGreaterEqual(min(replay.positions), 10)
+        self.assertGreaterEqual(min(replay.positions), 30-replay.task.config.orange_edge_max_distance_mm-.001)
+        self.assertLess(min(replay.positions), 0)
         starts = sum(speed < 0 and (i == 0 or replay.commands[i-1][1] >= 0)
                      for i, (_, speed) in enumerate(replay.commands))
         self.assertEqual(starts, 1)
 
-    def test_origin_blocked_recovery_can_start_after_rightward_progress(self):
+    def test_recovery_starts_at_origin_without_first_moving_right(self):
         replay = SearchReplay(lambda r: r.frame(band=(100, 200)), x=0)
         with self.assertRaises(SearchRangeExhausted):
             replay.run(limit=90)
         first_left = next(i for i, (_, speed) in enumerate(replay.commands) if speed < 0)
-        self.assertTrue(any(speed > 0 for _, speed in replay.commands[:first_left]))
-        self.assertGreaterEqual(min(replay.positions), 0)
+        self.assertFalse(any(speed > 0 for _, speed in replay.commands[:first_left]))
+        self.assertLess(min(replay.positions), 0)
         starts = sum(speed < 0 and (i == 0 or replay.commands[i-1][1] >= 0)
                      for i, (_, speed) in enumerate(replay.commands))
         self.assertEqual(starts, 1)
 
-    def test_origin_block_does_not_consume_attempt_or_stop_rightward_search(self):
+    def test_stalled_recovery_consumes_one_attempt_then_resumes_bounded_search(self):
         replay = SearchReplay(lambda r: r.frame(band=(100, 200)), x=0)
         replay.on_sleep = lambda: setattr(replay, 'x', 0)
         with self.assertRaises(SearchRangeExhausted):
             replay.run(limit=90)
-        self.assertTrue(replay.task._orange_recovery.armed)
-        self.assertTrue(all(speed > 0 for _, speed in replay.commands[:-1]))
+        self.assertFalse(replay.task._orange_recovery.armed)
+        self.assertTrue(any(speed < 0 for _, speed in replay.commands))
+        self.assertTrue(any(speed > 0 for _, speed in replay.commands))
         self.assertAlmostEqual(replay.task._search_position_mm, 90)
 
     def test_wrong_row_is_not_acquired_during_recovery_and_camera_loss_resumes_right(self):

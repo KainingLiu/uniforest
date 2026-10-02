@@ -44,7 +44,7 @@ class ProtocolSchemaTests(unittest.TestCase):
         self.assertNotEqual(commands.ACTION_CHASSIS_READY, commands.ACTION_DONE)
 
     def test_firmware_ids_match_schema(self):
-        firmware = Path(__file__).resolve().parents[2] / 'Uniforest_A'
+        from tests.project_paths import FIRMWARE as firmware
         if not firmware.exists():
             self.skipTest('A-board source checks run on the development checkout')
         root = firmware / 'Core'

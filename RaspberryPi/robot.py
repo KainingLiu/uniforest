@@ -21,6 +21,10 @@ The official competition entry is main.py. Run this module directly for
 hardware preflight, individual actions, and the manual diagnostic console.
 """
 
+if __name__ == '__main__':
+    from utils.run_logs import run_entry
+    raise SystemExit(run_entry('robot', 'debug_main'))
+
 import sys
 import time
 import threading
@@ -107,7 +111,9 @@ class Robot:
                  quiet_heartbeat: bool = False,
                  collect_data: Optional[bool] = None,
                  dataset_dir: Optional[str] = None,
-                 pickup_full_lift_validated: bool = False):
+                 pickup_full_lift_validated: bool = False,
+                 pickup_trial_enabled: bool = False,
+                 execution_extensions: bool = False):
         if port is None:
             port = self.SERIAL_PORT
         if baud is None:
@@ -115,6 +121,7 @@ class Robot:
 
         # Transport layer
         self.transport = Transport(port, baud, debug=debug)
+        self._execution_extensions = execution_extensions or pickup_full_lift_validated or pickup_trial_enabled
         self.diagnostics = JsonlDiagnostics(diagnostics_path)
         self._quiet_heartbeat = quiet_heartbeat
 
@@ -124,7 +131,8 @@ class Robot:
         self.stepper = Stepper(self.transport)
         self.actions = Actions(self.servo, self.stepper,
                                transport=self.transport,
-                               pickup_full_lift_validated=pickup_full_lift_validated)
+                               pickup_full_lift_validated=pickup_full_lift_validated,
+                               pickup_trial_enabled=pickup_trial_enabled)
 
         # Vision subsystem (optional)
         self._vision: Optional['CubeDetector'] = None
@@ -148,6 +156,7 @@ class Robot:
         self._telem: Optional[TelemBatch] = None
         self._telem_received_at: Optional[float] = None
         self._telem_lock = threading.Lock()
+        self._route_odometry = None
         self._inspection_link_generation = 0
         self._pong_received_at = 0.0
         self._pong_event = threading.Event()
@@ -191,6 +200,12 @@ class Robot:
         for _ in range(5):
             self._pong_event.clear()
             if self.transport.ping() and self._pong_event.wait(0.7):
+                if self._execution_extensions:
+                    try:
+                        self.transport.open_execution_session()
+                    except BaseException:
+                        self.transport.disconnect()
+                        raise
                 print(f"[Robot] Connected to STM32 on {self.transport._port} "
                       f"@ {self.transport._baudrate}")
                 self.diagnostics.write('connect_ok')
@@ -206,7 +221,8 @@ class Robot:
     def start(self, telem_rate: int = 50):
         """Start telemetry streaming and vision (if enabled)."""
         self._running = True
-        time.sleep(0.1)  # let connection settle
+        if not self._execution_extensions:
+            time.sleep(0.1)  # preserve legacy connection settling
         self.transport.set_telemetry_rate(telem_rate)
         print(f"[Robot] Telemetry streaming at {telem_rate} Hz")
 
@@ -264,7 +280,13 @@ class Robot:
         started = time.monotonic()
         warned = False
         while not self._heartbeat_stop.wait(period_s):
-            sent = self.transport.ping()
+            try:
+                sent = self.transport.ping()
+            except (RuntimeError, ValueError) as exc:
+                self._running = False
+                self.transport.emergency_stop()
+                print(f'[Robot] Execution session ended: {exc}', flush=True)
+                return
             now = time.monotonic()
             with self._telem_lock:
                 pong_at = self._pong_received_at
@@ -291,6 +313,10 @@ class Robot:
             self._telem_received_at = now
             # Forward to chassis for position tracking
             self.chassis.update_telem(telem)
+            odometry = getattr(self, '_route_odometry', None)
+            if odometry is not None:
+                odometry.update(telem, now, self._inspection_link_generation,
+                                self.transport.emergency_stop_generation)
 
     def _on_ack(self, ack):
         if ack.status != 0:
@@ -312,22 +338,42 @@ class Robot:
     def inspection_link_snapshot(self):
         with self._telem_lock:
             return (self._telem, self._telem_received_at, self._pong_received_at,
-                    self._inspection_link_generation)
+                      self._inspection_link_generation)
+
+    def begin_route_odometry(self, start):
+        """Attach run-scoped odometry to every frame without opening any device."""
+        from Strategy.navigation.odometry import RouteOdometry
+        with self._telem_lock:
+            if self._route_odometry is not None:
+                raise RuntimeError('route odometry is already owned by a task')
+            odometry = RouteOdometry(start, self.chassis.lateral_distance_scale,
+                self._inspection_link_generation, self.transport.emergency_stop_generation)
+            if self._telem is not None:
+                odometry.update(self._telem, self._telem_received_at,
+                    self._inspection_link_generation, self.transport.emergency_stop_generation)
+            odometry.snapshot()
+            self._route_odometry = odometry
+            return odometry
+
+    def end_route_odometry(self, owner):
+        with self._telem_lock:
+            if self._route_odometry is owner:
+                self._route_odometry = None
 
     @property
     def cube_raw_frame(self):
         return self._vision.raw_frame if self.has_vision else None
 
-    def begin_carried_cube_inspection(self, *, allow_visual_failure=False):
+    def begin_carried_cube_inspection(self, *, allow_visual_failure=False, allow_idle=False):
         """Start phased cargo inspection; caller must finish/close its session."""
         from control.carried_cube_inspection import begin_carried_inspection
-        return begin_carried_inspection(self, allow_visual_failure=allow_visual_failure)
+        return begin_carried_inspection(self, allow_visual_failure=allow_visual_failure, allow_idle=allow_idle)
 
     def check_carried_cube_count(self, *, chassis_followup=None,
-                                allow_visual_failure=False):
+                                allow_visual_failure=False, allow_idle=False):
         from control.carried_cube_inspection import inspect_carried_cubes
         return inspect_carried_cubes(self, chassis_followup=chassis_followup,
-                                    allow_visual_failure=allow_visual_failure)
+                                    allow_visual_failure=allow_visual_failure, allow_idle=allow_idle)
 
     def hardware_preflight(self, timeout_s: float = 2.0,
                            max_telem_age_s: float = 0.3
@@ -805,7 +851,3 @@ def debug_main():
         print("\n[Robot] Interrupted")
     finally:
         robot.stop()
-
-
-if __name__ == '__main__':
-    debug_main()

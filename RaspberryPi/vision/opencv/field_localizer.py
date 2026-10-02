@@ -54,6 +54,7 @@ class FieldPose:
     fps: float = 0.0
     calibrated: bool = False
     tag_solutions: Tuple[TagSolution, ...] = field(default_factory=tuple)
+    captured_monotonic: float = 0.0
 
 
 def _wrap_angle(angle_deg: float) -> float:
@@ -352,6 +353,9 @@ class FieldLocalizer:
     def _capture_loop(self):
         while self._running and self._cap is not None:
             ok, frame = self._cap.read()
+            # Host frame acquisition time, before marker solving/filtering.
+            # Driver/exposure delay must be calibrated separately for navigation.
+            captured_monotonic = time.monotonic()
             if not ok:
                 time.sleep(0.01)
                 continue
@@ -372,7 +376,8 @@ class FieldLocalizer:
             if fused is None:
                 result = FieldPose(
                     valid=False, tag_ids=detected_ids, timestamp=now,
-                    fps=self._fps, calibrated=self._calibrated)
+                    fps=self._fps, calibrated=self._calibrated,
+                    captured_monotonic=captured_monotonic)
             else:
                 x_m, y_m, yaw_deg, camera_height, error, used = fused
                 x_m, y_m, yaw_deg = self._smooth(x_m, y_m, yaw_deg)
@@ -383,7 +388,7 @@ class FieldLocalizer:
                     tag_ids=tuple(item.tag_id for item in used),
                     timestamp=now, fps=self._fps,
                     calibrated=self._calibrated,
-                    tag_solutions=tuple(solutions))
+                    tag_solutions=tuple(solutions),captured_monotonic=captured_monotonic)
             with self._result_lock:
                 self._result = result
 

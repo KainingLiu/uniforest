@@ -9,6 +9,10 @@ from types import MappingProxyType
 
 from .settings import PROFILES
 from .execution.blind import BlindMotionProfile
+from .transition_switches import TransitionSwitches
+from .optimizations.adaptive_blind import AdaptiveBlindProfile
+
+DEFAULT_NEXT_CUBE_SHIFT_MM = 80.0
 
 
 def _number(value, label, *, positive=False):
@@ -50,6 +54,16 @@ class PickupCalibration:
     next_acquire: object = None
     last_departure: bool = False
     departure: bool = False
+    next_cube_distance_mm: float = DEFAULT_NEXT_CUBE_SHIFT_MM
+    next_adaptive: object = None
+
+    def __post_init__(self):
+        _number(self.next_cube_distance_mm,'next_cube_distance_mm',positive=True)
+        if self.next_adaptive is not None:
+            if not isinstance(self.next_adaptive, AdaptiveBlindProfile) or self.next_blind is None or self.next_acquire is None:
+                raise ValueError('adaptive preview requires blind and acquire profiles')
+            if self.next_adaptive.fallback_distance_mm > self.next_cube_distance_mm:
+                raise ValueError('adaptive fallback cannot exceed the legacy expected distance')
 
 
 @dataclass(frozen=True)
@@ -64,17 +78,32 @@ class TransitionConfig:
     firmware_id: str = ''
     pickups: object = field(default_factory=dict)
     curves: object = field(default_factory=dict)
+    alignments: object = field(default_factory=dict)
+    motion_planning_enabled: bool = False
+    trial_run: bool = False
+    switches: TransitionSwitches = field(default_factory=TransitionSwitches)
+    navigation: object = None
 
     def __post_init__(self):
+        if type(self.trial_run) is not bool:
+            raise ValueError('trial_run must be boolean')
+        if not isinstance(self.switches, TransitionSwitches):
+            raise TypeError('switches must be TransitionSwitches')
+        if type(self.motion_planning_enabled) is not bool:
+            raise ValueError('motion_planning_enabled must be boolean')
         if type(self.firmware_full_lift_validated) is not bool:
             raise ValueError('firmware capability must be boolean')
-        if self.pickups and not self.firmware_full_lift_validated:
+        if self.pickups and not (self.firmware_full_lift_validated or self.trial_run):
             raise ValueError('pickup calibration requires verified firmware capability')
         object.__setattr__(self, 'pickups', MappingProxyType(dict(self.pickups)))
         object.__setattr__(self, 'curves', MappingProxyType(dict(self.curves)))
+        object.__setattr__(self, 'alignments', MappingProxyType(dict(self.alignments)))
 
     def pickup(self, profile, method):
         return self.pickups.get(f'{profile}/{method}')
+
+    def alignment(self, profile, color):
+        return self.alignments.get(f'{profile}/{color}')
 
     @classmethod
     def load(cls, path):
@@ -83,7 +112,7 @@ class TransitionConfig:
         from .flows.factory import ROUTE_PROFILES
         from .flows.curves import CURVE_ROUTES
         document = json.loads(Path(path).read_text(encoding='utf-8'))
-        _strict(document, {'version','firmware_full_lift_validated','firmware_id','pickups','curves'}, 'transition config')
+        _strict(document, {'version','firmware_full_lift_validated','firmware_id','pickups','curves','alignments','motion_planning_enabled'}, 'transition config')
         if document.get('version') != 1:
             raise ValueError('unsupported transition configuration version')
         verified = document.get('firmware_full_lift_validated', False)
@@ -93,8 +122,8 @@ class TransitionConfig:
         if verified and (not isinstance(firmware_id,str) or not firmware_id.strip()):
             raise ValueError('verified firmware requires its deployed version identifier')
         pickups = {}
-        if not isinstance(document.get('pickups',{}),dict) or not isinstance(document.get('curves',{}),dict):
-            raise ValueError('pickups and curves must be named objects')
+        if any(not isinstance(document.get(key,{}),dict) for key in ('pickups','curves','alignments')):
+            raise ValueError('pickups, curves and alignments must be named objects')
         for key, value in document.get('pickups',{}).items():
             _strict(value, {'validated','verified_on','notes','arm_restore_s',
                             'next_cube','last_departure','departure'}, key)
@@ -105,15 +134,20 @@ class TransitionConfig:
             if profile not in PROFILES or method not in allowed or not verified:
                 raise ValueError(f'{key}: pickup calibration/firmware capability mismatch')
             restore = _number(value['arm_restore_s'], 'arm_restore_s')
-            blind = acquire = None
+            blind = acquire = adaptive = None
+            next_distance = DEFAULT_NEXT_CUBE_SHIFT_MM
             if 'next_cube' in value:
-                _strict(value['next_cube'], {'blind','acquire'}, 'next_cube')
+                _strict(value['next_cube'], {'blind','acquire','expected_distance_mm','adaptive'}, 'next_cube')
                 if method == 'grap2':
                     raise ValueError('purple pickup has no same-row next-cube transition')
                 blind = _profile(BlindMotionProfile, value['next_cube']['blind'])
                 acquire = _profile(PickupMotionProfile, value['next_cube']['acquire'])
+                next_distance = _number(value['next_cube'].get('expected_distance_mm',DEFAULT_NEXT_CUBE_SHIFT_MM),
+                                        'next_cube.expected_distance_mm',positive=True)
                 if blind.direction != 1:
                     raise ValueError('current orange recipes search toward robot right')
+                if 'adaptive' in value['next_cube']:
+                    adaptive = _profile(AdaptiveBlindProfile, value['next_cube']['adaptive'])
             for flag in ('last_departure','departure'):
                 if type(value.get(flag,False)) is not bool:
                     raise ValueError(f'{flag} must be boolean')
@@ -122,7 +156,7 @@ class TransitionConfig:
             if value.get('last_departure',False) and method == 'grap2':
                 raise ValueError('last_departure flag applies to final orange pickup')
             pickups[key] = PickupCalibration(restore, blind, acquire,
-                                            value.get('last_departure',False),value.get('departure',False))
+                                            value.get('last_departure',False),value.get('departure',False),next_distance,adaptive)
         curves = {}
         for key, value in document.get('curves',{}).items():
             _strict(value, {'validated','verified_on','notes','points','profile'}, key)
@@ -144,4 +178,19 @@ class TransitionConfig:
                               'dx_scale':1.0,'dy_scale':1.0,'dyaw_scale':1.0}:
                 raise ValueError('last curve point must use the full calibrated endpoint with no offset')
             curves[key]=CurveCalibration(tuple(points),_profile(TrajectoryProfile,value['profile']))
-        return cls(verified,firmware_id,pickups,curves)
+        alignments = {}
+        for key, value in document.get('alignments',{}).items():
+            from .optimizations.fast_alignment import FastAlignmentProfile
+            _strict(value, {'validated','verified_on','notes','profile'}, key)
+            _record(value)
+            profile, color = key.split('/')
+            allowed = ({'orange'} if profile.startswith('ground-') else
+                       {'orange','purple'} if profile.startswith('highland-') else set())
+            if profile not in PROFILES or color not in allowed:
+                raise ValueError(f'{key}: no pickup alignment calibration contract')
+            alignments[key] = _profile(FastAlignmentProfile,value['profile'])
+        for key, pickup in pickups.items():
+            if pickup.next_adaptive is not None and f'{key.split("/")[0]}/orange' not in alignments:
+                raise ValueError(f'{key}: adaptive preview requires fast orange alignment')
+        return cls(verified,firmware_id,pickups,curves,alignments,
+                   document.get('motion_planning_enabled',False))

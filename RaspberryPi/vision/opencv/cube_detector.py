@@ -66,6 +66,8 @@ class BlockInfo:
     confidence: float = 0.0
     height_width_ratio: float = 0.0
     quad: Optional[np.ndarray] = field(default=None, repr=False)
+    # This is row evidence, not an individual position for the next cube.
+    continuous_row: bool = False
 
 
 @dataclass
@@ -87,6 +89,9 @@ class VisionResult:
     # existing wall-clock processing timestamp. It is not an exposure timestamp.
     captured_monotonic: float = 0.0
     pose_epoch: int = 0
+    # Complete orange row previews; never used as direct grasp targets.
+    orange_lookahead: List[BlockInfo] = field(default_factory=list)
+    orange_lookahead_complete: bool = False
 
 
 # ============================================================
@@ -557,6 +562,8 @@ def detect_all_blocks(frame, state, color_profiles=None,
     gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
 
     all_blocks = []
+    state["orange_lookahead"] = []
+    state["orange_lookahead_complete"] = False
     state["orange_diagnostics"] = {}
     if color_profiles is None:
         color_profiles = color_profiles_for("default")
@@ -581,16 +588,23 @@ def detect_all_blocks(frame, state, color_profiles=None,
             if roi_top_px:
                 orange_frame[:roi_top_px] = 0
             cubes, info = detector.detect(orange_frame)
-            state["orange_diagnostics"] = {k: v for k, v in info.items() if k != "mask"}
+            state["orange_diagnostics"] = {k: v for k, v in info.items()
+                                           if k not in ("mask", "lookahead_cubes")}
+            state["orange_lookahead_complete"] = bool(info.get("lookahead_complete", False))
+            for cube in info.get("lookahead_cubes", ()):
+                x, y, z = np.asarray(cube.cam_xyz) * (10.0, -10.0, 10.0)
+                x += float(getattr(orange_cfg, "X_OFFSET_MM", 0.0))
+                if np.isfinite([x, y, z]).all() and 20 < z < 5000:
+                    state["orange_lookahead"].append(BlockInfo(
+                        color_name="Orange", draw_color=profile["draw_color"],
+                        x=float(x), y=float(y), z=float(z), confidence=80.0,
+                        quad=np.asarray(cube.top_quad, np.float32) / info["scale"]))
             for cube in cubes:
                 if not cube.position_valid or cube.clipped:
                     continue
                 # Demo camera Y points down; competition Y points up. cm -> mm.
                 x, y, z = np.asarray(cube.cam_xyz) * (10.0, -10.0, 10.0)
                 x += float(getattr(orange_cfg, "X_OFFSET_MM", 0.0))
-                # Field calibration: orange pickup center is 5 mm to the
-                # right of the camera-frame reference for both task profiles.
-                x += 5.0
                 if not np.isfinite([x, y, z]).all() or not 20 < z < 5000:
                     continue
                 quad = np.asarray(cube.top_quad, np.float32) / info["scale"]
@@ -598,7 +612,8 @@ def detect_all_blocks(frame, state, color_profiles=None,
                 all_blocks.append(BlockInfo(
                     color_name="Orange", draw_color=profile["draw_color"],
                     x=float(x), y=float(y), z=float(z), confidence=80.0,
-                    height_width_ratio=h_px / max(w_px, 1e-6), quad=quad.copy()))
+                    height_width_ratio=h_px / max(w_px, 1e-6), quad=quad.copy(),
+                    continuous_row=cube.continuous_row))
             continue
         mask = cv2.inRange(hsv, profile["hsv_low"], profile["hsv_high"])
         if roi_top_px:
@@ -626,7 +641,7 @@ def detect_all_blocks(frame, state, color_profiles=None,
             all_blocks.append(BlockInfo(
                 color_name=profile["name"],
                 draw_color=profile["draw_color"],
-                x=x_mm, y=y_mm, z=z_mm, confidence=conf,
+                x=float(x_mm), y=float(y_mm), z=float(z_mm), confidence=float(conf),
                 height_width_ratio=h_px / max(w_px, 1e-6),
                 quad=quad.copy(),
             ))
@@ -1101,6 +1116,8 @@ class CubeDetector:
                     "left_clipped_y_range"),
                 captured_monotonic=captured_monotonic,
                 pose_epoch=pose_epoch,
+                orange_lookahead=state.get("orange_lookahead", []),
+                orange_lookahead_complete=state.get("orange_lookahead_complete", False),
             )
 
             # Publish under the profile lock so a frame computed with the old

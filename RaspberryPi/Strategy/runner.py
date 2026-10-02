@@ -32,9 +32,13 @@ def resolve_selection(selection='PlanA'):
     return PLANS[name]
 
 
-def run_plan(robot, plan, *, context=None, heading_zero_deg=None, transition_config=None):
+def run_plan(robot, plan, *, context=None, heading_zero_deg=None, transition_config=None, motion_planning=None):
+    from protocol.transport import Transport
+    if isinstance(robot.transport, Transport) and not robot.transport.execution_active:
+        raise RuntimeError('extended execution requires a negotiated additive firmware session')
     if (transition_config is not None and transition_config.pickups and
-            not getattr(robot.actions,'pickup_full_lift_validated',False)):
+            not (getattr(robot.actions,'pickup_full_lift_validated',False) or
+                 transition_config.trial_run and getattr(robot.actions,'pickup_trial_enabled',False))):
         raise ValueError('pickup transitions require verified full-lift firmware on this Robot')
     if context is not None and context.robot is not robot:
         raise ValueError('execution context belongs to a different robot')
@@ -43,6 +47,9 @@ def run_plan(robot, plan, *, context=None, heading_zero_deg=None, transition_con
     known_zero = context.heading_zero_deg if context is not None else heading_zero_deg
     validate_plan(plan, heading_zero_deg=known_zero,
                   initial_anchor=context.anchor if context is not None else None)
+    if transition_config is not None:
+        from .transition_switches import validate_transition_selection
+        validate_transition_selection(transition_config, plan)
     if context is None:
         context = ExecutionContext(robot, heading_zero_deg=known_zero, anchor=plan.entry_anchor)
     if not robot.strategy_lock.acquire(blocking=False):
@@ -56,10 +63,16 @@ def run_plan(robot, plan, *, context=None, heading_zero_deg=None, transition_con
         context.check_active(require_telemetry=False)
         env = (ActionEnvironment(robot,context) if transition_config is None else
                ActionEnvironment(robot,context,transition_config=transition_config))
+        if motion_planning is not None and env.transition_config.motion_planning_enabled:
+            env.motion_planning=motion_planning
         # Only wait for telemetry/cameras; this never starts a mission routine.
         env.control(plan.steps[0].profile)._wait_ready()
         if context.heading_zero_deg is None:
             context.heading_zero_deg = ((robot.telem.yaw_deg + plan.entry_heading_deg + 180) % 360) - 180
+        if env.transition_config.motion_planning_enabled:
+            start_planning=getattr(env.motion_planning,'start',None)
+            if start_planning is not None:
+                start_planning(env,plan)
         if report:
             report(flow_id=uuid.uuid4().hex,task=plan.name,phase='STARTUP')
         def trace(event):
@@ -82,15 +95,20 @@ def run_plan(robot, plan, *, context=None, heading_zero_deg=None, transition_con
         raise
     finally:
         if env is not None:
-            env.abort()
+            try:
+                env.abort()
+            finally:
+                close_planning=getattr(env.motion_planning,'close',None)
+                if close_planning is not None:
+                    close_planning(env)
         robot.actions.set_cancel_event(previous_cancel)
         context.close()
         robot.strategy_lock.release()
 
 
-def run_selection(robot, selection='PlanA', *, context=None, heading_zero_deg=None, transition_config=None):
+def run_selection(robot, selection='PlanA', *, context=None, heading_zero_deg=None, transition_config=None, motion_planning=None):
     plan=resolve_selection(selection)
     if selection in LEGACY_SELECTIONS:
         print(f'[Strategy] Legacy selector {selection!r} -> {plan.name}')
     return run_plan(robot,plan,context=context,heading_zero_deg=heading_zero_deg,
-                    transition_config=transition_config)
+                    transition_config=transition_config,motion_planning=motion_planning)

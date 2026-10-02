@@ -77,6 +77,7 @@ class Transport:
         self.emergency_stop_generation = 0
         self.action_status = None
         self._action_lock = threading.Lock()
+        self._execution = None
 
     # ======================== Connection ======================================
 
@@ -102,6 +103,10 @@ class Transport:
 
     def disconnect(self):
         """Stop the receive thread and close the port."""
+        if self._execution is not None:
+            if self._execution.active:
+                self.emergency_stop()
+            self._execution.fail('transport disconnected; explicit new connection required')
         self._running = False
         if self._thread and self._thread.is_alive():
             self._thread.join(timeout=1.0)
@@ -128,7 +133,34 @@ class Transport:
 
     # ======================== Send ============================================
 
+    @property
+    def execution_active(self):
+        return self._execution is not None and self._execution.active and not self._execution.failed
+
+    def open_execution_session(self):
+        from .extensions import ExecutionLink
+        if self._execution is not None:
+            raise RuntimeError('execution session cannot be reopened on this transport')
+        self._execution = ExecutionLink(self)
+        self._execution.open()
+
     def send(self, cmd: int, data: bytes = b'') -> bool:
+        if self._execution is None:
+            return self._send_raw(cmd,data)
+        with self._tx_lock:
+            if cmd == CMD_EMERGENCY_STOP:
+                from .extensions import CMD_EXEC_CLOSE
+                self._execution.fail('execution stopped; explicit new run required')
+                if not self._execution.session:
+                    return False
+                return self._send_raw(CMD_EXEC_CLOSE,struct.pack('>I',self._execution.session))
+            command,payload = self._execution.encode(cmd,data,(self._seq+1)&255)
+            sent = self._send_raw(command,payload)
+            if not sent:
+                self._execution.fail('execution command send failed')
+            return sent
+
+    def _send_raw(self, cmd: int, data: bytes = b'') -> bool:
         """
         Send a protocol frame to the STM32.
 
@@ -153,7 +185,9 @@ class Transport:
             frame = bytes([PROTO_SYNC]) + body + struct.pack('<H', crc)
 
             try:
-                self._ser.write(frame)
+                written = self._ser.write(frame)
+                if self._execution is not None and written != len(frame):
+                    return False
                 self.tx_frames += 1
                 return True
             except serial.SerialTimeoutException:
@@ -253,6 +287,17 @@ class Transport:
 
     def _dispatch(self, cmd: int, seq: int, data: bytes):
         """Route a received frame to the appropriate callback."""
+        from .extensions import TELEM_EXEC_ACTION
+        if self._execution is not None:
+            if self._execution.receive(cmd,seq,data):
+                return
+            if cmd == TELEM_EXEC_ACTION:
+                data = self._execution.action_payload(data)
+                if data is None:
+                    return
+                cmd = TELEM_ACTION
+            elif cmd == TELEM_ACTION:
+                return  # legacy status cannot confirm an enhanced milestone
         if cmd == TELEM_ACTION:
             try:
                 status = ActionStatus.unpack(data)

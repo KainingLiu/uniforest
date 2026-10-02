@@ -11,10 +11,12 @@ import tempfile
 import unittest
 
 
-ROOT = Path(__file__).resolve().parents[2]
+from tests.project_paths import PROJECT as ROOT, FIRMWARE
 FIXTURES = Path(__file__).resolve().parent / "firmware"
 
 
+@unittest.skipUnless((FIRMWARE).is_dir(),
+                     'A-board source checks run on the development checkout')
 class FirmwareExecutionTests(unittest.TestCase):
     def test_compiled_execution_state_machines(self):
         compiler = shutil.which("cc") or shutil.which("gcc") or shutil.which("clang")
@@ -37,7 +39,7 @@ class FirmwareExecutionTests(unittest.TestCase):
             # All generated files and automatic cleanup remain within this workspace.
             build.relative_to(work.resolve())
             executable = build / ("execution_harness.exe" if os.name == "nt" else "execution_harness")
-            includes = [FIXTURES, ROOT / "Uniforest_A/Core/Src", ROOT / "Uniforest_A/Core/Inc"]
+            includes = [FIXTURES, FIRMWARE / "Core/Src", FIRMWARE / "Core/Inc"]
             source = FIXTURES / "execution_harness.c"
             is_msvc = Path(compiler).stem.lower() == "cl"
             if is_msvc:

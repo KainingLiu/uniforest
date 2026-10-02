@@ -1,0 +1,10 @@
+{
+  "revision": "cefa25a",
+  "files": {
+    "Core/Src/actions.c": "844c21f3f21e0e186efc2da74f6c8a4f77b62f5477bb308c15828483abc93a1a",
+    "Core/Inc/actions.h": "7f9a99b7f976398647a6cc3d52d96484cffd4ca389c7abba10d66224811cdb90",
+    "Core/Src/stepper.c": "c8c29a63e1b5dbf649828ac8daeefbed70078af8eccf1256f6dc14c2272bb3d8",
+    "Core/Inc/stepper.h": "52254205692242420d3fb6e7b7c8cb59fb221f4a04f0786d8c3e92cf8987823c",
+    "Core/Src/motor3508.c": "f957e5a1d6abb1f6b17d7382b6286637fe3eb3692fa92216be38107a58708571"
+  }
+}

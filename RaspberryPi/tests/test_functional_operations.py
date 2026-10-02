@@ -150,8 +150,9 @@ class FunctionalOperationTests(unittest.TestCase):
             with self.subTest(count=count):
                 env, c = operation_fixture()
                 ops.begin_collection(env, spec('begin_collection', color='orange'))
-                def inspection(*, chassis_followup, allow_visual_failure):
+                def inspection(*, chassis_followup, allow_visual_failure, allow_idle):
                     self.assertTrue(allow_visual_failure)
+                    self.assertTrue(allow_idle)
                     chassis_followup()
                     return count
                 env.robot.check_carried_cube_count.side_effect = inspection

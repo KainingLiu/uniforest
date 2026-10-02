@@ -13,12 +13,19 @@ Action 有 enter/body/exit/precondition/context。plans 只输出 ActionSpec，f
 compile_flow 固定候选衔接，运行到边上才按上下文匹配和优先级选择。
 不自动求解最优轨迹，也不自动推导机构净空；每种专门衔接要单独实现、验证。
 目前登记了抓取→下一块、抓紫→转场、最后一抓→退离、检查→运输及 Build→返程。
-新增抓取衔接需要 transition_config 中的现场记录和配套固件声明；默认未启用。
+五类跨动作衔接默认全部关闭；新增抓取衔接还需要 transition_config 中的现场记录和配套固件声明。
 字段和逐项验证方法见 [衔接配置](../TRANSITIONS.md)。
+
+当前比赛入口在 factory 内部构造 `TransitionRegistry`，没有外部注册表注入参数。
+`--enable-transition` / `--disable-transition` 按类型或 `类型@轮次` 选择五类衔接，
+`--enable-transitions` 整组开启、`--disable-transitions` 整组关闭；具体选择优先，未指定时全部关闭。
+开关通过匹配条件生效，关闭时保留退出完成、停车、进入的路径；动作内部的抓取短顶墙与固件并行保持。
+路线规划与快速对准各有独立开关，组合方式见[运行 README](../../README.md#运行方式与优化插拔)。
 
 ## 抓取与检查的段替换
 
-抓取 enter 启动持锁会话并隔离相机；body 维持原顶墙动作并等完整抬升；
+抓取 enter 启动持锁会话并隔离相机；body 维持原顶墙动作，已验证完整抬升能力时等待该里程碑，
+未验证时等待 DONE；
 exit 等机构 DONE、复位等待和会话关闭。T 可以从 body 结束时提前接管底盘。
 
 - 抓取→下一块：有限右盲移；复位后收到同姿态代次的新帧，将编码器实测速度交给
@@ -53,8 +60,9 @@ control.trajectory 用局部三次 Hermite 曲线同时跟踪位置与连续航�
 control/actions.py 的 begin() 返回持锁会话，具有 check、wait_chassis_ready、wait_done、close、abort。
 移动期间调用同一会话检查；异常清理保留原故障，不允许迟到回调恢复运动。
 
-固件源码中 Grap1/2/3 在完整抬升段结束后发布状态6，Build 在第三块释放后发布。
-抓取上位机 pickup_full_lift_validated 默认 False，兼容旧固件时等待 DONE；
+增量会话的增强动作表中 Grap1/2/3 在完整抬升段结束后发布状态6，Build 在第三块释放后发布。
+旧命令动作表仍保留 Grap1/3 无提前通知、Grap2 上升 5 cm 通知的语义。
+抓取上位机 pickup_full_lift_validated 默认 False，此时等待 DONE；当前比赛入口仍要求增量固件会话。
 验证匹配固件和实际净空后才能提前移动。脉冲完成仍不能证明没有失步或吸取成功。
 
 相机 begin/end 姿态接口隔离缓存、在途结果与不同姿态代次的新帧。
@@ -77,6 +85,7 @@ ExecutionContext 仅保存一次执行内的航向、锚点、动作和通信连
 世界模型与持久化未实现，急停后关闭当前执行，不能自动续跑。
 后续按已确定的规则保存建筑、材料观察与归还位置，再从启动区重新规划。
 
-本轮衔接与 Task 移除协议未变，也未新增下位机修改。前一阶段更新的状态6语义和目标轮速清除仍需配套验证。
+当前采用增量通信会话：旧命令及状态 6 保持 main 语义，完整抬升和目标清除只在新会话生效。
+接口、固件升级与上位机回退步骤见 [单固件兼容说明](../../protocol/ADDITIVE_COMPATIBILITY.md)。
 Python 导入、整局路线回放、控制器测试与固件主机测试均属无硬件验证；
 实机前还需 ARM Debug 构建、CLion 烧录、串口/相机/标定检查及小范围动作。
