@@ -1,0 +1,165 @@
+<div id="uniforest-motion-lab">
+  <h2>Uniforest · 场地与曲线仿真</h2>
+  <div class="viz-controls">
+    <label class="form-label" for="uf-case">路线场景<select id="uf-case" class="form-select" aria-label="路线场景"></select></label>
+    <label class="form-label" for="uf-layer">运动方式<select id="uf-layer" class="form-select" aria-label="运动方式"><option value="rounded_corners">沿原路平滑过弯</option><option value="endpoint_shortcut">终点捷径</option><option value="stop_turn">逐段停走基准</option></select></label>
+  </div>
+  <div class="viz-row">
+    <label class="form-label" for="uf-view">视图<select id="uf-view" class="form-select" aria-label="视图"><option value="field">场地立体图</option><option value="top">场地俯视图</option><option value="local">局部轨迹</option><option value="robot">车辆 CAD 外形</option></select></label>
+    <label class="form-label" for="uf-speed">播放速度<select id="uf-speed" class="form-select" aria-label="播放速度"><option value="0.5">0.5×</option><option value="1">1×</option><option value="2" selected>2×</option><option value="4">4×</option><option value="8">8×</option></select></label>
+    <button type="button" id="uf-play" class="btn btn-primary">播放</button>
+    <button type="button" id="uf-next" class="btn">下一场景</button>
+    <button type="button" id="uf-all" class="btn">全部轮播</button>
+  </div>
+  <div class="uf-caption text-small" id="uf-basis"></div>
+  <canvas id="uf-canvas" role="img" aria-label="场地、机器人和三种路线的同步运动对比">场地与机器人轨迹仿真。可使用下方进度条查看各时刻。</canvas>
+  <div class="viz-row tabular-nums"><span id="uf-clock"></span><span id="uf-velocity"></span><span id="uf-yaw"></span></div>
+  <label class="form-label">时间进度<input id="uf-time" type="range" class="form-range" min="0" max="1000" value="0"></label>
+  <div class="table-responsive"><table class="table table-sm tabular-nums"><thead><tr><th>运动方式</th><th>仿真耗时</th><th>行程</th><th>控制结果 / 场地包络</th></tr></thead><tbody id="uf-metrics"></tbody></table></div>
+  <div id="uf-status" class="text-small" aria-live="polite"></div>
+  <details><summary>模型来源与验证范围</summary><dl id="uf-provenance" class="text-small"></dl></details>
+</div>
+<style>
+#uniforest-motion-lab {width:100%;}
+#uniforest-motion-lab .uf-caption {margin-top:12px;margin-bottom:6px;color:var(--muted-foreground);}
+#uniforest-motion-lab canvas {display:block;width:100%;height:490px;touch-action:pan-y;}
+#uniforest-motion-lab dl {display:grid;grid-template-columns:auto 1fr;gap:6px 16px;}
+#uniforest-motion-lab dd {margin:0;overflow-wrap:anywhere;}
+#uniforest-motion-lab summary {margin-top:12px;}
+#uniforest-motion-lab .uf-swatch {display:inline-block;width:16px;height:3px;vertical-align:middle;margin-right:6px;}
+@media(max-width:480px){#uniforest-motion-lab canvas{height:420px;}#uniforest-motion-lab dl{grid-template-columns:1fr;gap:4px;}}
+</style>
+<script type="application/json" id="uf-data">__SIMULATION_DATA__</script>
+<script>
+(() => {
+  'use strict';
+  const root = document.getElementById('uniforest-motion-lab');
+  const data = JSON.parse(document.getElementById('uf-data').textContent);
+  const q = id => root.querySelector('#uf-'+id);
+  const canvas=q('canvas'),ctx=canvas.getContext('2d');
+  const colorProbe=document.createElement('span');colorProbe.hidden=true;root.appendChild(colorProbe);
+  const cases=data.cases, colors={}, ids=['stop_turn','rounded_corners','endpoint_shortcut'];
+  const labels={stop_turn:'逐段停走',rounded_corners:'平滑原路',endpoint_shortcut:'终点捷径'};
+  let index=Math.max(0,cases.findIndex(c=>c.id==='building-1/build_return'));
+  let time=0,playing=false,playlist=false,last=0,frame=0,width=736,height=490;
+  const rad=d=>d*Math.PI/180;
+  const fixed=(n,d=1)=>Number.isFinite(n)?n.toFixed(d):'—';
+  const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const layers=()=>cases[index].layers;
+  const active=()=>layers().find(l=>l.id===q('layer').value)||layers()[0];
+  const duration=l=>l.points.length?l.points[l.points.length-1].t:0;
+  const maxTime=()=>Math.max(.1,...layers().map(duration));
+  function interpolate(layer,t){
+    const points=layer.points;
+    if(!points.length)return{x:0,y:0,yaw:0,vx:0,vy:0,wz:0,t:0};
+    if(t<=points[0].t)return points[0];
+    if(t>=points[points.length-1].t)return points[points.length-1];
+    let lo=0,hi=points.length-1;
+    while(hi-lo>1){const mid=(lo+hi)>>1;if(points[mid].t<t)lo=mid;else hi=mid;}
+    const a=points[lo],b=points[hi],u=(t-a.t)/(b.t-a.t),out={};
+    ['x','y','yaw','vx','vy','wz','t'].forEach(k=>out[k]=(a[k]||0)+((b[k]||0)-(a[k]||0))*u);
+    return out;
+  }
+  function world(p){const s=cases[index].start_pose,a=rad(s.yaw_deg);return{x:s.x_mm+Math.cos(a)*p.x-Math.sin(a)*p.y,y:s.y_mm+Math.sin(a)*p.x+Math.cos(a)*p.y,yaw:s.yaw_deg+p.yaw};}
+  function palette(){const c=k=>{colorProbe.style.color='var('+k+')';return getComputedStyle(colorProbe).color;};Object.assign(colors,{fg:c('--foreground'),muted:c('--muted-foreground'),border:c('--border'),floor:c('--muted'),bg:c('--background'),red:c('--destructive'),stop_turn:c('--viz-series-3'),rounded_corners:c('--viz-series-1'),endpoint_shortcut:c('--viz-series-2')});}
+  function surfaceHeight(s,x,y){if(s.kind!=='ramp'||!s.low_edge||!s.high_edge)return s.height_mm||0;const mid=edge=>({x:(edge[0][0]+edge[1][0])/2,y:(edge[0][1]+edge[1][1])/2}),a=mid(s.low_edge),b=mid(s.high_edge),dx=b.x-a.x,dy=b.y-a.y;return Math.max(0,Math.min(1,((x-a.x)*dx+(y-a.y)*dy)/(dx*dx+dy*dy)))*s.height_mm;}
+  function elevation(x,y){for(const s of data.field.shapes){if(!['platform','ramp'].includes(s.kind))continue;const xs=s.polygon.map(p=>p[0]),ys=s.polygon.map(p=>p[1]);if(x>=Math.min(...xs)&&x<=Math.max(...xs)&&y>=Math.min(...ys)&&y<=Math.max(...ys))return surfaceHeight(s,x,y);}return 0;}
+  function rawProject(x,y,z,view){return view==='top'||view==='local'?{x,y}:{x:.84*x-.60*y,y:.37*x+.43*y-.88*z};}
+  let project=()=>({x:0,y:0});
+  function projection(view){
+    let bounds=[];
+    if(view==='robot'){
+      data.robot.boxes.forEach(b=>{for(const dx of[-.5,.5])for(const dy of[-.5,.5])for(const dz of[-.5,.5])bounds.push(rawProject(b.x+dx*b.length,b.y+dy*b.width,b.z+dz*b.height,'field'));});
+    }else if(view==='local'){
+      for(const l of layers())for(const p of l.points)bounds.push({x:p.x,y:p.y});
+      if(!bounds.length)bounds=[{x:0,y:0}];
+      const span=550;bounds=bounds.flatMap(p=>[{x:p.x-span,y:p.y-span},{x:p.x+span,y:p.y+span}]);
+    }else{for(const x of[0,data.field.width_mm])for(const y of[0,data.field.height_mm])for(const z of[0,600])bounds.push(rawProject(x,y,z,view));}
+    const xs=bounds.map(p=>p.x),ys=bounds.map(p=>p.y),lowX=Math.min(...xs),hiX=Math.max(...xs),lowY=Math.min(...ys),hiY=Math.max(...ys);
+    const scale=Math.min((width-48)/Math.max(hiX-lowX,1),(height-60)/Math.max(hiY-lowY,1));
+    const ox=(width-(hiX-lowX)*scale)/2-lowX*scale,oy=(height-(hiY-lowY)*scale)/2-lowY*scale;
+    project=(x,y,z=0)=>{const p=rawProject(x,y,z,view==='robot'?'field':view);return{x:ox+p.x*scale,y:oy+p.y*scale};};
+    return scale;
+  }
+  function polygon(points,fill,stroke,alpha=1,lineWidth=1){if(!points.length)return;ctx.save();ctx.globalAlpha=alpha;ctx.beginPath();ctx.moveTo(points[0].x,points[0].y);points.slice(1).forEach(p=>ctx.lineTo(p.x,p.y));ctx.closePath();if(fill){ctx.fillStyle=fill;ctx.fill();}if(stroke){ctx.strokeStyle=stroke;ctx.lineWidth=lineWidth;ctx.stroke();}ctx.restore();}
+  function text(s,x,y,align='left',color=colors.fg){ctx.fillStyle=color;ctx.font='12px system-ui, sans-serif';ctx.textAlign=align;ctx.textBaseline='middle';ctx.fillText(s,x,y);}
+  function path(points,color,dash=[],alpha=1){if(points.length<2)return;ctx.save();ctx.strokeStyle=color;ctx.lineWidth=2;ctx.globalAlpha=alpha;ctx.setLineDash(dash);ctx.beginPath();points.forEach((p,i)=>{if(i)ctx.lineTo(p.x,p.y);else ctx.moveTo(p.x,p.y);});ctx.stroke();ctx.restore();}
+  function field(view){
+    const f=data.field;
+    polygon([[0,0],[f.width_mm,0],[f.width_mm,f.height_mm],[0,f.height_mm]].map(p=>project(...p)),colors.floor,colors.border,.38);
+    for(let x=0;x<=f.width_mm;x+=1000)path([project(x,0),project(x,f.height_mm)],colors.border,[],.45);
+    for(let y=0;y<=f.height_mm;y+=1000)path([project(0,y),project(f.width_mm,y)],colors.border,[],.45);
+    const shapes=f.shapes.slice().sort((a,b)=>Math.max(...a.polygon.map(p=>p[0]+p[1]))-Math.max(...b.polygon.map(p=>p[0]+p[1])));
+    const placedLabels=[];
+    for(const s of shapes){
+      const h=s.height_mm||0,fill=s.collision?colors.fg:colors.floor,base=s.polygon.map(p=>project(...p,0)),top=s.polygon.map(p=>project(...p,surfaceHeight(s,...p)));
+      if(view!=='top'&&h>0){for(let i=0;i<top.length;i++){const j=(i+1)%top.length;polygon([base[i],base[j],top[j],top[i]],fill,colors.border,s.collision?.22:.3);}}
+      polygon(top,fill,colors.border,s.collision?.24:.58);
+      if(s.label&&s.show_label!==false){const cx=s.polygon.reduce((a,p)=>a+p[0],0)/s.polygon.length,cy=s.polygon.reduce((a,p)=>a+p[1],0)/s.polygon.length,p=project(cx,cy,surfaceHeight(s,cx,cy));if(width>480||['building','start'].includes(s.kind)){const length=s.label.length*12;if(!placedLabels.some(b=>Math.abs(b.x-p.x)<(length+b.length)/2+4&&Math.abs(b.y-p.y)<18)){text(s.label,p.x,p.y,'center');placedLabels.push({...p,length});}}}
+    }
+    text('场地 '+fixed(f.width_mm/1000,1)+' × '+fixed(f.height_mm/1000,1)+' m',12,height-15);
+  }
+  function boxFaces(box,pose,scale,view){
+    const angle=rad(pose.yaw),co=Math.cos(angle),si=Math.sin(angle);
+    const ground=view==='robot'?0:elevation(pose.x,pose.y);
+    const v=[];for(const z of[-.5,.5])for(const xy of[[-.5,-.5],[.5,-.5],[.5,.5],[-.5,.5]]){const x=box.x+xy[0]*box.length,y=box.y+xy[1]*box.width;v.push({x:pose.x+co*x-si*y,y:pose.y+si*x+co*y,z:ground+box.z+z*box.height});}
+    return [[0,1,5,4],[1,2,6,5],[2,3,7,6],[3,0,4,7],[4,5,6,7]].map(indices=>({points:indices.map(i=>project(v[i].x,v[i].y,v[i].z)),depth:indices.reduce((n,i)=>n+v[i].x+v[i].y+v[i].z*.02,0)/4,kind:box.kind}));
+  }
+  function robot(pose,color,detailed,view){
+    const a=rad(pose.yaw),r=data.robot,co=Math.cos(a),si=Math.sin(a);
+    const ground=view==='robot'||view==='local'?0:elevation(pose.x,pose.y);
+    const transform=(x,y)=>project(pose.x+co*x-si*y,pose.y+si*x+co*y,ground+10);
+    const envelope=[[-r.rear_extent_mm,-r.width_mm/2],[r.front_extent_mm,-r.width_mm/2],[r.front_extent_mm,r.width_mm/2],[-r.rear_extent_mm,r.width_mm/2]].map(p=>transform(...p));
+    if(detailed&&view!=='top'&&view!=='local'){
+      const faces=r.boxes.flatMap(b=>boxFaces(b,pose,1,view)).sort((a,b)=>a.depth-b.depth);
+      for(const face of faces)polygon(face.points,face.kind==='wheel'?colors.fg:color,colors.border,face.kind==='wheel'?.7:.56,.5);
+    }else polygon(envelope,color,color,detailed?.30:.10,1.5);
+    path([...envelope,envelope[0]],color,detailed?[]:[4,4],.85);
+    const head=transform(r.front_extent_mm,0),center=transform(0,0);path([center,head],color,[],1);
+    ctx.beginPath();ctx.arc(head.x,head.y,3,0,Math.PI*2);ctx.fillStyle=color;ctx.fill();
+  }
+  function draw(){
+    palette();const view=q('view').value;projection(view);ctx.clearRect(0,0,width,height);
+    if(view==='robot'){
+      robot({x:0,y:0,yaw:0},colors.rounded_corners,true,view);
+      text('CAD 外包 '+fixed(data.robot.length_mm,0)+' × '+fixed(data.robot.width_mm,0)+' × '+fixed(data.robot.height_mm,0)+' mm',12,height-16);
+    }else{
+      if(view!=='local')field(view);
+      else{text('局部坐标 · x 向前 / y 向右 · mm',12,height-16);}
+      for(const l of layers()){
+        const points=l.points.map(p=>view==='local'?p:world(p));
+        path(points.map(p=>project(p.x,p.y,view==='local'?12:elevation(p.x,p.y)+12)),colors[l.id],l.id==='stop_turn'?[6,4]:[],l.id===active().id?1:.5);
+        const p=interpolate(l,time),pose=view==='local'?p:world(p);
+        robot(pose,colors[l.id],l.id===active().id,view);
+      }
+      const assessment=active().assessment;
+      if(view!=='local'&&assessment){for(const hit of (assessment.collisions||[]).slice(0,12)){const t=hit.t??hit.time_s??0,p=world(interpolate(active(),t)),v=project(p.x,p.y,25);ctx.strokeStyle=colors.red;ctx.lineWidth=2;ctx.beginPath();ctx.moveTo(v.x-5,v.y-5);ctx.lineTo(v.x+5,v.y+5);ctx.moveTo(v.x-5,v.y+5);ctx.lineTo(v.x+5,v.y-5);ctx.stroke();}}
+    }
+    const p=interpolate(active(),time);q('clock').textContent=fixed(time)+' / '+fixed(maxTime())+' s';q('velocity').textContent='车速 '+fixed(Math.hypot(p.vx||0,p.vy||0),0)+' mm/s';q('yaw').textContent='相对朝向 '+fixed(p.yaw,0)+'°';q('time').value=String(Math.round(time/maxTime()*1000));
+  }
+  function update(){
+    const c=cases[index];q('case').value=String(index);
+    q('basis').textContent=q('view').value==='robot'?'计划书网站 CAD · 零件包围盒简化 · 当前吸盘机构尺寸待核对':q('view').value==='local'?'生产曲线控制器 · 虚拟麦轮响应 · 路线末端停车':'场地来自规则/CAD · 每条路线独立演示摆位 · 未建立比赛全局定位标定';
+    q('metrics').innerHTML=layers().map(l=>{const a=l.assessment||{},hits=a.collision_count??(a.collisions||[]).length;return '<tr><td><span class="uf-swatch" style="background:var('+({stop_turn:'--viz-series-3',rounded_corners:'--viz-series-1',endpoint_shortcut:'--viz-series-2'}[l.id])+')"></span>'+labels[l.id]+'</td><td>'+fixed(l.metrics.elapsed_s)+' s</td><td>'+fixed(l.metrics.path_length_mm/1000,2)+' m</td><td>'+esc(l.status==='completed'?'完成':l.status)+' / '+(hits?'有干涉':'未检出干涉')+'</td></tr>';}).join('');
+    q('status').textContent=c.title+' · '+(c.plans||[]).join(' / ')+' · '+(active().error||c.note||'靠墙与视觉阶段保留；此处仅比较移动段。');
+    const s=c.start_pose;
+    q('provenance').innerHTML='<dt>覆盖</dt><dd>'+data.meta.route_count+' 类路线 / '+cases.length+' 个配置场景 / '+data.meta.run_count+' 次仿真</dd><dt>车辆参考</dt><dd>'+fixed(data.robot.length_mm,1)+' × '+fixed(data.robot.width_mm,1)+' × '+fixed(data.robot.height_mm,1)+' mm；网站夹爪 CAD，非吸盘实测。</dd><dt>场地摆位</dt><dd>起点 '+fixed(s.x_mm,0)+', '+fixed(s.y_mm,0)+' mm，朝向 '+fixed(s.yaw_deg,0)+'°；演示假设。</dd><dt>仿真范围</dt><dd>真实曲线跟踪代码 + 一阶轮速响应；不含摩擦、坡道重力、打滑、吸盘负载与视觉。</dd><dt>碰撞检查</dt><dd>平面车体外包和障碍多边形扫掠；与实机通行能力不同。红叉标记假设摆位下的干涉。</dd><dt>对比基准</dt><dd>原路线几何按段停车，使用相同模拟动力学；耗时为仿真估计。</dd>';
+    resize();
+  }
+  function save(){try{const state={case_id:cases[index].id,variant:q('layer').value,view:q('view').value};window.openai?.setWidgetState({modelContent:state,privateContent:{time,speed:q('speed').value}})?.catch(()=>{});}catch(_){}}
+  function restore(saved){if(!saved)return;const m=saved.modelContent||{},p=saved.privateContent||{};const i=cases.findIndex(c=>c.id===m.case_id);if(i>=0)index=i;if(ids.includes(m.variant))q('layer').value=m.variant;if(['field','top','local','robot'].includes(m.view))q('view').value=m.view;if(['0.5','1','2','4','8'].includes(String(p.speed)))q('speed').value=String(p.speed);time=Math.max(0,Math.min(maxTime(),Number(p.time)||0));}
+  function tick(now){if(!playing){frame=0;return;}const dt=last?Math.min((now-last)/1000,.1):0;last=now;time=Math.min(maxTime(),time+dt*Number(q('speed').value));draw();if(time>=maxTime()){if(playlist&&index<cases.length-1){index++;time=0;update();}else{playing=false;playlist=false;q('play').textContent='播放';q('all').textContent='全部轮播';save();}}if(playing)frame=requestAnimationFrame(tick);else frame=0;}
+  function play(){if(time>=maxTime())time=0;playing=true;last=0;q('play').textContent='暂停';if(!frame)frame=requestAnimationFrame(tick);}
+  function pause(remember=true){playing=false;playlist=false;q('play').textContent='播放';q('all').textContent='全部轮播';if(remember)save();}
+  q('case').innerHTML=cases.map((c,i)=>'<option value="'+i+'">'+esc(c.title)+'</option>').join('');
+  q('case').addEventListener('change',()=>{index=Number(q('case').value);time=0;pause();update();save();});
+  q('layer').addEventListener('change',()=>{update();save();});q('view').addEventListener('change',()=>{update();save();});q('speed').addEventListener('change',save);
+  q('play').addEventListener('click',()=>{if(playing)pause();else play();});
+  q('next').addEventListener('click',()=>{index=(index+1)%cases.length;time=0;pause();update();save();});
+  q('all').addEventListener('click',()=>{if(playlist){pause();return;}index=0;time=0;playlist=true;update();q('all').textContent='停止轮播';play();});
+  q('time').addEventListener('input',()=>{pause(false);time=Number(q('time').value)/1000*maxTime();draw();});q('time').addEventListener('change',save);
+  window.addEventListener('openai:set_globals',e=>{pause(false);restore(e.detail?.globals?.widgetState);update();});
+  function resize(){const rect=canvas.getBoundingClientRect();width=Math.max(280,rect.width);const view=q('view').value;height=view==='top'?Math.min(650,width*1.5):view==='robot'?Math.min(580,width*1.05):Math.max(240,Math.min(480,width*.67));canvas.style.height=height+'px';const dpr=window.devicePixelRatio||1;canvas.width=Math.round(width*dpr);canvas.height=Math.round(height*dpr);ctx.setTransform(dpr,0,0,dpr,0,0);draw();}
+  restore(window.openai?.widgetState);new ResizeObserver(resize).observe(canvas);new MutationObserver(()=>draw()).observe(document.documentElement,{attributes:true,attributeFilter:['class','style','data-theme']});update();resize();
+})();
+</script>

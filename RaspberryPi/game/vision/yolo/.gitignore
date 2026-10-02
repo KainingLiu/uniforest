@@ -1,0 +1,12 @@
+data/raw/
+data/images/
+data/labels/
+data/collection/
+models/*.pt
+models/*.onnx
+models/*.engine
+models/*.bin
+models/*.param
+runs/
+__pycache__/
+.venv/

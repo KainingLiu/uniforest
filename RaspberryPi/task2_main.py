@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Task2 entry point; never runs the Task1 mission flow."""
 
+if __name__ == '__main__':
+    from utils.runtime_launcher import launch
+    raise SystemExit(launch('task2_main'))
+
 import argparse
 import sys
 

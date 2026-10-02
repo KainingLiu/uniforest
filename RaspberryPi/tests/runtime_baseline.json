@@ -1,0 +1,710 @@
+{
+  "revision": "cefa25ad2c817dcc78cdc80c12cb2ae3abc8be83",
+  "protected": {
+    "RaspberryPi/Strategy/README.md": "920ed54dd1b581a4a305c19b4f4360361ca143aaa3eba20c6f1887f5b8b12abc",
+    "RaspberryPi/Strategy/__init__.py": "6d87d2d3c09c8e224c214ee1c0b78d021b3426f93b0d717fe8ae8196a7901cdc",
+    "RaspberryPi/Strategy/common.py": "731b95a5d42d1864e0c71346708f2145ee182d96e3e0f38ede10ae80ee0c5fc9",
+    "RaspberryPi/Strategy/competition.py": "0facf1428c1458732e96774477459cd1a1172c9059f73d69c40eb80fa588e663",
+    "RaspberryPi/Strategy/context.py": "a399711cd630200a76fb2f461860273127afd6050f27f80874bbffb6dc84c112",
+    "RaspberryPi/Strategy/cube_tracker.py": "4ce56a4c5b35638dc2a66b6e715d9d6e01ddc03b3eaafd5779c7385889237e64",
+    "RaspberryPi/Strategy/orange_search.py": "49c79694bfebc52250cd57a7e9c9bb1a770db4a6ac1a73c4d3a301d1a1d358f6",
+    "RaspberryPi/Strategy/plans/__init__.py": "22c98bdff0bab0143dcb4c07658c8147985f9a6ef199cb1e690ddda2b95d168b",
+    "RaspberryPi/Strategy/plans/classic.py": "672e9609c7a13b16af12cef9e13d822b80ebcc7fc8c588a5b0c5f83e991fdd37",
+    "RaspberryPi/Strategy/plans/plan_a.py": "889a871b9d7526d3b4baee5183e0af239d8642304ce438d75a1a48543f633b31",
+    "RaspberryPi/Strategy/plans/plan_b.py": "fe006fde2dc6fb9e8a0c2fcfa1a2b93fb3102941f83279fd76e35c57d4ba8eab",
+    "RaspberryPi/Strategy/results.py": "d2483b1e80381cc6fc7665acc7d8548362c8618f346927136963f6b2495ed5b5",
+    "RaspberryPi/Strategy/runner.py": "6c09814656b295a4301679cc69296150d623823acd3f0fb99523037fa8d6f509",
+    "RaspberryPi/Strategy/tag_alignment.py": "df5058fd8f5d5718410a308f31e11ddd5e3f20815263e783d2e5ebf0179c89e9",
+    "RaspberryPi/Strategy/tag_controller.py": "bb9faa4b1478c66727bd76efd1069fcfb302a9cfa4cf1c3088d90b1e607f2e56",
+    "RaspberryPi/Strategy/task0.py": "ed50117a0d9559e5add83f46569219368151e9918f98e2dea098d95c0a23202d",
+    "RaspberryPi/Strategy/task1.py": "20a1da59542e5d628ffd687d945965acc5141f2359ea140769652461f6ab6549",
+    "RaspberryPi/Strategy/task2.py": "56a6eeb270a6e3262358a27486ae588e555ad6fad972c55596f9c20e6270635d",
+    "RaspberryPi/Strategy/task3.py": "d57cbe340330174337e885caa4f1ec744de8805a5cff08a418dad5f3b384acce",
+    "RaspberryPi/Strategy/task4.py": "b1e78082384e354657b4ad75f8aa052350a45c99694ee610a3de5e1faa9e1920",
+    "RaspberryPi/Strategy/task5.py": "445873339b8c8d3a717d403fcab929e42936c8c9eb7bcd4bcd5e4cc650e57476",
+    "RaspberryPi/Strategy/tasks/__init__.py": "f6e13556b9a57f27fc745fb0db45de8f20744d5c0c09c4c1ba9e9a5d9f976804",
+    "RaspberryPi/Strategy/vision_targets.py": "54a36e1036b0b5218887304eb2f7c679d9eb23b7d9f55c22fc84a7e8df09700f",
+    "RaspberryPi/Strategy/wall_approach.py": "5080c6935129eaac33ae0d8d6eb83be8dace14c525883ec11f16073b20b31ba3",
+    "RaspberryPi/Strategy/wall_controller.py": "03d4f2c007b7d99e1f1ba8752bcd019f283066aac99870725dceb47a62df6ea6",
+    "RaspberryPi/agent/README.md": "6829c4f7706f12c9bc5343079ed24781c1833f7b73334fe63f739e3175d34314",
+    "RaspberryPi/agent/__init__.py": "6674ce19bdf82c83e2b9d7e060c621c72e7bc3313e7827de69ab7128adc0bea1",
+    "RaspberryPi/agent/assets/README.md": "776fb3b5b93ae02bc5037d59be49eb4d2ea146471fe7a9019eedb3f790533c1f",
+    "RaspberryPi/agent/assets/plan_strategy_main.png": "5e14da757485abc532b4dbc375f1c63a1d03ac5b571b5ddd14c95a5087f557d1",
+    "RaspberryPi/agent/assets/plan_strategy_overview.png": "708b58df29463288b00ee3e56474ba363ef167e36f0d6080bfd011ede4d38d09",
+    "RaspberryPi/agent/assets/plan_strategy_sub.png": "a75f24bdb08ca3187abf56ec89291d06414b038459e956493ada9483e1d929ef",
+    "RaspberryPi/agent/assets/rules_field_3d.png": "4d9713a0d52ed4142cdf695db8699fda83fa2bc516108a17c5b455774b396f4a",
+    "RaspberryPi/agent/assets/rules_field_layout_tags.png": "2d237800d151ed5637755a9a3480e3cfecce54617b82cb749b6e1560ca6f9431",
+    "RaspberryPi/agent/cli.py": "c7e0f55fee433703d11d81c0af7f00cedbbc0a860197f6be70b791549cb1d8f9",
+    "RaspberryPi/agent/client.py": "9b912e3d6ff2763e9231ff8495ff4cbbb54eecae1443df0b099102c792196d0a",
+    "RaspberryPi/agent/config.py": "b641c4a2b262d3cd9a97de6486ab7335e6c0010a1484e28c9e27cee8c220eeba",
+    "RaspberryPi/agent/direct.py": "c5f540a037bac0ff224bd7f513ac1a0fc374734df43efd72b3fbe446362ebcdc",
+    "RaspberryPi/agent/relay.py": "baaeba3d3a1279da5ba07b12a56b222723eaecc07e31b8649e1baf368428ab14",
+    "RaspberryPi/agent/tools.py": "f286878171bcfef21086f83c013fddebc40574b709ad7d380e76747d98b3f72b",
+    "RaspberryPi/control/__init__.py": "90f62039cdd30c97f2243ac90f730aaea8adeea41770009ac5cd4b5d1f6d7cb7",
+    "RaspberryPi/control/actions.py": "b2d06d3d69951e2c744034468398a9d2416256842eafd2b1880b4bb27a2909c8",
+    "RaspberryPi/control/carried_cube_inspection.py": "0d0aca442fcbc39c03aff96b7d83284fc15872752582fcd1676208ca2ea590b1",
+    "RaspberryPi/control/chassis.py": "824f9f68a3143cc4782ac7e579f43c6085dc599bfdd0893429e13772adb5c5e5",
+    "RaspberryPi/control/servo.py": "70e37ce0ae838018b5a5fe50d01c008f76d06ac86ffe6baa26cb159aaee01582",
+    "RaspberryPi/control/stepper.py": "aee68ee682329fc33b9f7ce1f1a5691973c9520c6a71433b59c928d2eea9e493",
+    "RaspberryPi/protocol/__init__.py": "5e2ba7ab3012a2ced3711893475027637fdf92483ff9d5e8e6f6ccef7e9d23cb",
+    "RaspberryPi/protocol/commands.py": "7e3ad0401cd2e255ab29f34a8aebba2a5ef4253ac25be13f3b5245dc7699e22f",
+    "RaspberryPi/protocol/schema.json": "36bed3ea7faa80a582cfa6877bbd81a9cd4b3915a88275ce045d643db70a4a31",
+    "RaspberryPi/protocol/schema.py": "6e66abd6e8fdb7c9c45b53099222785963db4c7020d78dcb296caab51ea5a09e",
+    "RaspberryPi/protocol/transport.py": "38d923a5f22a1294eb179354d2b42f4342d3a047f715dec9cd6eef9ff687ba8a",
+    "RaspberryPi/requirements.txt": "da9525d829fc441fa6a860eb1748f2490f00d6ddbdde73226cf251d7aad3faf5",
+    "RaspberryPi/tools/desktop_task.sh": "6dbe90ce0d6f2ae66c128fd13ff8f1a62030f9a6f051f6d999d5b86ff98ad5be",
+    "RaspberryPi/tools/install_desktop_entries.py": "1c097bf60fd1da8bde020cef186e484c029cd72cc959e5a0de3f2b05492b31f9",
+    "RaspberryPi/vision/__init__.py": "5184db76c64ce949a9d4d9586f3dcf0bef3fe763a51523c2d0f48620c47a0286",
+    "RaspberryPi/vision/camera_devices.py": "0736cb64adabe667f99efe4f213f745c5c940cf51398a622754fde525fe71ad7",
+    "RaspberryPi/vision/camera_tuner.py": "fdc3a796cbb9d0d7d4aed32c78273da04c8a0f6779188e4c62dd646076789b93",
+    "RaspberryPi/vision/carried_cube_count.py": "e23d977f00b0fd699dcd17872771090e64e41561ce5d655924f1a8b58cec9337",
+    "RaspberryPi/vision/cube_detector.py": "227dd6346a1d7dda77a7aad870cb198034979689decc0d3a640be6ce9e082384",
+    "RaspberryPi/vision/field_localizer.py": "0f1dbeeda2e02b533c55e7520c1c449b06d2b9ae49fe8d06667dac96dbfad215",
+    "RaspberryPi/vision/opencv/__init__.py": "383b4aa11236568e9d8e862fedc3052ada619668236c05bc6cc5887cba4c1369",
+    "RaspberryPi/vision/opencv/camera_calib.json": "f4060e00adad073ab135de155f78b189056da7274659f7a163864b4d8b8be994",
+    "RaspberryPi/vision/opencv/camera_devices.json": "ae077d2689eb8857607c2666bb2aaaa16d17c7822c357b6bcc462bcf26f5dec1",
+    "RaspberryPi/vision/opencv/camera_devices.py": "2f16d19089b1cc682289c6e3153ceee5a1c0f3d64da97580286d82dfc9cd3304",
+    "RaspberryPi/vision/opencv/camera_settings.json": "ea7378e59f3da015581eb6fe69581df86008f7c97d20512d2b8ee2ae7dd809c2",
+    "RaspberryPi/vision/opencv/camera_tuner.py": "6bfc0d002078f25df9c45e9abb2ac1c7fb8829882566ee462c0843a7b4b27b3d",
+    "RaspberryPi/vision/opencv/cube_detector.py": "71566c9f0acfe20e6ab1433e9bfe42afb349953f006627fb7e18b8fa9521a824",
+    "RaspberryPi/vision/opencv/field_localizer.py": "c5276e0e694649e4df9311699b4760d4b7262cc703eae5d9ff07d4c653ff6ae1",
+    "RaspberryPi/vision/opencv/field_map.json": "c5d32bd1fd1e157f478a0118b2288afc4daa639e037a53fb5b7e1d646d4d4f22",
+    "RaspberryPi/vision/opencv/orange_cluster.py": "e9093a074044072ac819a8b99a669a001d80496e442defaef3e18874d9b3dda6",
+    "RaspberryPi/vision/opencv/orange_config.py": "e1bbcba137b41016563bda2a3f00e6e39cb207d0e6a9f6cdeb1ac4eb6b4281af",
+    "RaspberryPi/vision/opencv/orange_fixed_geometry.py": "1111dbc8a35234adc6e0ea5fd014f37b803774fe62066e9958db981ab1f46b08",
+    "RaspberryPi/vision/opencv/requirements.txt": "229a3c54e9786de1f4fa22d0968b212ef888d44872fc0fe1f363d554b602c646",
+    "RaspberryPi/vision/opencv/tag_camera_calib.json": "e7d07aefe9aafdacc1018c0dfa66156648b1c6e3279ab42488457989944c7e87",
+    "RaspberryPi/vision/opencv/task1_orange_fixed_calibration.json": "a093d1f9e42049245fb29c50f52dfa35c2b604ebc3596ba3c8ee7e8cebaa8f91",
+    "RaspberryPi/vision/opencv/task2_orange_fixed_calibration.json": "029324b2df54c5ce738a7f58d3781e5c0c9c26ce6e503e40cf6b0e01c2d92b06",
+    "RaspberryPi/vision/orange_cluster.py": "d64fe025182ef37182e52fcf26b41a420a8a21468945b8937d9b82a64a739f44",
+    "RaspberryPi/vision/orange_config.py": "a2ed936eea823c489a785f119c5e6aea9211399eadd8f80504fc8c6295548b7a",
+    "RaspberryPi/vision/orange_fixed_geometry.py": "4947aaa53361090f3e30f2920114c65ebea2fdfbdc098bdeb0030b26a69c00a2",
+    "RaspberryPi/vision/yolo/.gitignore": "2a3c1d2bc01bc259ae2b98f73ed0eea147611fd5179bcc673ed9d2fc5ae427eb",
+    "RaspberryPi/vision/yolo/README.md": "6cd33c5a93c4f0bca3836572a8e1348579cfc6a88b200b10eefef941fac10ac5",
+    "RaspberryPi/vision/yolo/collection_config.json": "e217af43afda3990125a4a820b809678599d756478f04bea5f57b0cf4e517f4a",
+    "RaspberryPi/vision/yolo/collector.py": "a77333fa483641b874097ca5645397d95af2366eb02f18b875ffd00755582430",
+    "RaspberryPi/vision/yolo/docs/CUBOID_POSE_REPORT.md": "ff45fdcc996b576e8e081bc0601aa6c8a30f265d5b1658c7c2faa2d2b339c26f",
+    "RaspberryPi/vision/yolo/docs/DATA_COLLECTION.md": "1b8982541effa49dd18bf0a6a9daaa3ee603601ec225e0e30cb251e68327d610",
+    "RaspberryPi/vision/yolo/docs/FIRST_TRAINING_REPORT.md": "82ee220b86c0b34084717cdda4423102da3689fbc1c1ce79145b81027a0566f1",
+    "RaspberryPi/vision/yolo/docs/IMPLEMENTATION_PLAN.md": "d45eebe7f389609bdbb0b8c66db6486fc119c3192e5e12476f79bd75827b16c4",
+    "RaspberryPi/vision/yolo/docs/VISIBLE_OUTLINE_V2_REPORT.md": "a08b91fe3f4f50d6509b8d5fd6b202dec64571d1ff4ff4aa340fce16fbbcd302",
+    "RaspberryPi/vision/yolo/docs/VISIBLE_OUTLINE_V2_REVIEW.json": "e71764a00166bf60cbf74a3659b4142beb3d4aad9f2092491801491295904123",
+    "RaspberryPi/vision/yolo/docs/collection_20260926_review_plan.json": "5746dbad1d8e83529b89fcb9c6913289af6c07ed58a751e41bef8c15ea110c91",
+    "RaspberryPi/vision/yolo/requirements.txt": "a52b9feaf0172bbd9df94e28ac67a1aff26fcd2b1249e452ee910095e0a77f48",
+    "RaspberryPi/vision/yolo/scripts/auto_annotate.py": "c10279db7009a17e93da7440a261b3d71f7c9d941a37727f3b5f5d6a7a462bcf",
+    "RaspberryPi/vision/yolo/scripts/build_cuboid_pose_dataset.py": "3b0d9fa94105c74e8ac590f370e415831d238b8c767fb2a039f0e09acdc9fa88",
+    "RaspberryPi/vision/yolo/scripts/evaluate_collection.py": "7dc3a27fa11767330a0c6c5663e559728adcef531cee0f0d991067c42abf7a3b",
+    "RaspberryPi/vision/yolo/scripts/evaluate_cuboid_pose.py": "e6244babe91ffa4199def197f77a2a6831925e24294893562b46f21221f7114e",
+    "RaspberryPi/vision/yolo/scripts/evaluate_visible_outline.py": "88b104d04323a305991b97490ad9569b899a154b35f68e2ee7884f5db330238d",
+    "RaspberryPi/vision/yolo/scripts/finalize_reviews.py": "78770199cd9953884ff92626930764e3e24877d3869da8466cb6f482388d6264",
+    "RaspberryPi/vision/yolo/scripts/finalize_visible_outline.py": "56ce37268526b9f4a568ad3fee29e55e57d2b1121520b1671294fe893a52eaf2",
+    "RaspberryPi/vision/yolo/scripts/import_collection.py": "361ea94b9a4b76e27a435106a890d669ab6571b76eaec3a41ad9da2d86234839",
+    "RaspberryPi/vision/yolo/scripts/predict_visible_outline.py": "f45b975b61019933c908611913ccfe97a22b817e5c6377c0b804d9f5d71e3564",
+    "RaspberryPi/vision/yolo/scripts/propose_visible_outline.py": "31046710365f5d7920e67f7f48c2f2c6fb444f609d9ac21091effe76a101c61e",
+    "RaspberryPi/vision/yolo/scripts/train_collection.py": "14768d65ae77f0caaa2460f395fa233bb2c352c943336286033e34d79f50e992",
+    "RaspberryPi/vision/yolo/scripts/train_cuboid_pose.py": "8b4dd7737e583a4beed1166e3a51cbd550d5b5b3f1502b912ca26ca550fc9950",
+    "RaspberryPi/vision/yolo/scripts/train_visible_outline.py": "70a87185caae74891eb7f5f4fcd7afdf36fa9dcdf8ad7046f1e1a4ca2916388f",
+    "RaspberryPi/vision/yolo/src/__init__.py": "92349a4445f9bf7e34b98cb91e9c38d75c12c8655ea95e0b645a4c08481ede0c",
+    "Uniforest_A/.mxproject": "625ca856bd1b0d675b8d0096bd3f1cdf42b785d3037d14b3938fb49be9141e4e",
+    "Uniforest_A/ACTIONS.md": "8fe2adb8031703685d9282277f4f63c2b5d3c8a8a2d5a5a71ae2973c81ce73c6",
+    "Uniforest_A/CLAUDE.md": "6bb770a767472a765361b2e35faea29205948de55aa6c3f98332fb427c4186d2",
+    "Uniforest_A/CMakeLists.txt": "8839cc3cdb852475043b2f02cea94474e9f92cf490338087cae1a5416e2e0c68",
+    "Uniforest_A/CMakePresets.json": "5cfd04cb98883899a9e70bb39dc70f74ee610b88ae34625dafac65f18f322a94",
+    "Uniforest_A/Core/Inc/actions.h": "7f9a99b7f976398647a6cc3d52d96484cffd4ca389c7abba10d66224811cdb90",
+    "Uniforest_A/Core/Inc/can.h": "cfe018b1596f0565e5c1ab7dc38f4cb0dcdf3085e9b9be70dc010739ebb6db61",
+    "Uniforest_A/Core/Inc/debug_telem.h": "f8f0f2da639a74d93acaaf20fde12d31ee31e24f982d33480d97d9249538203a",
+    "Uniforest_A/Core/Inc/gpio.h": "cd5a5f75903537cba4460073b40e3b0d18d4af6dd7522c5a0756f0b9261e03af",
+    "Uniforest_A/Core/Inc/imu.h": "169d00670de1105f4a555d8835c95fad13cfec9270b0942a846bca4be94a3828",
+    "Uniforest_A/Core/Inc/main.h": "391f8617be493779f89fd2f1e0bedf68fcb783088685c3298f259f67d0654502",
+    "Uniforest_A/Core/Inc/motor3508.h": "ee82167553eb9373dd36986281c0be4546a9ab35abf87f813c6704e3f0a14129",
+    "Uniforest_A/Core/Inc/protocol.h": "744e5f803bb01ca70b7b464109291d3b885b88cd13fd36e8d10953f5a23a7819",
+    "Uniforest_A/Core/Inc/remote_control.h": "f92252591b4b4202230c105bd35aa5813b871f10d3ee1355d512d4a2912e90ac",
+    "Uniforest_A/Core/Inc/servo.h": "fb13863ce9c70eb6f264bceee87880e15572963fb5a5457cda2606b2dfa52342",
+    "Uniforest_A/Core/Inc/stepper.h": "52254205692242420d3fb6e7b7c8cb59fb221f4a04f0786d8c3e92cf8987823c",
+    "Uniforest_A/Core/Inc/stm32f4xx_hal_conf.h": "872070ad59fa52b47a536ff6107bd344bd14f1f48f20b99b621ce32c57c7976f",
+    "Uniforest_A/Core/Inc/stm32f4xx_it.h": "4dad421df4070a7d8b0cfe6b0f2732afcf3e49b57e3587c54b06c6326513d4e3",
+    "Uniforest_A/Core/Inc/suction.h": "4e71fbc5fdac405d2a3c8a8220dfe982c335938221ba37c43ad99b4cffee1b7b",
+    "Uniforest_A/Core/Src/actions.c": "844c21f3f21e0e186efc2da74f6c8a4f77b62f5477bb308c15828483abc93a1a",
+    "Uniforest_A/Core/Src/can.c": "82281c7f449e2f1c16527b6fda29d65540f4e0f8ae3b292856b44080ac9e4587",
+    "Uniforest_A/Core/Src/debug_telem.c": "4e301332df44bfc71c7bc6a2cbacf586583ac3b35392e5991ca3a24a383898d7",
+    "Uniforest_A/Core/Src/gpio.c": "d61636f098f30a6563bac243daeb5e9a4d8c28c15977cfb342894af697abc14e",
+    "Uniforest_A/Core/Src/imu.c": "434844061007cb574541fa4b5cedae51727396859ba045261ca11ae2e77ee0ff",
+    "Uniforest_A/Core/Src/main.c": "bfec7929bd6fe666ec2aef0a6683c5eb86700e0552164b85d20d9c1c0295eb5d",
+    "Uniforest_A/Core/Src/motor3508.c": "f957e5a1d6abb1f6b17d7382b6286637fe3eb3692fa92216be38107a58708571",
+    "Uniforest_A/Core/Src/protocol.c": "a59bb2629a3f0f3dc2040db5e8e33969a4790bbba20e31e5cd38d59848784953",
+    "Uniforest_A/Core/Src/remote_control.c": "c3824e0d012187cb23ba228acb16d2ded1880bba08575127a047d1435c1df22d",
+    "Uniforest_A/Core/Src/servo.c": "63baa842b9802c20d2b5dc98e95cbbda33973fda12b3a0edea953565d0a9fed4",
+    "Uniforest_A/Core/Src/stepper.c": "c8c29a63e1b5dbf649828ac8daeefbed70078af8eccf1256f6dc14c2272bb3d8",
+    "Uniforest_A/Core/Src/stm32f4xx_hal_msp.c": "7ce1942466e8c6526ec1e13a5e84910b411ca41409309d2d33683e0d2bf98d7d",
+    "Uniforest_A/Core/Src/stm32f4xx_it.c": "b5e98133a831e2df5a613499a49da9365bc2dd680c8329b3dc9d17ec46e1accd",
+    "Uniforest_A/Core/Src/suction.c": "da4a09a108f90309e64d0da25bcd0ef9396863b0ce71170f23b7d5788bb0374e",
+    "Uniforest_A/Core/Src/syscalls.c": "03c06c72eafb44b499814cf9234aba57dd830f345d9b8779b5d7090e78517600",
+    "Uniforest_A/Core/Src/sysmem.c": "ad20f7b1fa1e7c73330727747222cf2ffa3245ebf035230ee9a157545e79df95",
+    "Uniforest_A/Core/Src/system_stm32f4xx.c": "a31929eab936ac98db060c18917118acf79dc96e1f03ed4b57d614535dd06d70",
+    "Uniforest_A/Drivers/CMSIS/Device/ST/STM32F4xx/Include/stm32f427xx.h": "38e90c2e0409418a159118f220f28132e608dda1f3f1991f1a5250bf8070dd74",
+    "Uniforest_A/Drivers/CMSIS/Device/ST/STM32F4xx/Include/stm32f4xx.h": "a19edea6b2f4df2ab3c567782c4d313a52319c4303bd56ad7dd1d0e077014657",
+    "Uniforest_A/Drivers/CMSIS/Device/ST/STM32F4xx/Include/system_stm32f4xx.h": "02c067d5a135f540c03215dc834b1e60a97bbd4e55bfd3994b0c82a15ea3012a",
+    "Uniforest_A/Drivers/CMSIS/Device/ST/STM32F4xx/LICENSE.txt": "135fb2d86e9ecdf6824cc3bba21c72b8e380c07b055fbebb6b995463eb609baf",
+    "Uniforest_A/Drivers/CMSIS/Include/cachel1_armv7.h": "2e336a64f60a9c0eaf5a08e2c4845d94da86c3fd84d219d0d0c9f530e63bc9c3",
+    "Uniforest_A/Drivers/CMSIS/Include/cmsis_armcc.h": "5bc0d7ed8e36e9bcb868c4042fff350c702eca305df4162fb00384789e35ee1c",
+    "Uniforest_A/Drivers/CMSIS/Include/cmsis_armclang.h": "d5da2b48204f0d0cf1ff38ffccb527e5706cd0a091ff0a331eb41d6596c33fe5",
+    "Uniforest_A/Drivers/CMSIS/Include/cmsis_armclang_ltm.h": "3e8ffb284f4f155de3ea93841cca853b41d5e812b53e52c64c3d4a67b7f1ec7c",
+    "Uniforest_A/Drivers/CMSIS/Include/cmsis_compiler.h": "b51963d271c1571ca3463654c76aa7ea50c4eac5d0a2710df10414ac64d9e0f8",
+    "Uniforest_A/Drivers/CMSIS/Include/cmsis_gcc.h": "43bfd1fe69fbbc2ca70aaf7d43cc3e20f16e0c7f66e1bdef9b51af6dc14b2617",
+    "Uniforest_A/Drivers/CMSIS/Include/cmsis_iccarm.h": "2d255c8429e507e52cb603f2970bed4cc4a6cdcc3eb7fc7997385abad7364837",
+    "Uniforest_A/Drivers/CMSIS/Include/cmsis_version.h": "184c19fd3ee73632edf35a0b4d49cd48be75fbf49e6ccb19d9db05fa83bea4b3",
+    "Uniforest_A/Drivers/CMSIS/Include/core_armv81mml.h": "a40954bccbf202bd65ee721ea688122561e005c9f9f9d18e082280c5b897d0e4",
+    "Uniforest_A/Drivers/CMSIS/Include/core_armv8mbl.h": "458b1e6788079ded52adc7d06383701c865ca97b67c5e7a0a44884194f91a842",
+    "Uniforest_A/Drivers/CMSIS/Include/core_armv8mml.h": "5a68204fa31cda7d04d41c9ceaf3f4b1217908f59366f757ee778181c7cc8cb9",
+    "Uniforest_A/Drivers/CMSIS/Include/core_cm0.h": "ac13cb645f108666a0e57c93467872660d6bc860a839f840dc870b7a5863b4bf",
+    "Uniforest_A/Drivers/CMSIS/Include/core_cm0plus.h": "a09fa9c6b8b21d1920bce15b98aa56182b027e9278cca0b154812bac2aea3cfa",
+    "Uniforest_A/Drivers/CMSIS/Include/core_cm1.h": "944bf0c4f940eef30a632cd99d5dcfe8270e8a8431eb98c0f081bcf4f61f728e",
+    "Uniforest_A/Drivers/CMSIS/Include/core_cm23.h": "77822e9738885394ec52fca6f617452b823a0b55e2664ee225e65576cf0e8f2d",
+    "Uniforest_A/Drivers/CMSIS/Include/core_cm3.h": "c9937781259a8897adf514445441c68570087d6a72a558d8a4afe75cdb62dbd2",
+    "Uniforest_A/Drivers/CMSIS/Include/core_cm33.h": "225c47c36230edaa314f1e7a45b38279f6ab4d58faeb132226db35f7007d58aa",
+    "Uniforest_A/Drivers/CMSIS/Include/core_cm35p.h": "206b427589981b78169c1d9b73e898e4e8de4efbd76fd0c2df7df81d645b9fa2",
+    "Uniforest_A/Drivers/CMSIS/Include/core_cm4.h": "f5b63d52dd1557b15ca414cb59c264f595a7b5669db2a5878dffe22f4caedc8c",
+    "Uniforest_A/Drivers/CMSIS/Include/core_cm55.h": "5707f716cf03f7e80151108ae94601fcfdf362dd2d830876040213318f6dee3a",
+    "Uniforest_A/Drivers/CMSIS/Include/core_cm7.h": "e974d0a91752487d0154457cd422c37667328e9ddb7ba4fa2fed479a63577f63",
+    "Uniforest_A/Drivers/CMSIS/Include/core_cm85.h": "75bc123889f0f5ca33c4d16b6cbdd580a3572663c899fadb2c8e28f6a5e6fead",
+    "Uniforest_A/Drivers/CMSIS/Include/core_sc000.h": "c81377a69a4ea8ecaead42194f2ce8ab59bd4ee7bd638e423f5b1f5ec283d154",
+    "Uniforest_A/Drivers/CMSIS/Include/core_sc300.h": "73dd461c12c7d3a693840df3084fd8f85122095c6f21fa3d779b0f3eceaebad5",
+    "Uniforest_A/Drivers/CMSIS/Include/core_starmc1.h": "92d8661f2947d00da91653d04794cde0593fdaafb3438842a0477775716aafc5",
+    "Uniforest_A/Drivers/CMSIS/Include/mpu_armv7.h": "29206b52ee02290ed6f5a5415ebd4187de802cf176d9b3cb844390d8e5571372",
+    "Uniforest_A/Drivers/CMSIS/Include/mpu_armv8.h": "2c7d22a344cedcc1e35380d1f76f0e6c55da5e3101e6a41fd85497d1841fe8c9",
+    "Uniforest_A/Drivers/CMSIS/Include/pac_armv81.h": "d76f5cc0c59a59e035115f700b8e8d95b7b98ecb99a2924e885f82a94903d984",
+    "Uniforest_A/Drivers/CMSIS/Include/pmu_armv8.h": "cea8c105c5f41ba831fe4d9e8e39758068cd4c414383348dc2835d6be447cca0",
+    "Uniforest_A/Drivers/CMSIS/Include/tz_context.h": "45565c8cb04c653aabaf3cceddfc848b6a0de28c20d4f7e3d475a992c7eee788",
+    "Uniforest_A/Drivers/CMSIS/LICENSE.txt": "b40930bbcf80744c86c46a12bc9da056641d722716c378f5659b9e555ef833e1",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Inc/Legacy/stm32_hal_legacy.h": "8c2d2feb90e8ed88fe5756f3f1616a2b67aa1cd0858da8b130ed69607688c8c0",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal.h": "6942f40453fee331e026179cfac4c0f24ffe6313fedcb68af9c3382f702dbaf5",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_can.h": "b9d9e38908bbc1546e241eeacabeb3a72ade26f99ef3d448334c06ec89bae122",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_cortex.h": "d96dba22903abda49d66cad29ac0c49357e6a27cf9cb03dfd8c6db71b61a7fca",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_def.h": "c8eb3f7b393f8c5a0c32e16ccfa101c83ddb59e96bd42239b8a5c5d4da83e97f",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_dma.h": "71c38dfd65c5415b388375147e5317c7ac018b39893d6fd0ac1c897f4313329c",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_dma_ex.h": "3ee15423d73ac394de39e7b65821775966389b13749ff0849894548ab6968676",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_exti.h": "61e8f76bdb45dedf38fef592504e10418ca410952c7a209cd271b45ac835833a",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_flash.h": "10be06c6e06fcf4eb11e236641948aed861898fea235c606ae221fa72bc46638",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_flash_ex.h": "7c206f5dbed3c147a6f090ab808933132a1b06b8339623ad7174fd0a222e981c",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_flash_ramfunc.h": "f18a6eabc99f56483566f9231ca33c780afa98bc93929e60bb419b5e544eee2a",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_gpio.h": "0b40fc83363b64d3c7396a202be7a914ceaa7735ab0fa81d566ed320102b23fb",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_gpio_ex.h": "4091beefc5bf8b250f376d400f43ca028ef7378e1c7ba5c9eb5de64ec74231c0",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_pwr.h": "d6f6abc4af3d5a1ca59d886f5a9154e44f257a43af77c7f18173f160825ed6b5",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_pwr_ex.h": "1794b88c5e080858c0205a2e94340c0250ac9171b3a3f01cad6d050005a1b09d",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_rcc.h": "eb6911d964b1cf8a83993b19c8feb9845e8793d7c0e5d643390b53207c8b078e",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_rcc_ex.h": "49f0c8068524e1de248738530cff3bbe630dc4784b6e8b5568fbc7e1a154f772",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_spi.h": "330803c32d1d5ec40df5a827a74cb1d850ec60b207eda5bf6299c57d575795a6",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_tim.h": "63f00354e2a5e8d3a8d211fc736517273e12b99a1eb782aa7a2670cb1264a16d",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_tim_ex.h": "aa6695d64677e8a7b46d719da3d81049290f42383c17e76271605bc68143fd1e",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_uart.h": "42528bc9caa6e2fe96b7e6d7b3fcdf35d8d85ae38d33195a233e18a072f157a1",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_ll_bus.h": "95a518139f74d14a4477519b5172675347990e9fa637bd3948c69bd475bd7c88",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_ll_cortex.h": "d8b268ca207e51864d1a71ce14fff316c57d09e62a04d0c28310b4a1008e6f17",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_ll_dma.h": "39e89050700e16304e04643e29c162b6aaa9f3bfe53880cd78c255ce46104e82",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_ll_exti.h": "6da580d41ebdcfd7349e29666a2e561c8e2c2e01f6e7ef29dfec6ebf6ae237df",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_ll_gpio.h": "e46857f5f9a5f5a2d13ca2d6925dc9e66dfa7fc56a2cc72e54b891bdb88e2f16",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_ll_pwr.h": "229af558bfeef8bb88d2224277b083c3b927c5c2612991fdeba00dad56255abc",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_ll_rcc.h": "605960f2e8e57a702b912475f9c154bb58711b58c8f2ff27dd4e75b5d767dc4e",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_ll_system.h": "d634a419a55e99b4a641fecc055e1f602d8a418bd7d822cf2f812a0965ac9a3e",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_ll_utils.h": "535cb625cfcd461d6054549bf04d25ef939ec5754f77731a5f9fd92728280ded",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/LICENSE.txt": "d5a162f3eaf2b7b6762f00700017cae5695ebbdce7932fead8316448baafd9c1",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal.c": "97e715cda2a34bd564b59ce4ba9b16bd29651f8f229161105aaec666d76ea91a",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_can.c": "67be4e0b3a9dc93552eb0a506991f5b4042b38c125270d9e703133808c2d40d3",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_cortex.c": "9aaa0f19137d700616bec01a5a806786c24e3f3386120365c5d2addaa4055505",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_dma.c": "a345a1b1fe0221c827d5ad21d5a0f5387296bc2c075e06e5b8539c23da5678e4",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_dma_ex.c": "90cafb5a5b17a46b478770ef4abdc9a641cb395419abbb80f288138a63d44582",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_exti.c": "f56651f86e5d89e8bba3bcb331353e00f291db15c902927a205d81bbe8951e6d",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_flash.c": "8bf12eeb6e6cfc12a17587ed6d761724e0835a4a3dc0f6b14a8d1ca068bcb55b",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_flash_ex.c": "51a70deb9b19dd43f6f202430fae052f2deb26c39232c09c79230c8d8a61f773",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_flash_ramfunc.c": "d3b426e8cb9d617f9064d2b0cea2a1d02b7bb6a74cba3f094779d6e922e477e3",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_gpio.c": "408908b15477b6ce2b0b9703caabcb053293d98f2f109d6e6940e076a6a3902b",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_pwr.c": "d779468a95df34421bf6c8417136a79aa910753381a644afa9ed10b185ae18b5",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_pwr_ex.c": "4409dddc0d2019f918d0ddebecf659f06d4de3f9aa28566621a16ea47203331f",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_rcc.c": "f3ac468e2f415adb74281107c0dec1448008950b64a7bb11c14cbe3ee1a936de",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_rcc_ex.c": "526324811fa113c3eadfa84cd24ea5e607ad8e8bf003a2085456c04b734ca25e",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_spi.c": "641ad467e834c17a83c445cf8eea7c8317a71976d7e0c77da740be999251efe4",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_tim.c": "a7dea3b10a771a380915007b9ece123654c6bd2a40f611102220df9bfdd143e4",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_tim_ex.c": "4471b582d56545fbd48725401249b4a2a728ccc0d933b3f1a02e2b09dda8d8fa",
+    "Uniforest_A/Drivers/STM32F4xx_HAL_Driver/Src/stm32f4xx_hal_uart.c": "a74ed3a9a13a4fcbaada9e6f88f7d4fcabe2a75852a6ce4c09f8d4314a2e851a",
+    "Uniforest_A/PROJECT.md": "bf02a9c3bd55f04a3d2d3812a3d28b9cdfca8cb7fd13efac33f76f83b948d015",
+    "Uniforest_A/README.md": "d06957b0d226d803c7b30a812f319f3511cc3bd8d9fc6b880c416a4711785ae3",
+    "Uniforest_A/STM32F427XX_FLASH.ld": "a63d3cc0e8cc21686000e05a50028f50a11525c363db00667c881d90716e4492",
+    "Uniforest_A/Uniforest_A_0628.ioc": "cc4d343d7a13ff8664ae682e730c8e1a2ea09e4448d4c4d8e95e695ef8170e7c",
+    "Uniforest_A/cmake/gcc-arm-none-eabi.cmake": "0cc42171a48dec2683513fec313720ea4c696c4d80aa43667df6ffdbcfc73d1a",
+    "Uniforest_A/cmake/starm-clang.cmake": "d95e8e0468b71ccd141d9cc274f7a14b6f1f56b54f11940775cded2f5d70a0e9",
+    "Uniforest_A/cmake/stm32cubemx/CMakeLists.txt": "df53238e1a8eb766030474ba99e038d5e6c8a24f1db5ef28b8d11b3f623c7a68",
+    "Uniforest_A/cmsis-dap.cfg": "84c5ded0b22436d788647f20e3347da387d5a05ab5b28445a40d214d9faea76f",
+    "Uniforest_A/daplink.cfg": "93aeacb5cb6728a44f762d59109dafc9d175bbf76b81fa6161bf4176b40d46ee",
+    "Uniforest_A/startup_stm32f427xx.s": "de03adbc1729d61dd27ff652014f492b25e3bf2a0e6b18959ca8cfe9978a9ce0"
+  },
+  "entry_ast": {
+    "main": "125b2a83fe4c237dcb587da9a88f9cfba100fe6ce0afb64b529b7b8b10ad0575",
+    "task2_main": "61bdcb2f707184787d235ccc33b41b5a4ee97bbb0599d97c2c70b12371aec1d7",
+    "robot": "776b683c1462c078037c8030db1c4175f59b6b2c0cf1e2043e7a3eb937a4a8e2"
+  },
+  "commands": [
+    {
+      "arguments": [
+        "main.py",
+        "--help"
+      ],
+      "code": 0,
+      "stdout": "usage: main.py [-h]\n               [--strategy {PlanA,PlanB,set1,set2,collect-build-1,collect-build-2,classic,plana,planb} | --task {task0-1,task0-2,task0-3,task1-1,task1-2,task1-3,task2-1,task2-2,task3-1,task3-2,task3-3,task4-1,task4-2,task5,classic,plana,planb,all,round1,round2,task0,task1,task1-r1,task1-r2,task2,task2-r1,task2-r2}]\n               [--heading-zero-deg HEADING_ZERO_DEG] [--show-plan]\n               [--list-tasks] [--port PORT] [--baud BAUD]\n               [--telem-rate TELEM_RATE] [--camera CAMERA]\n               [--tag-camera TAG_CAMERA] [--no-field-localization]\n               [--localization-gui] [--vision-gui] [--debug]\n               [--diagnostics-log DIAGNOSTICS_LOG] [--no-collect-data]\n               [--dataset-dir DATASET_DIR]\n\nUniforest RoboGame competition program\n\noptions:\n  -h, --help            show this help message and exit\n  --strategy {PlanA,PlanB,set1,set2,collect-build-1,collect-build-2,classic,plana,planb}\n                        Run a strategy package (default: PlanA)\n  --task {task0-1,task0-2,task0-3,task1-1,task1-2,task1-3,task2-1,task2-2,task3-1,task3-2,task3-3,task4-1,task4-2,task5,classic,plana,planb,all,round1,round2,task0,task1,task1-r1,task1-r2,task2,task2-r1,task2-r2}\n                        Run one reusable task; old selectors remain explicit\n                        aliases\n  --heading-zero-deg HEADING_ZERO_DEG\n                        Known gyro yaw zero for standalone Task3/Task4 at the\n                        Task2 exit (180 degrees); never infer from current yaw\n  --show-plan           Print the selected sequence without connecting to\n                        hardware\n  --list-tasks          List tasks and strategy packages without connecting to\n                        hardware\n  --port PORT           A-board serial port (default: COM5)\n  --baud BAUD\n  --telem-rate TELEM_RATE\n  --camera CAMERA       Camera role, stable path, or diagnostic index\n                        (default: 1)\n  --tag-camera TAG_CAMERA\n                        Tag camera role or stable path (default: tag)\n  --no-field-localization\n                        Disable AprilTag full-field localization\n  --localization-gui\n  --vision-gui\n  --debug\n  --diagnostics-log DIAGNOSTICS_LOG\n                        Append JSONL diagnostics to this path\n  --no-collect-data     Disable automatic cube-image collection for this run\n  --dataset-dir DATASET_DIR\n                        Local image library directory (relative to\n                        RaspberryPi)\n",
+      "stderr": ""
+    },
+    {
+      "arguments": [
+        "main.py",
+        "--show-plan"
+      ],
+      "code": 0,
+      "stdout": "PlanA: task0-1 -> task1-1 -> task2-1 -> task3-1 -> task1-2 -> task2-2 -> task3-2 -> task1-3 -> task2-2 -> task3-3\n",
+      "stderr": ""
+    },
+    {
+      "arguments": [
+        "main.py",
+        "--list-tasks"
+      ],
+      "code": 0,
+      "stdout": "Tasks: task0-1, task0-2, task0-3, task1-1, task1-2, task1-3, task2-1, task2-2, task3-1, task3-2, task3-3, task4-1, task4-2, task5\nPlanA: task0-1 -> task1-1 -> task2-1 -> task3-1 -> task1-2 -> task2-2 -> task3-2 -> task1-3 -> task2-2 -> task3-3\nPlanB: task0-2 -> task2-1 -> task4-1 -> task2-2 -> task4-2 -> task0-3 -> task1-1 -> task0-3 -> task1-2 -> task5\nset1: task0-1 -> task1-1 -> task2-1 -> task3-1\nset2: task0-1 -> task1-2 -> task2-2 -> task3-2\ncollect-build-1: task2-1 -> task3-1\ncollect-build-2: task2-2 -> task3-2\n",
+      "stderr": ""
+    },
+    {
+      "arguments": [
+        "main.py",
+        "--invalid-option"
+      ],
+      "code": 2,
+      "stdout": "",
+      "stderr": "usage: main.py [-h]\n               [--strategy {PlanA,PlanB,set1,set2,collect-build-1,collect-build-2,classic,plana,planb} | --task {task0-1,task0-2,task0-3,task1-1,task1-2,task1-3,task2-1,task2-2,task3-1,task3-2,task3-3,task4-1,task4-2,task5,classic,plana,planb,all,round1,round2,task0,task1,task1-r1,task1-r2,task2,task2-r1,task2-r2}]\n               [--heading-zero-deg HEADING_ZERO_DEG] [--show-plan]\n               [--list-tasks] [--port PORT] [--baud BAUD]\n               [--telem-rate TELEM_RATE] [--camera CAMERA]\n               [--tag-camera TAG_CAMERA] [--no-field-localization]\n               [--localization-gui] [--vision-gui] [--debug]\n               [--diagnostics-log DIAGNOSTICS_LOG] [--no-collect-data]\n               [--dataset-dir DATASET_DIR]\nmain.py: error: unrecognized arguments: --invalid-option\n"
+    },
+    {
+      "arguments": [
+        "robot.py",
+        "--help"
+      ],
+      "code": 0,
+      "stdout": "usage: robot.py [-h] [--port PORT] [--baud BAUD] [--test-ping] [--preflight]\n                [--action ACTION] [--telemetry-only] [--telem-rate TELEM_RATE]\n                [--duration DURATION] [--vision] [--camera CAMERA]\n                [--vision-gui] [--vision-exposure VISION_EXPOSURE]\n                [--vision-gain VISION_GAIN] [--localization]\n                [--tag-camera TAG_CAMERA] [--localization-gui] [--debug]\n                [--no-collect-data] [--dataset-dir DATASET_DIR]\n\nUniforest Robot Controller\n\noptions:\n  -h, --help            show this help message and exit\n  --port PORT           Serial port (default: COM5)\n  --baud BAUD           Baud rate (default: 115200)\n  --test-ping           Test communication with PING/PONG\n  --preflight           Run read-only hardware and sensor preflight\n  --action ACTION       Run action: home, hatch_open, hatch_close, grap1,\n                        grap2, grap3, build\n  --telemetry-only      Display telemetry stream\n  --telem-rate TELEM_RATE\n                        Telemetry rate in Hz (default: 50)\n  --duration DURATION   Duration in seconds (0=forever)\n  --vision              Enable cube detection vision\n  --camera CAMERA       Camera role, stable path, or diagnostic index\n                        (default: 1)\n  --vision-gui          Show vision debug window\n  --vision-exposure VISION_EXPOSURE\n                        Manual camera exposure (backend-specific value)\n  --vision-gain VISION_GAIN\n                        Manual camera gain (backend-specific value)\n  --localization        Enable AprilTag full-field localization\n  --tag-camera TAG_CAMERA\n                        Tag camera role or stable path (default: tag)\n  --localization-gui    Show field-localization debug window\n  --debug               Enable transport debug output\n  --no-collect-data     Disable automatic cube-image collection\n  --dataset-dir DATASET_DIR\n                        Local cube image library directory\n",
+      "stderr": ""
+    },
+    {
+      "arguments": [
+        "task2_main.py",
+        "--help"
+      ],
+      "code": 0,
+      "stdout": "usage: task2_main.py [-h] [--variant {1,2}] [--port PORT] [--baud BAUD]\n                     [--telem-rate TELEM_RATE] [--camera CAMERA]\n                     [--tag-camera TAG_CAMERA] [--vision-gui]\n                     [--localization-gui] [--preflight-only] [--debug]\n                     [--no-collect-data] [--dataset-dir DATASET_DIR]\n\nTask2 starts at heading 180 degrees with a backward move; collection and\napproach only (Build is Task3)\n\noptions:\n  -h, --help            show this help message and exit\n  --variant {1,2}\n  --port PORT\n  --baud BAUD\n  --telem-rate TELEM_RATE\n  --camera CAMERA       Cube camera role, stable path, or diagnostic index\n                        (default: 1)\n  --tag-camera TAG_CAMERA\n  --vision-gui\n  --localization-gui\n  --preflight-only      Check hardware without commanding motion\n  --debug\n  --no-collect-data     Disable automatic cube-image collection for this run\n  --dataset-dir DATASET_DIR\n                        Local image library directory (relative to\n                        RaspberryPi)\n",
+      "stderr": ""
+    },
+    {
+      "arguments": [
+        "task2_main.py",
+        "--show-plan"
+      ],
+      "code": 2,
+      "stdout": "",
+      "stderr": "usage: task2_main.py [-h] [--variant {1,2}] [--port PORT] [--baud BAUD]\n                     [--telem-rate TELEM_RATE] [--camera CAMERA]\n                     [--tag-camera TAG_CAMERA] [--vision-gui]\n                     [--localization-gui] [--preflight-only] [--debug]\n                     [--no-collect-data] [--dataset-dir DATASET_DIR]\ntask2_main.py: error: unrecognized arguments: --show-plan\n"
+    },
+    {
+      "arguments": [
+        "main.py",
+        "--strategy",
+        "PlanA",
+        "--show-plan"
+      ],
+      "code": 0,
+      "stdout": "PlanA: task0-1 -> task1-1 -> task2-1 -> task3-1 -> task1-2 -> task2-2 -> task3-2 -> task1-3 -> task2-2 -> task3-3\n",
+      "stderr": ""
+    },
+    {
+      "arguments": [
+        "main.py",
+        "--strategy",
+        "PlanB",
+        "--show-plan"
+      ],
+      "code": 0,
+      "stdout": "PlanB: task0-2 -> task2-1 -> task4-1 -> task2-2 -> task4-2 -> task0-3 -> task1-1 -> task0-3 -> task1-2 -> task5\n",
+      "stderr": ""
+    },
+    {
+      "arguments": [
+        "main.py",
+        "--strategy",
+        "set1",
+        "--show-plan"
+      ],
+      "code": 0,
+      "stdout": "set1: task0-1 -> task1-1 -> task2-1 -> task3-1\n",
+      "stderr": ""
+    },
+    {
+      "arguments": [
+        "main.py",
+        "--strategy",
+        "set2",
+        "--show-plan"
+      ],
+      "code": 0,
+      "stdout": "set2: task0-1 -> task1-2 -> task2-2 -> task3-2\n",
+      "stderr": ""
+    },
+    {
+      "arguments": [
+        "main.py",
+        "--strategy",
+        "collect-build-1",
+        "--show-plan"
+      ],
+      "code": 0,
+      "stdout": "collect-build-1: task2-1 -> task3-1\nEntry: heading 180 degrees; Task2 starts with a backward move.\n",
+      "stderr": ""
+    },
+    {
+      "arguments": [
+        "main.py",
+        "--strategy",
+        "collect-build-2",
+        "--show-plan"
+      ],
+      "code": 0,
+      "stdout": "collect-build-2: task2-2 -> task3-2\nEntry: heading 180 degrees; Task2 starts with a backward move.\n",
+      "stderr": ""
+    },
+    {
+      "arguments": [
+        "main.py",
+        "--strategy",
+        "classic",
+        "--show-plan"
+      ],
+      "code": 0,
+      "stdout": "PlanA: task0-1 -> task1-1 -> task2-1 -> task3-1 -> task1-2 -> task2-2 -> task3-2 -> task1-3 -> task2-2 -> task3-3\n",
+      "stderr": ""
+    },
+    {
+      "arguments": [
+        "main.py",
+        "--strategy",
+        "plana",
+        "--show-plan"
+      ],
+      "code": 0,
+      "stdout": "PlanA: task0-1 -> task1-1 -> task2-1 -> task3-1 -> task1-2 -> task2-2 -> task3-2 -> task1-3 -> task2-2 -> task3-3\n",
+      "stderr": ""
+    },
+    {
+      "arguments": [
+        "main.py",
+        "--strategy",
+        "planb",
+        "--show-plan"
+      ],
+      "code": 0,
+      "stdout": "PlanB: task0-2 -> task2-1 -> task4-1 -> task2-2 -> task4-2 -> task0-3 -> task1-1 -> task0-3 -> task1-2 -> task5\n",
+      "stderr": ""
+    },
+    {
+      "arguments": [
+        "main.py",
+        "--task",
+        "task0-1",
+        "--show-plan"
+      ],
+      "code": 0,
+      "stdout": "task0-1: task0-1\n",
+      "stderr": ""
+    },
+    {
+      "arguments": [
+        "main.py",
+        "--task",
+        "task0-2",
+        "--show-plan"
+      ],
+      "code": 0,
+      "stdout": "task0-2: task0-2\n",
+      "stderr": ""
+    },
+    {
+      "arguments": [
+        "main.py",
+        "--task",
+        "task0-3",
+        "--show-plan"
+      ],
+      "code": 0,
+      "stdout": "task0-3: task0-3\nEntry: heading 180 degrees at the Task4/Task1 exit; turn to 0 degrees, move left 2600 mm, then approach the left wall.\n",
+      "stderr": ""
+    },
+    {
+      "arguments": [
+        "main.py",
+        "--task",
+        "task1-1",
+        "--show-plan"
+      ],
+      "code": 0,
+      "stdout": "task1-1: task1-1\n",
+      "stderr": ""
+    },
+    {
+      "arguments": [
+        "main.py",
+        "--task",
+        "task1-2",
+        "--show-plan"
+      ],
+      "code": 0,
+      "stdout": "task1-2: task1-2\n",
+      "stderr": ""
+    },
+    {
+      "arguments": [
+        "main.py",
+        "--task",
+        "task1-3",
+        "--show-plan"
+      ],
+      "code": 0,
+      "stdout": "task1-3: task1-3\n",
+      "stderr": ""
+    },
+    {
+      "arguments": [
+        "main.py",
+        "--task",
+        "task2-1",
+        "--show-plan"
+      ],
+      "code": 0,
+      "stdout": "task2-1: task2-1\nEntry: heading 180 degrees; Task2 starts with a backward move.\n",
+      "stderr": ""
+    },
+    {
+      "arguments": [
+        "main.py",
+        "--task",
+        "task2-2",
+        "--show-plan"
+      ],
+      "code": 0,
+      "stdout": "task2-2: task2-2\nEntry: heading 180 degrees; Task2 starts with a backward move.\n",
+      "stderr": ""
+    },
+    {
+      "arguments": [
+        "main.py",
+        "--task",
+        "task3-1",
+        "--show-plan"
+      ],
+      "code": 0,
+      "stdout": "task3-1: task3-1\nEntry: Task2 exit, heading 180 degrees, loaded for Build (Task3) or hatch unloading (Task4); --heading-zero-deg is required.\n",
+      "stderr": ""
+    },
+    {
+      "arguments": [
+        "main.py",
+        "--task",
+        "task3-2",
+        "--show-plan"
+      ],
+      "code": 0,
+      "stdout": "task3-2: task3-2\nEntry: Task2 exit, heading 180 degrees, loaded for Build (Task3) or hatch unloading (Task4); --heading-zero-deg is required.\n",
+      "stderr": ""
+    },
+    {
+      "arguments": [
+        "main.py",
+        "--task",
+        "task3-3",
+        "--show-plan"
+      ],
+      "code": 0,
+      "stdout": "task3-3: task3-3\nEntry: Task2 exit, heading 180 degrees, loaded for Build (Task3) or hatch unloading (Task4); --heading-zero-deg is required.\n",
+      "stderr": ""
+    },
+    {
+      "arguments": [
+        "main.py",
+        "--task",
+        "task4-1",
+        "--show-plan"
+      ],
+      "code": 0,
+      "stdout": "task4-1: task4-1\nEntry: Task2 exit, heading 180 degrees, loaded for Build (Task3) or hatch unloading (Task4); --heading-zero-deg is required.\n",
+      "stderr": ""
+    },
+    {
+      "arguments": [
+        "main.py",
+        "--task",
+        "task4-2",
+        "--show-plan"
+      ],
+      "code": 0,
+      "stdout": "task4-2: task4-2\nEntry: Task2 exit, heading 180 degrees, loaded for Build (Task3) or hatch unloading (Task4); --heading-zero-deg is required.\n",
+      "stderr": ""
+    },
+    {
+      "arguments": [
+        "main.py",
+        "--task",
+        "task5",
+        "--show-plan"
+      ],
+      "code": 0,
+      "stdout": "task5: task5\nEntry: Task1-2 exit, heading 180 degrees; two wall loading and building cycles, open-hatch wait 200 ms, close-hatch wait 400 ms; each third release starts a 100 mm reverse before the lateral route.\n",
+      "stderr": ""
+    },
+    {
+      "arguments": [
+        "main.py",
+        "--task",
+        "classic",
+        "--show-plan"
+      ],
+      "code": 0,
+      "stdout": "PlanA: task0-1 -> task1-1 -> task2-1 -> task3-1 -> task1-2 -> task2-2 -> task3-2 -> task1-3 -> task2-2 -> task3-3\n",
+      "stderr": ""
+    },
+    {
+      "arguments": [
+        "main.py",
+        "--task",
+        "plana",
+        "--show-plan"
+      ],
+      "code": 0,
+      "stdout": "PlanA: task0-1 -> task1-1 -> task2-1 -> task3-1 -> task1-2 -> task2-2 -> task3-2 -> task1-3 -> task2-2 -> task3-3\n",
+      "stderr": ""
+    },
+    {
+      "arguments": [
+        "main.py",
+        "--task",
+        "planb",
+        "--show-plan"
+      ],
+      "code": 0,
+      "stdout": "PlanB: task0-2 -> task2-1 -> task4-1 -> task2-2 -> task4-2 -> task0-3 -> task1-1 -> task0-3 -> task1-2 -> task5\n",
+      "stderr": ""
+    },
+    {
+      "arguments": [
+        "main.py",
+        "--task",
+        "all",
+        "--show-plan"
+      ],
+      "code": 0,
+      "stdout": "PlanA: task0-1 -> task1-1 -> task2-1 -> task3-1 -> task1-2 -> task2-2 -> task3-2 -> task1-3 -> task2-2 -> task3-3\n",
+      "stderr": ""
+    },
+    {
+      "arguments": [
+        "main.py",
+        "--task",
+        "round1",
+        "--show-plan"
+      ],
+      "code": 0,
+      "stdout": "set1: task0-1 -> task1-1 -> task2-1 -> task3-1\n",
+      "stderr": ""
+    },
+    {
+      "arguments": [
+        "main.py",
+        "--task",
+        "round2",
+        "--show-plan"
+      ],
+      "code": 0,
+      "stdout": "set2: task0-1 -> task1-2 -> task2-2 -> task3-2\n",
+      "stderr": ""
+    },
+    {
+      "arguments": [
+        "main.py",
+        "--task",
+        "task0",
+        "--show-plan"
+      ],
+      "code": 0,
+      "stdout": "task0-1: task0-1\n",
+      "stderr": ""
+    },
+    {
+      "arguments": [
+        "main.py",
+        "--task",
+        "task1",
+        "--show-plan"
+      ],
+      "code": 0,
+      "stdout": "task1-1: task1-1\n",
+      "stderr": ""
+    },
+    {
+      "arguments": [
+        "main.py",
+        "--task",
+        "task1-r1",
+        "--show-plan"
+      ],
+      "code": 0,
+      "stdout": "task1-1: task1-1\n",
+      "stderr": ""
+    },
+    {
+      "arguments": [
+        "main.py",
+        "--task",
+        "task1-r2",
+        "--show-plan"
+      ],
+      "code": 0,
+      "stdout": "task1-2: task1-2\n",
+      "stderr": ""
+    },
+    {
+      "arguments": [
+        "main.py",
+        "--task",
+        "task2",
+        "--show-plan"
+      ],
+      "code": 0,
+      "stdout": "collect-build-1: task2-1 -> task3-1\nEntry: heading 180 degrees; Task2 starts with a backward move.\n",
+      "stderr": ""
+    },
+    {
+      "arguments": [
+        "main.py",
+        "--task",
+        "task2-r1",
+        "--show-plan"
+      ],
+      "code": 0,
+      "stdout": "collect-build-1: task2-1 -> task3-1\nEntry: heading 180 degrees; Task2 starts with a backward move.\n",
+      "stderr": ""
+    },
+    {
+      "arguments": [
+        "main.py",
+        "--task",
+        "task2-r2",
+        "--show-plan"
+      ],
+      "code": 0,
+      "stdout": "collect-build-2: task2-2 -> task3-2\nEntry: heading 180 degrees; Task2 starts with a backward move.\n",
+      "stderr": ""
+    }
+  ],
+  "entry_sources": {
+    "main": "#!/usr/bin/env python3\n\"\"\"Official RoboGame entry point for the full mission or one task.\"\"\"\n\nimport argparse\nimport sys\n\nfrom robot import Robot\nfrom Strategy.runner import (\n    TASK_CHOICES, STRATEGY_CHOICES, resolve_selection, run_tasks,\n)\nfrom Strategy.context import BuildApproach\nfrom Strategy.plans import PLANS, validate_plan\nfrom Strategy.tasks import TASK_IDS\nfrom vision import default_camera_selector\nfrom vision.yolo.collector import add_collection_arguments\nfrom utils.diagnostics import classify_failure\n\n\ndef parse_args(argv=None):\n    default_port = Robot.SERIAL_PORT\n    default_camera = default_camera_selector()\n    parser = argparse.ArgumentParser(\n        description='Uniforest RoboGame competition program')\n    selection = parser.add_mutually_exclusive_group()\n    selection.add_argument('--strategy', choices=STRATEGY_CHOICES,\n                           help='Run a strategy package (default: PlanA)')\n    selection.add_argument('--task', choices=TASK_CHOICES,\n                           help='Run one reusable task; old selectors remain explicit aliases')\n    parser.add_argument('--heading-zero-deg', type=float,\n                        help='Known gyro yaw zero for standalone Task3/Task4 at the Task2 exit (180 degrees); never infer from current yaw')\n    parser.add_argument('--show-plan', action='store_true',\n                        help='Print the selected sequence without connecting to hardware')\n    parser.add_argument('--list-tasks', action='store_true',\n                        help='List tasks and strategy packages without connecting to hardware')\n    parser.add_argument('--port', default=default_port,\n                        help=f'A-board serial port (default: {default_port})')\n    parser.add_argument('--baud', type=int, default=115200)\n    parser.add_argument('--telem-rate', type=int, default=50)\n    parser.add_argument('--camera', default=default_camera,\n                        help='Camera role, stable path, or diagnostic index '\n                             f'(default: {default_camera})')\n    parser.add_argument('--tag-camera', default='tag',\n                        help='Tag camera role or stable path (default: tag)')\n    parser.add_argument('--no-field-localization', action='store_true',\n                        help='Disable AprilTag full-field localization')\n    parser.add_argument('--localization-gui', action='store_true')\n    parser.add_argument('--vision-gui', action='store_true')\n    parser.add_argument('--debug', action='store_true')\n    parser.add_argument('--diagnostics-log', default=None,\n                        help='Append JSONL diagnostics to this path')\n    add_collection_arguments(parser)\n    return parser.parse_args(argv)\n\n\ndef main() -> int:\n    args = parse_args()\n    if args.list_tasks:\n        print('Tasks: ' + ', '.join(TASK_IDS))\n        for plan in PLANS.values():\n            print(f'{plan.name}: ' + ' -> '.join(step.task_id for step in plan.steps))\n        return 0\n    selection = args.strategy or args.task or 'PlanA'\n    plan = resolve_selection(selection)\n    if args.show_plan:\n        print(f'{plan.name}: ' + ' -> '.join(step.task_id for step in plan.steps))\n        if plan.steps[0].task_id.startswith(('task3-', 'task4-')):\n            print('Entry: Task2 exit, heading 180 degrees, loaded for Build (Task3) '\n                  'or hatch unloading (Task4); --heading-zero-deg is required.')\n        elif plan.steps[0].task_id.startswith('task2-'):\n            print('Entry: heading 180 degrees; Task2 starts with a backward move.')\n        elif plan.steps[0].task_id == 'task0-3':\n            print('Entry: heading 180 degrees at the Task4/Task1 exit; '\n                  'turn to 0 degrees, move left 2600 mm, then approach the left wall.')\n        elif plan.steps[0].task_id == 'task5':\n            print('Entry: Task1-2 exit, heading 180 degrees; two wall loading '\n                  'and building cycles, open-hatch wait 200 ms, close-hatch wait 400 ms; '\n                  'each third release starts a 100 mm reverse before the lateral route.')\n        return 0\n    try:\n        if args.heading_zero_deg is not None:\n            BuildApproach(args.heading_zero_deg, 'explicit entry pose')\n        validate_plan(plan, initial_handoff=args.heading_zero_deg is not None)\n    except (TypeError, ValueError) as exc:\n        print(f'[Strategy] {exc}', file=sys.stderr)\n        return 2\n    robot = Robot(\n        port=args.port,\n        baud=args.baud,\n        enable_vision=True,\n        camera_id=args.camera,\n        vision_gui=args.vision_gui,\n        enable_localization=not args.no_field_localization,\n        localization_camera=args.tag_camera,\n        localization_gui=args.localization_gui,\n        debug=args.debug,\n        diagnostics_path=args.diagnostics_log,\n        collect_data=False if args.no_collect_data else None,\n        dataset_dir=args.dataset_dir,\n    )\n\n    try:\n        if not robot.connect():\n            return 1\n        robot.start(telem_rate=args.telem_rate)\n        return run_tasks(robot, selection, heading_zero_deg=args.heading_zero_deg)\n    except KeyboardInterrupt:\n        print('\\n[Competition] Interrupted')\n        return 130\n    except Exception as exc:\n        robot.transport.emergency_stop()\n        category = classify_failure(exc)\n        robot.diagnostics.write('fatal', category=category,\n                                error_type=type(exc).__name__,\n                                message=str(exc))\n        print(f'[Competition] Fatal error [{category}]: {exc}')\n        return 1\n    finally:\n        robot.stop()\n\n\nif __name__ == '__main__':\n    sys.exit(main())\n",
+    "task2_main": "#!/usr/bin/env python3\n\"\"\"Task2 entry point; never runs the Task1 mission flow.\"\"\"\n\nimport argparse\nimport sys\n\nfrom robot import Robot\nfrom Strategy.task2 import Task2DebugProgram\nfrom Strategy.runner import run_tasks\nfrom vision import default_camera_selector\nfrom vision.yolo.collector import add_collection_arguments\n\n\ndef parse_args():\n    default_camera = default_camera_selector()\n    parser = argparse.ArgumentParser(\n        description='Task2 starts at heading 180 degrees with a backward move; '\n                    'collection and approach only (Build is Task3)')\n    parser.add_argument('--variant', choices=('1', '2'), default='1')\n    parser.add_argument('--port', default=Robot.SERIAL_PORT)\n    parser.add_argument('--baud', type=int, default=115200)\n    parser.add_argument('--telem-rate', type=int, default=50)\n    parser.add_argument('--camera', default=default_camera,\n                        help='Cube camera role, stable path, or diagnostic '\n                             f'index (default: {default_camera})')\n    parser.add_argument('--tag-camera', default='tag')\n    parser.add_argument('--vision-gui', action='store_true')\n    parser.add_argument('--localization-gui', action='store_true')\n    parser.add_argument('--preflight-only', action='store_true',\n                        help='Check hardware without commanding motion')\n    parser.add_argument('--debug', action='store_true')\n    add_collection_arguments(parser)\n    return parser.parse_args()\n\n\ndef main() -> int:\n    args = parse_args()\n    robot = Robot(\n        port=args.port,\n        baud=args.baud,\n        enable_vision=True,\n        camera_id=args.camera,\n        vision_gui=args.vision_gui,\n        enable_localization=True,\n        localization_camera=args.tag_camera,\n        localization_gui=args.localization_gui,\n        debug=args.debug,\n        collect_data=False if args.no_collect_data else None,\n        dataset_dir=args.dataset_dir,\n    )\n\n    try:\n        if not robot.connect():\n            return 1\n        robot.start(telem_rate=args.telem_rate)\n        if args.preflight_only:\n            return Task2DebugProgram(robot).run()\n        return run_tasks(robot, f'task2-{args.variant}')\n    except KeyboardInterrupt:\n        print('\\n[Task2] Interrupted')\n        return 130\n    except Exception as exc:\n        robot.transport.emergency_stop()\n        print(f'[Task2] Fatal error: {exc}')\n        return 1\n    finally:\n        robot.stop()\n\n\nif __name__ == '__main__':\n    sys.exit(main())\n",
+    "robot": "#!/usr/bin/env python3\n\"\"\"\nUniforest robot facade and subsystem lifecycle.\n\nArchitecture:\n    Pi (上位机) ←→ STM32 A-board (下位机) via UART7 (115200 bps)\n\n    Pi handles all decision logic:\n    - Path planning & navigation\n    - Action sequences (Build, Grap, etc.)\n    - Vision processing\n    - PID parameter tuning\n\n    STM32 executes low-level commands:\n    - CAN bus motor control (speed PID @ 1 kHz)\n    - Servo PWM\n    - Stepper pulse generation (non-blocking, TIM7 @ 100 kHz)\n    - IMU / RC data acquisition & telemetry\n\nThe official competition entry is main.py. Run this module directly for\nhardware preflight, individual actions, and the manual diagnostic console.\n\"\"\"\n\nimport sys\nimport time\nimport threading\nimport argparse\nimport glob\nimport os\nfrom dataclasses import dataclass, asdict\nfrom typing import Optional\n\nfrom protocol import Transport, TelemBatch\nfrom control import (\n    Chassis, Servo, Stepper, Actions,\n    DEFAULT_MOVE_SPEED_MM_S, LinearMoveResult,\n)\nfrom utils.diagnostics import JsonlDiagnostics\n\n\n@dataclass(frozen=True)\nclass HardwarePreflightReport:\n    \"\"\"Read-only startup health snapshot; no actuator commands are issued.\"\"\"\n    connected: bool\n    telemetry_received: bool\n    telemetry_age_s: Optional[float]\n    telemetry_uptime_ms: Optional[int]\n    rx_frames: int\n    tx_frames: int\n    rx_crc_errors: int\n    vision_active: bool\n    localization_active: bool\n    protocol_valid: bool\n\n    @property\n    def ok(self) -> bool:\n        return (self.connected and self.telemetry_received\n                and self.protocol_valid)\n\n# Vision is optional — only imported if enabled\ntry:\n    from vision import (\n        CubeDetector, VisionResult, FieldLocalizer, FieldPose,\n        default_camera_selector,\n    )\n    HAS_VISION = True\nexcept ImportError:\n    HAS_VISION = False\n    CubeDetector = None\n    VisionResult = None\n    FieldLocalizer = None\n    FieldPose = None\n\n\ndef default_serial_port() -> str:\n    \"\"\"Return the stable A-board serial path for the current platform.\"\"\"\n    if sys.platform == 'win32':\n        return 'COM5'\n\n    daplink_ports = sorted(glob.glob(\n        '/dev/serial/by-id/*CMSIS-DAP*-if02'))\n    if daplink_ports:\n        return daplink_ports[0]\n    if os.path.exists('/dev/ttyACM0'):\n        return '/dev/ttyACM0'\n    return '/dev/serial0'\n\n\nclass Robot:\n    \"\"\"\n    Main robot controller — owns all subsystems.\n    \"\"\"\n\n    SERIAL_PORT = default_serial_port()\n    SERIAL_BAUD = 115200\n\n    def __init__(self, port: str = None, baud: int = None,\n                 enable_vision: bool = False, camera_id=None,\n                 vision_gui: bool = False,\n                 vision_exposure: float = None,\n                 vision_gain: float = None,\n                 enable_localization: bool = False,\n                 localization_camera='tag',\n                 localization_gui: bool = False,\n                 debug: bool = False,\n                 diagnostics_path: Optional[str] = None,\n                 quiet_heartbeat: bool = False,\n                 collect_data: Optional[bool] = None,\n                 dataset_dir: Optional[str] = None):\n        if port is None:\n            port = self.SERIAL_PORT\n        if baud is None:\n            baud = self.SERIAL_BAUD\n\n        # Transport layer\n        self.transport = Transport(port, baud, debug=debug)\n        self.diagnostics = JsonlDiagnostics(diagnostics_path)\n        self._quiet_heartbeat = quiet_heartbeat\n\n        # Control subsystems\n        self.chassis = Chassis(self.transport)\n        self.servo = Servo(self.transport)\n        self.stepper = Stepper(self.transport)\n        self.actions = Actions(self.servo, self.stepper,\n                               transport=self.transport)\n\n        # Vision subsystem (optional)\n        self._vision: Optional['CubeDetector'] = None\n        self._data_collector = None\n        if enable_vision and HAS_VISION:\n            self._vision = CubeDetector(\n                camera_id=camera_id,\n                show_gui=vision_gui,\n                exposure=vision_exposure,\n                gain=vision_gain,\n            )\n            from vision.yolo.collector import create_collector\n            self._data_collector = create_collector(\n                enabled=collect_data, data_dir=dataset_dir)\n            if self._data_collector is not None:\n                self._vision.set_frame_sink(self._data_collector.offer_frame)\n        elif enable_vision and not HAS_VISION:\n            print(\"[Robot] 视觉模块不可用（opencv-python 未安装）\")\n\n        # Latest telemetry\n        self._telem: Optional[TelemBatch] = None\n        self._telem_received_at: Optional[float] = None\n        self._telem_lock = threading.Lock()\n        self._inspection_link_generation = 0\n        self._pong_received_at = 0.0\n        self._pong_event = threading.Event()\n        # The A-board's 200 ms watchdog needs traffic even while an action is\n        # waiting for a motor/servo operation to finish.\n        self._heartbeat_stop = threading.Event()\n        self._heartbeat_thread: Optional[threading.Thread] = None\n\n        # Dedicated AprilTag camera and full-field localization subsystem.\n        self._localizer: Optional['FieldLocalizer'] = None\n        if enable_localization and HAS_VISION:\n            self._localizer = FieldLocalizer(\n                camera=localization_camera,\n                show_gui=localization_gui,\n            )\n        elif enable_localization and not HAS_VISION:\n            print(\"[Robot] Field localization unavailable (OpenCV missing)\")\n\n        # State\n        self._running = False\n        self.strategy_lock = threading.Lock()\n\n    # ==================== Lifecycle ==========================================\n\n    def connect(self) -> bool:\n        \"\"\"Connect to STM32 and start telemetry.\"\"\"\n        if not self.transport.connect():\n            print(\"[Robot] Failed to connect to STM32\")\n            return False\n        self.diagnostics.write('connect_start', port=self.transport._port,\n                               baud=self.transport._baudrate)\n\n        # Register telemetry callback\n        self.transport.on_telemetry(self._on_telem)\n        self.transport.on_ack(self._on_ack)\n        self.transport.on_pong(self._on_pong)\n\n        # Opening a stale DAPLink COM handle can succeed after target power loss,\n        # even though writes time out.  Require a real STM32 PONG before claiming\n        # that the robot is connected; retry while the MCU finishes booting.\n        for _ in range(5):\n            self._pong_event.clear()\n            if self.transport.ping() and self._pong_event.wait(0.7):\n                print(f\"[Robot] Connected to STM32 on {self.transport._port} \"\n                      f\"@ {self.transport._baudrate}\")\n                self.diagnostics.write('connect_ok')\n                return True\n            time.sleep(0.2)\n\n        print(\"[Robot] COM port opened but STM32 did not answer PING. \"\n              \"Replug DAPLink USB after restoring robot power.\")\n        self.transport.disconnect()\n        self.diagnostics.write('connect_failed', reason='pong_timeout')\n        return False\n\n    def start(self, telem_rate: int = 50):\n        \"\"\"Start telemetry streaming and vision (if enabled).\"\"\"\n        self._running = True\n        time.sleep(0.1)  # let connection settle\n        self.transport.set_telemetry_rate(telem_rate)\n        print(f\"[Robot] Telemetry streaming at {telem_rate} Hz\")\n\n        self._heartbeat_stop.clear()\n        self._heartbeat_thread = threading.Thread(\n            target=self._heartbeat_loop,\n            name='stm32-heartbeat',\n            daemon=True,\n        )\n        self._heartbeat_thread.start()\n\n        # Start vision if configured\n        if self._vision is not None:\n            if self._data_collector is not None:\n                self._data_collector.start()\n            if self._vision.start():\n                print(\"[Robot] Vision subsystem active\")\n            else:\n                print(\"[Robot] Vision failed to start\")\n                if self._data_collector is not None:\n                    self._data_collector.stop()\n        if self._localizer is not None:\n            if self._localizer.start():\n                print(\"[Robot] Field localization active\")\n            else:\n                print(\"[Robot] Field localization failed to start\")\n\n    def stop(self):\n        \"\"\"Emergency stop and disconnect.\"\"\"\n        self._running = False\n        self._heartbeat_stop.set()\n        if self._heartbeat_thread and self._heartbeat_thread.is_alive():\n            self._heartbeat_thread.join(timeout=0.5)\n        # Stop vision first\n        if self._vision is not None:\n            self._vision.stop()\n        if self._localizer is not None:\n            self._localizer.stop()\n        self.transport.emergency_stop()\n        time.sleep(0.1)\n        self.transport.disconnect()\n        # Disk flushing happens only after the existing hardware stop/disconnect.\n        if self._data_collector is not None:\n            self._data_collector.stop()\n        print(\"[Robot] Disconnected\")\n\n    def set_collection_context(self, **fields):\n        \"\"\"Attach task/phase hints to future images; performs no I/O.\"\"\"\n        if self._data_collector is not None:\n            self._data_collector.set_context(**fields)\n\n    def _heartbeat_loop(self):\n        \"\"\"Keep the A-board watchdog alive during blocking action waits.\"\"\"\n        period_s = 0.05\n        started = time.monotonic()\n        warned = False\n        while not self._heartbeat_stop.wait(period_s):\n            sent = self.transport.ping()\n            now = time.monotonic()\n            with self._telem_lock:\n                pong_at = self._pong_received_at\n            # Allow the streaming heartbeat to take over from connect's PONG.\n            # This controls logging only; existing watchdogs remain unchanged.\n            missing = now - started >= .3 and now - pong_at > .2\n            lost = not sent or missing\n            if lost and not warned:\n                reason = '心跳发送失败' if not sent else '超过 200 ms 未收到心跳响应'\n                print(f'[Robot] 通信异常：{reason}，请检查 A 板连接。', flush=True)\n            warned = lost\n\n    # ==================== Telemetry Callbacks ================================\n\n    def _on_telem(self, telem: TelemBatch):\n        with self._telem_lock:\n            now = time.monotonic()\n            if self._telem is not None and (\n                    (self._telem_received_at is not None\n                     and now - self._telem_received_at > .15)\n                    or ((telem.uptime_ms - self._telem.uptime_ms) & 0xffffffff) > 0x7fffffff):\n                self._inspection_link_generation += 1\n            self._telem = telem\n            self._telem_received_at = now\n            # Forward to chassis for position tracking\n            self.chassis.update_telem(telem)\n\n    def _on_ack(self, ack):\n        if ack.status != 0:\n            print(f\"[Robot] ACK error: cmd=0x{ack.echoed_cmd:02X} status={ack.status}\")\n\n    def _on_pong(self, uptime_ms: int):\n        self._pong_event.set()\n        with self._telem_lock:\n            now = time.monotonic()\n            if self._pong_received_at and now - self._pong_received_at > .15:\n                self._inspection_link_generation += 1\n            self._pong_received_at = now\n\n    @property\n    def telem(self) -> Optional[TelemBatch]:\n        with self._telem_lock:\n            return self._telem\n\n    def inspection_link_snapshot(self):\n        with self._telem_lock:\n            return (self._telem, self._telem_received_at, self._pong_received_at,\n                    self._inspection_link_generation)\n\n    @property\n    def cube_raw_frame(self):\n        return self._vision.raw_frame if self.has_vision else None\n\n    def check_carried_cube_count(self, *, chassis_followup=None,\n                                allow_visual_failure=False):\n        from control.carried_cube_inspection import inspect_carried_cubes\n        return inspect_carried_cubes(self, chassis_followup=chassis_followup,\n                                    allow_visual_failure=allow_visual_failure)\n\n    def hardware_preflight(self, timeout_s: float = 2.0,\n                           max_telem_age_s: float = 0.3\n                           ) -> HardwarePreflightReport:\n        \"\"\"Check communication and started sensor subsystems without motion.\"\"\"\n        deadline = time.monotonic() + max(0.0, timeout_s)\n        received_at = None\n        telem = None\n        while time.monotonic() < deadline:\n            with self._telem_lock:\n                received_at = self._telem_received_at\n                telem = self._telem\n            if telem is not None and received_at is not None:\n                break\n            time.sleep(0.01)\n\n        # Capture one final snapshot when timeout_s is zero or the last loop\n        # iteration ended just before the telemetry callback ran.\n        with self._telem_lock:\n            received_at = self._telem_received_at\n            telem = self._telem\n\n        now = time.monotonic()\n        age = (None if received_at is None else max(0.0, now - received_at))\n        protocol_valid = False\n        try:\n            from protocol.schema import validate_python_constants\n            validate_python_constants()\n            protocol_valid = True\n        except Exception as exc:\n            print(f'[Preflight] protocol schema invalid: {exc}')\n\n        report = HardwarePreflightReport(\n            connected=self.transport.connected,\n            telemetry_received=telem is not None,\n            telemetry_age_s=age,\n            telemetry_uptime_ms=(None if telem is None else telem.uptime_ms),\n            rx_frames=self.transport.rx_frames,\n            tx_frames=self.transport.tx_frames,\n            rx_crc_errors=self.transport.rx_crc_errors,\n            vision_active=self.has_vision,\n            localization_active=self.has_field_localization,\n            protocol_valid=protocol_valid,\n        )\n        if report.telemetry_received and age is not None and age > max_telem_age_s:\n            print(f'[Preflight] telemetry stale: {age:.3f}s > '\n                  f'{max_telem_age_s:.3f}s')\n            report = HardwarePreflightReport(**{\n                **asdict(report), 'telemetry_received': False})\n        print('[Preflight] ' + ('PASS' if report.ok else 'FAIL') + ' ' +\n              f'telem={report.telemetry_received} age='\n              f'{(\"n/a\" if age is None else f\"{age:.3f}s\")} '\n              f'frames={report.rx_frames}/{report.tx_frames} '\n              f'crc_errors={report.rx_crc_errors} '\n              f'cube={report.vision_active} tag={report.localization_active}')\n        return report\n\n    @property\n    def vision_result(self) -> Optional['VisionResult']:\n        \"\"\"Get latest vision detection result (thread-safe).\"\"\"\n        if self._vision is not None:\n            return self._vision.result\n        return None\n\n    def reset_vision_filter(self, *, after_inspection=False):\n        \"\"\"Clear stale temporal tracking before a new vision task.\"\"\"\n        if self._vision is not None:\n            if after_inspection:\n                self._vision.reset_after_inspection()\n            else:\n                self._vision.reset_filter()\n\n    def set_cube_detection_profile(self, profile_name: str):\n        \"\"\"Select task-specific cube HSV parameters at runtime.\"\"\"\n        if self._vision is None:\n            raise RuntimeError('cube vision subsystem unavailable')\n        self._vision.set_detection_profile(profile_name)\n\n    @property\n    def has_vision(self) -> bool:\n        return self._vision is not None and self._vision.is_running\n\n    @property\n    def field_pose(self) -> Optional['FieldPose']:\n        \"\"\"Latest pure-vision field pose from the dedicated tag camera.\"\"\"\n        if self._localizer is not None:\n            return self._localizer.result\n        return None\n\n    @property\n    def has_field_localization(self) -> bool:\n        return self._localizer is not None and self._localizer.is_running\n\n    def reset_field_localization_filter(self):\n        if self._localizer is not None:\n            self._localizer.reset_filter()\n\n    # ==================== Telemetry Display ==================================\n\n    def print_telem(self):\n        \"\"\"Print one telemetry snapshot.\"\"\"\n        t = self.telem\n        if t is None:\n            print(\"No telemetry yet...\")\n            return\n\n        print(f\"\\n{'='*60}\")\n        print(f\"Uptime: {t.uptime_ms/1000:.1f}s  Yaw: {t.yaw_deg:.1f}°  YawRate: {t.yaw_rate_ds:.1f}°/s\")\n        print(f\"{'='*60}\")\n        print(f\"{'Motor':>8} {'Angle':>6} {'RPM':>8} {'Torque':>8} {'Temp':>5}\")\n        print(f\"{'-'*40}\")\n        names = [\"TR\", \"TL\", \"BL\", \"BR\"]\n        for i, m in enumerate(t.motors):\n            print(f\"{names[i]:>8} {m.angle:>6} {m.speed_rpm:>8} {m.torque_current:>8} {m.temperature:>4}°C\")\n        print(f\"{'-'*40}\")\n        print(f\"RC: CH1={t.rc_channels[0]:>5} CH2={t.rc_channels[1]:>5} \"\n              f\"CH3={t.rc_channels[2]:>5} CH4={t.rc_channels[3]:>5}\")\n        print(f\"Stepper: H={'BUSY' if t.stepper_busy & 1 else 'idle'} \"\n              f\"V={'BUSY' if t.stepper_busy & 2 else 'idle'} \"\n              f\"Pos=({t.stepper_pos[0]}, {t.stepper_pos[1]})\")\n\n        # Vision status\n        if self.has_vision:\n            vr = self.vision_result\n            if vr and vr.is_valid:\n                print(f\"Vision: [{vr.color_name}] X={vr.x:+.0f} Y={vr.y:+.0f} \"\n                      f\"Z={vr.z:+.0f}mm Dist={vr.distance:.0f}mm \"\n                      f\"Conf={vr.confidence:.0f}% FPS={vr.fps:.1f}\")\n            elif vr:\n                print(f\"Vision: SEARCHING ({len(vr.all_blocks)} blocks) FPS={vr.fps:.1f}\")\n            else:\n                print(f\"Vision: initializing...\")\n        if self.has_field_localization:\n            pose = self.field_pose\n            if pose and pose.valid:\n                quality = \"cal\" if pose.calibrated else \"FOV\"\n                print(f\"Field: X={pose.x_m:+.3f} Y={pose.y_m:+.3f} m \"\n                      f\"Yaw={pose.yaw_deg:+.1f} deg Tags={pose.tag_ids} \"\n                      f\"Err={pose.reprojection_error_px:.2f}px {quality}\")\n            elif pose:\n                print(f\"Field: SEARCHING visible={pose.tag_ids} FPS={pose.fps:.1f}\")\n\n    def telemetry_monitor(self, duration_s: float = 0):\n        \"\"\"Display telemetry continuously for duration_s (0 = forever).\"\"\"\n        t0 = time.time()\n        try:\n            while self._running:\n                self.print_telem()\n                time.sleep(0.5)\n                if duration_s > 0 and (time.time() - t0) > duration_s:\n                    break\n        except KeyboardInterrupt:\n            pass\n\n    # ==================== Vision-Guided Navigation =========================\n\n    def move_chassis(self, direction: str, distance_mm: float,\n                     speed_mm_s: float = DEFAULT_MOVE_SPEED_MM_S,\n                     hold_ms: Optional[int] = None,\n                     accel_ms: Optional[int] = None,\n                     route_mode: bool = False,\n                     ) -> LinearMoveResult:\n        \"\"\"Run a blocking calibrated position-loop chassis move.\"\"\"\n        direction = direction.lower()\n        if distance_mm <= 0.0:\n            raise ValueError('distance must be positive')\n        if speed_mm_s <= 0.0:\n            raise ValueError('speed must be positive')\n\n        move_kwargs = {}\n        if hold_ms is not None:\n            move_kwargs['hold_ms'] = hold_ms\n        if accel_ms is not None:\n            move_kwargs['accel_ms'] = accel_ms\n        if route_mode:\n            move_kwargs['route_mode'] = True\n        moves = {\n            'forward': lambda: self.chassis.move_forward(\n                distance_mm, speed_mm_s, **move_kwargs),\n            'backward': lambda: self.chassis.move_forward(\n                -distance_mm, speed_mm_s, **move_kwargs),\n            'left': lambda: self.chassis.move_right(\n                -distance_mm, speed_mm_s, **move_kwargs),\n            'right': lambda: self.chassis.move_right(\n                distance_mm, speed_mm_s, **move_kwargs),\n        }\n        if direction not in moves:\n            raise ValueError(\n                'direction must be forward, backward, left, or right')\n\n        result = moves[direction]()\n        state = ('cancelled' if result.cancelled else\n                 'timeout' if result.timed_out else 'complete')\n        print(f'[Chassis] {state}: {direction} {distance_mm:.1f} mm, '\n              f'wheel={result.encoder_distance_mm:.1f} mm, '\n              f'chassis_est={result.estimated_chassis_distance_mm:.1f} mm, '\n              f'time={result.elapsed_ms:.0f} ms')\n        self.diagnostics.write(\n            'motion', direction=direction, requested_mm=distance_mm,\n            speed_mm_s=speed_mm_s, state=state,\n            encoder_mm=result.encoder_distance_mm,\n            chassis_est_mm=result.estimated_chassis_distance_mm,\n            elapsed_ms=result.elapsed_ms,\n            completion_ratio=(abs(result.estimated_chassis_distance_mm)\n                              / max(abs(distance_mm), 1.0)),\n            cancelled=result.cancelled, timed_out=result.timed_out)\n        return result\n\n    def approach_cube(self, target_z: float = 200.0,\n                      speed_mm_s: float = 150.0,\n                      timeout_s: float = 30.0):\n        \"\"\"\n        Navigate chassis toward detected cube using vision feedback.\n\n        Strategy:\n          1. Turn to center cube X in camera (reduce |X| below threshold)\n          2. Drive forward until Z ≈ target_z\n          3. Re-center as needed\n\n        Args:\n            target_z: stop when cube is this far away (mm)\n            speed_mm_s: approach speed\n            timeout_s: max duration before giving up\n        \"\"\"\n        if not self.has_vision:\n            print(\"[Robot] Vision not available — cannot approach\")\n            return\n\n        print(f\"[Robot] Approaching cube (target Z={target_z:.0f}mm)...\")\n        t0 = time.time()\n\n        X_THRESHOLD = 30.0   # mm — acceptable lateral error\n        Z_THRESHOLD = 40.0   # mm — acceptable depth error\n        TURN_K = 0.8         # °/s per mm of X error\n\n        while (time.time() - t0) < timeout_s:\n            vr = self.vision_result\n            if vr is None or not vr.is_valid:\n                print(\"  [Vision] Lost target — searching...\")\n                self.chassis.stop()\n                time.sleep(0.1)\n                continue\n\n            x_err = vr.x    # lateral error in mm\n            z_err = vr.z - target_z  # depth error\n\n            # Check if we've arrived\n            if abs(z_err) < Z_THRESHOLD and abs(x_err) < X_THRESHOLD:\n                self.chassis.stop()\n                print(f\"  [Arrived] X={vr.x:+.0f} Z={vr.z:.0f}mm \"\n                      f\"(errors: X={x_err:+.0f} Z={z_err:+.0f}mm)\")\n                return\n\n            # Compute control\n            # 1. Turn to center (priority if X is large)\n            wz = -x_err * TURN_K   # negative: if cube is to the right (+X), turn right (+wz)\n            wz = max(-120.0, min(120.0, wz))  # clamp\n\n            # 2. Forward speed (proportional to Z error, limited)\n            vx = z_err * 0.3   # cm/s per mm\n            vx = max(-speed_mm_s / 10.0, min(speed_mm_s / 10.0, vx))\n\n            # Mecanum: vx forward + wz rotation\n            rpm = self.chassis.mecanum_rpm(vx, 0.0, wz)\n            self.chassis.set_speeds(rpm)\n\n            # Status\n            if int(time.time() * 4) % 4 == 0:  # print ~4 Hz\n                print(f\"  [{vr.color_name}] X={x_err:+.0f}mm Z={z_err:+.0f}mm \"\n                      f\"→ vx={vx:.1f}cm/s wz={wz:.1f}°/s\")\n\n            time.sleep(0.02)  # 50 Hz control\n\n        self.chassis.stop()\n        print(f\"[Robot] Approach timeout ({timeout_s}s)\")\n\n    # ==================== Action Runner ======================================\n\n    def run_action(self, name: str, test_mode: bool = False):\n        \"\"\"Run a named action sequence.\"\"\"\n        grap_kwargs = {'test_mode': True} if test_mode else {}\n        actions = {\n            'home': self.actions.servo_home,\n            'hatch_open': self.actions.hatch_open,\n            'hatch_close': self.actions.hatch_close,\n            'grap1': lambda: self.actions.grap1(**grap_kwargs),\n            'grap2': lambda: self.actions.grap2(**grap_kwargs),\n            'grap3': lambda: self.actions.grap3(**grap_kwargs),\n            'build': self.actions.build,\n            'approach': lambda: self.approach_cube(),\n        }\n        if name not in actions:\n            print(f\"Unknown action: {name}\")\n            print(f\"Available: {list(actions.keys())}\")\n            return\n\n        print(f\"[Robot] Running action: {name}\")\n        actions[name]()\n        print(f\"[Robot] Action {name} complete\")\n\n\n# ============================ CLI ============================================\n\ndef debug_main():\n    parser = argparse.ArgumentParser(description='Uniforest Robot Controller')\n    parser.add_argument('--port', default=Robot.SERIAL_PORT,\n                       help=f'Serial port (default: {Robot.SERIAL_PORT})')\n    parser.add_argument('--baud', type=int, default=115200,\n                       help='Baud rate (default: 115200)')\n    parser.add_argument('--test-ping', action='store_true',\n                       help='Test communication with PING/PONG')\n    parser.add_argument('--preflight', action='store_true',\n                       help='Run read-only hardware and sensor preflight')\n    parser.add_argument('--action', type=str, default=None,\n                       help='Run action: home, hatch_open, hatch_close, '\n                            'grap1, grap2, grap3, build')\n    parser.add_argument('--telemetry-only', action='store_true',\n                       help='Display telemetry stream')\n    parser.add_argument('--telem-rate', type=int, default=50,\n                       help='Telemetry rate in Hz (default: 50)')\n    parser.add_argument('--duration', type=float, default=0,\n                       help='Duration in seconds (0=forever)')\n    parser.add_argument('--vision', action='store_true',\n                       help='Enable cube detection vision')\n    default_camera = default_camera_selector() if HAS_VISION else 1\n    parser.add_argument('--camera', default=default_camera,\n                       help='Camera role, stable path, or diagnostic index '\n                            f'(default: {default_camera})')\n    parser.add_argument('--vision-gui', action='store_true',\n                       help='Show vision debug window')\n    parser.add_argument('--vision-exposure', type=float, default=None,\n                       help='Manual camera exposure (backend-specific value)')\n    parser.add_argument('--vision-gain', type=float, default=None,\n                       help='Manual camera gain (backend-specific value)')\n    parser.add_argument('--localization', action='store_true',\n                       help='Enable AprilTag full-field localization')\n    parser.add_argument('--tag-camera', default='tag',\n                       help='Tag camera role or stable path (default: tag)')\n    parser.add_argument('--localization-gui', action='store_true',\n                       help='Show field-localization debug window')\n    parser.add_argument('--debug', action='store_true',\n                       help='Enable transport debug output')\n    parser.add_argument('--no-collect-data', action='store_true',\n                       help='Disable automatic cube-image collection')\n    parser.add_argument('--dataset-dir', default=None,\n                       help='Local cube image library directory')\n\n    args = parser.parse_args()\n\n    robot = Robot(port=args.port, baud=args.baud,\n                  enable_vision=args.vision,\n                  camera_id=args.camera,\n                  vision_gui=args.vision_gui,\n                  vision_exposure=args.vision_exposure,\n                  vision_gain=args.vision_gain,\n                  enable_localization=args.localization,\n                  localization_camera=args.tag_camera,\n                  localization_gui=args.localization_gui,\n                  debug=args.debug,\n                  collect_data=False if args.no_collect_data else None,\n                  dataset_dir=args.dataset_dir)\n\n    try:\n        if not robot.connect():\n            sys.exit(1)\n\n        robot.start(telem_rate=args.telem_rate)\n\n        if args.test_ping:\n            print(\"[Test] Sending PING...\")\n            robot.transport.ping()\n            time.sleep(1.0)\n\n        elif args.preflight:\n            report = robot.hardware_preflight()\n            if not report.ok:\n                return_code = 2\n            else:\n                return_code = 0\n            # Keep the existing CLI cleanup path while returning a useful code.\n            if return_code:\n                sys.exit(return_code)\n\n        elif args.action:\n            time.sleep(0.5)  # wait for first telemetry\n            robot.run_action(args.action)\n\n        elif args.telemetry_only:\n            robot.telemetry_monitor(args.duration)\n\n        else:\n            # Interactive mode\n            print(\"\\nUniforest Robot Controller\")\n            print(\"===========================\")\n            print(\"Commands:\")\n            print(\"  home, hatch_open, hatch_close — Servo actions\")\n            print(\"  grap1, grap2, grap3, build  — Full action sequences\")\n            print(\"  approach                     — Vision-guided cube approach\")\n            print(\"  move DIR MM [SPEED]          — Position move; speed defaults to 750 mm/s\")\n            print(\"  telem                        — Print telemetry snapshot\")\n            print(\"  vision                       — Print vision detection result\")\n            print(\"  stop                         — EMERGENCY STOP\")\n            print(\"  exit                         — Quit\")\n            print()\n\n            while robot._running:\n                try:\n                    cmd = input(\"> \").strip().lower()\n                    if cmd == 'exit':\n                        break\n                    elif cmd == 'stop':\n                        robot.transport.emergency_stop()\n                        print(\"EMERGENCY STOP\")\n                    elif cmd == 'telem':\n                        robot.print_telem()\n                    elif cmd == 'vision':\n                        vr = robot.vision_result\n                        if vr is None:\n                            print(\"Vision: not available (use --vision flag)\")\n                        elif vr.is_valid:\n                            print(f\"[{vr.color_name}] X={vr.x:+.1f} Y={vr.y:+.1f} \"\n                                  f\"Z={vr.z:+.1f}mm Dist={vr.distance:.1f}mm \"\n                                  f\"Conf={vr.confidence:.0f}% \"\n                                  f\"({len(vr.all_blocks)} blocks) FPS={vr.fps:.1f}\")\n                        else:\n                            hint = f\" ({len(vr.all_blocks)} seen)\" if vr.all_blocks else \"\"\n                            print(f\"[SEARCHING]{hint} FPS={vr.fps:.1f}\")\n                    elif cmd.startswith('move '):\n                        parts = cmd.split()\n                        if len(parts) not in (3, 4):\n                            print('Usage: move forward|backward|left|right MM [MM/S]')\n                            continue\n                        try:\n                            distance = float(parts[2])\n                            speed = (float(parts[3]) if len(parts) == 4\n                                     else DEFAULT_MOVE_SPEED_MM_S)\n                            robot.move_chassis(parts[1], distance, speed)\n                        except ValueError as exc:\n                            print(f'Invalid move: {exc}')\n                    elif cmd in ('home', 'hatch_open', 'hatch_close',\n                                'grap1', 'grap2', 'grap3', 'build', 'approach'):\n                        robot.run_action(cmd)\n                    elif cmd == '':\n                        pass\n                    else:\n                        print(f\"Unknown: {cmd}\")\n                        print(\"Available: home, hatch_open/close, grap1/2/3, \"\n                              \"build, approach, move, telem, vision, stop, exit\")\n                except KeyboardInterrupt:\n                    break\n                except EOFError:\n                    break\n\n    except KeyboardInterrupt:\n        print(\"\\n[Robot] Interrupted\")\n    finally:\n        robot.stop()\n\n\nif __name__ == '__main__':\n    debug_main()\n"
+  }
+}

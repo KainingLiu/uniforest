@@ -1,5 +1,8 @@
 # Raspberry Pi 上位机程序
 
+2026-10-02 增量整合：默认继续运行本主分支；添加 `--runtime game` 可选择独立 game 实现。
+两套均自动保存运行日志，原有命令继续有效。用法、标定来源、固件前提与验证记录见 [双运行时说明](RUNTIMES.md)。
+
 当前源码基线：2026-09-27。历史参数和验证结果集中在 [CHANGELOG.md](CHANGELOG.md)，下位机接口见开发电脑上的 `Uniforest_A/PROJECT.md`。树莓派只部署上位机，不保留下位机源码副本。
 
 模块化策略说明与扩展入口见 [Strategy/README.md](Strategy/README.md)。本次拆分已于 2026-09-26 定向同步树莓派，远端无硬件检查通过，现场动作待验证。

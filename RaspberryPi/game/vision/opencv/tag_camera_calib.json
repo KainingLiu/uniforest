@@ -1,0 +1,15 @@
+{
+  "calibrated": false,
+  "resolution": [640, 480],
+  "horizontal_fov_deg": 125.0,
+  "diagonal_fov_deg": 160.0,
+  "lens_focal_length_mm": 3.42,
+  "lens_aperture": 2.2,
+  "sensor": "GC2083",
+  "camera_matrix": [
+    [166.5814562, 0.0, 320.0],
+    [0.0, 166.5814562, 240.0],
+    [0.0, 0.0, 1.0]
+  ],
+  "dist_coeffs": [0.0, 0.0, 0.0, 0.0, 0.0]
+}

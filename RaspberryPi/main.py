@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """Official RoboGame entry point for the full mission or one task."""
 
+if __name__ == '__main__':
+    from utils.runtime_launcher import launch
+    raise SystemExit(launch('main'))
+
 import argparse
 import sys
 

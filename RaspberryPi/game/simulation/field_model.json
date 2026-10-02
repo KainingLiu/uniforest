@@ -1,0 +1,1034 @@
+{
+  "version": 1,
+  "width_mm": 4800,
+  "height_mm": 7200,
+  "coordinate_system": {
+    "origin": "outer northwest corner",
+    "x": "right",
+    "y": "down",
+    "yaw_zero": "right",
+    "yaw_positive": "clockwise",
+    "z": "up from inner floor",
+    "cad_to_sim": "x=1000*X+2400; y=3600-1000*Y; z=1000*Z-10",
+    "field_map_to_sim": "x=1000*x_m+2400; y=3600-1000*y_m; yaw=-yaw_math_deg"
+  },
+  "robot": {
+    "model_ref": "robot_model.json",
+    "assumed": false,
+    "source": "RoboGame 2026 Uniforest队计划书.pdf p8 web CAD; dimensions and model limitations are in robot_model.json"
+  },
+  "playable_bounds_mm": {
+    "left": 400,
+    "top": 400,
+    "right": 4400,
+    "bottom": 6800
+  },
+  "shapes": [
+    {
+      "id": "floor",
+      "label": "内场地面",
+      "kind": "floor",
+      "polygon": [
+        [
+          400.0,
+          400.0
+        ],
+        [
+          4400.0,
+          400.0
+        ],
+        [
+          4400.0,
+          6800.0
+        ],
+        [
+          400.0,
+          6800.0
+        ]
+      ],
+      "height_mm": 0,
+      "collision": false,
+      "source": "场地图v_1.0.glb: mesh 0, identity node 1; converted m to mm",
+      "certainty": "cad_geometry"
+    },
+    {
+      "id": "boundary_north",
+      "label": "外侧围挡",
+      "kind": "wall",
+      "polygon": [
+        [
+          0.0,
+          -0.0
+        ],
+        [
+          4800.0,
+          -0.0
+        ],
+        [
+          4800.0,
+          400.0
+        ],
+        [
+          0.0,
+          400.0
+        ]
+      ],
+      "height_mm": 400,
+      "collision": true,
+      "source": "场地图v_1.0.glb: mesh 0, identity node 1; converted m to mm; RoboGame2026 竞技组规则手册2_1.pdf p7",
+      "certainty": "cad_and_rules"
+    },
+    {
+      "id": "boundary_south",
+      "label": "外侧围挡",
+      "kind": "wall",
+      "polygon": [
+        [
+          0.0,
+          6800.0
+        ],
+        [
+          4800.0,
+          6800.0
+        ],
+        [
+          4800.0,
+          7200.0
+        ],
+        [
+          0.0,
+          7200.0
+        ]
+      ],
+      "height_mm": 400,
+      "collision": true,
+      "source": "场地图v_1.0.glb: mesh 0, identity node 1; converted m to mm; RoboGame2026 竞技组规则手册2_1.pdf p7",
+      "certainty": "cad_and_rules"
+    },
+    {
+      "id": "boundary_west",
+      "label": "外侧围挡",
+      "kind": "wall",
+      "polygon": [
+        [
+          0.0,
+          400.0
+        ],
+        [
+          400.0,
+          400.0
+        ],
+        [
+          400.0,
+          6800.0
+        ],
+        [
+          0.0,
+          6800.0
+        ]
+      ],
+      "height_mm": 400,
+      "collision": true,
+      "source": "场地图v_1.0.glb: mesh 0, identity node 1; converted m to mm; RoboGame2026 竞技组规则手册2_1.pdf p7",
+      "certainty": "cad_and_rules"
+    },
+    {
+      "id": "boundary_east",
+      "label": "外侧围挡",
+      "kind": "wall",
+      "polygon": [
+        [
+          4400.0,
+          400.0
+        ],
+        [
+          4800.0,
+          400.0
+        ],
+        [
+          4800.0,
+          6800.0
+        ],
+        [
+          4400.0,
+          6800.0
+        ]
+      ],
+      "height_mm": 400,
+      "collision": true,
+      "source": "场地图v_1.0.glb: mesh 0, identity node 1; converted m to mm; RoboGame2026 竞技组规则手册2_1.pdf p7",
+      "certainty": "cad_and_rules"
+    },
+    {
+      "id": "platform_red",
+      "label": "中央高台",
+      "kind": "platform",
+      "polygon": [
+        [
+          400.0,
+          3000.0
+        ],
+        [
+          2200.0,
+          3000.0
+        ],
+        [
+          2200.0,
+          4700.0
+        ],
+        [
+          400.0,
+          4700.0
+        ]
+      ],
+      "height_mm": 200,
+      "collision": false,
+      "source": "场地图v_1.0.glb: mesh 0, identity node 1; converted m to mm, primitive 1; RoboGame2026 竞技组规则手册2_1.pdf p9",
+      "certainty": "cad_and_rules",
+      "team_color_in_cad": "red"
+    },
+    {
+      "id": "building_red",
+      "label": "搭建台",
+      "kind": "building",
+      "polygon": [
+        [
+          400.0,
+          400.0
+        ],
+        [
+          3200.0,
+          400.0
+        ],
+        [
+          3200.0,
+          1000.0
+        ],
+        [
+          400.0,
+          1000.0
+        ]
+      ],
+      "height_mm": 100,
+      "collision": true,
+      "source": "场地图v_1.0.glb: mesh 0, identity node 1; converted m to mm, primitive 1; RoboGame2026 竞技组规则手册2_1.pdf p9",
+      "certainty": "cad_rule_size_conflict",
+      "team_color_in_cad": "red",
+      "rule_nominal_size_mm": [
+        2400,
+        600
+      ],
+      "cad_size_mm": [
+        2800,
+        600
+      ],
+      "scoring_boundary_verified": false
+    },
+    {
+      "id": "start_red",
+      "label": "启动区",
+      "kind": "start",
+      "polygon": [
+        [
+          3800.0,
+          400.0
+        ],
+        [
+          4400.0,
+          400.0
+        ],
+        [
+          4400.0,
+          1000.0
+        ],
+        [
+          3800.0,
+          1000.0
+        ]
+      ],
+      "height_mm": 0,
+      "collision": false,
+      "source": "场地图v_1.0.glb: mesh 0, identity node 1; converted m to mm, primitive 1; RoboGame2026 竞技组规则手册2_1.pdf p8",
+      "certainty": "cad_and_rules",
+      "team_color_in_cad": "red",
+      "cad_display_rise_mm": 10,
+      "nominal_size_mm": [
+        600,
+        600
+      ]
+    },
+    {
+      "id": "ramp_red",
+      "label": "可行驶坡道",
+      "kind": "ramp",
+      "polygon": [
+        [
+          400.0,
+          2200.0
+        ],
+        [
+          2200.0,
+          2200.0
+        ],
+        [
+          2200.0,
+          3000.0
+        ],
+        [
+          400.0,
+          3000.0
+        ]
+      ],
+      "height_mm": 200,
+      "collision": false,
+      "source": "场地图v_1.0.glb: mesh 0, identity node 1; converted m to mm, inclined surface primitive 1; RoboGame2026 竞技组规则手册2_1.pdf p9",
+      "certainty": "cad_and_rules",
+      "team_color_in_cad": "red",
+      "slope_deg": 14.0362,
+      "low_edge": [
+        [
+          400.0,
+          2200.0
+        ],
+        [
+          2200.0,
+          2200.0
+        ]
+      ],
+      "high_edge": [
+        [
+          400.0,
+          3000.0
+        ],
+        [
+          2200.0,
+          3000.0
+        ]
+      ],
+      "low_height_mm": 0,
+      "high_height_mm": 200
+    },
+    {
+      "id": "platform_blue",
+      "label": "中央高台",
+      "kind": "platform",
+      "polygon": [
+        [
+          2600.0,
+          2500.0
+        ],
+        [
+          4400.0,
+          2500.0
+        ],
+        [
+          4400.0,
+          4200.0
+        ],
+        [
+          2600.0,
+          4200.0
+        ]
+      ],
+      "height_mm": 200,
+      "collision": false,
+      "source": "场地图v_1.0.glb: mesh 0, identity node 1; converted m to mm, primitive 4; RoboGame2026 竞技组规则手册2_1.pdf p9",
+      "certainty": "cad_and_rules",
+      "team_color_in_cad": "blue"
+    },
+    {
+      "id": "building_blue",
+      "label": "搭建台",
+      "kind": "building",
+      "polygon": [
+        [
+          1600.0,
+          6200.0
+        ],
+        [
+          4400.0,
+          6200.0
+        ],
+        [
+          4400.0,
+          6800.0
+        ],
+        [
+          1600.0,
+          6800.0
+        ]
+      ],
+      "height_mm": 100,
+      "collision": true,
+      "source": "场地图v_1.0.glb: mesh 0, identity node 1; converted m to mm, primitive 4; RoboGame2026 竞技组规则手册2_1.pdf p9",
+      "certainty": "cad_rule_size_conflict",
+      "team_color_in_cad": "blue",
+      "rule_nominal_size_mm": [
+        2400,
+        600
+      ],
+      "cad_size_mm": [
+        2800,
+        600
+      ],
+      "scoring_boundary_verified": false
+    },
+    {
+      "id": "start_blue",
+      "label": "启动区",
+      "kind": "start",
+      "polygon": [
+        [
+          400.0,
+          6200.0
+        ],
+        [
+          1000.0,
+          6200.0
+        ],
+        [
+          1000.0,
+          6800.0
+        ],
+        [
+          400.0,
+          6800.0
+        ]
+      ],
+      "height_mm": 0,
+      "collision": false,
+      "source": "场地图v_1.0.glb: mesh 0, identity node 1; converted m to mm, primitive 4; RoboGame2026 竞技组规则手册2_1.pdf p8",
+      "certainty": "cad_and_rules",
+      "team_color_in_cad": "blue",
+      "cad_display_rise_mm": 10,
+      "nominal_size_mm": [
+        600,
+        600
+      ]
+    },
+    {
+      "id": "ramp_blue",
+      "label": "可行驶坡道",
+      "kind": "ramp",
+      "polygon": [
+        [
+          2600.0,
+          4200.0
+        ],
+        [
+          4400.0,
+          4200.0
+        ],
+        [
+          4400.0,
+          5000.0
+        ],
+        [
+          2600.0,
+          5000.0
+        ]
+      ],
+      "height_mm": 200,
+      "collision": false,
+      "source": "场地图v_1.0.glb: mesh 0, identity node 1; converted m to mm, inclined surface primitive 4; RoboGame2026 竞技组规则手册2_1.pdf p9",
+      "certainty": "cad_and_rules",
+      "team_color_in_cad": "blue",
+      "slope_deg": 14.0362,
+      "low_edge": [
+        [
+          2600.0,
+          5000.0
+        ],
+        [
+          4400.0,
+          5000.0
+        ]
+      ],
+      "high_edge": [
+        [
+          2600.0,
+          4200.0
+        ],
+        [
+          4400.0,
+          4200.0
+        ]
+      ],
+      "low_height_mm": 0,
+      "high_height_mm": 200
+    },
+    {
+      "id": "central_divider",
+      "label": "中央材料隔墙",
+      "kind": "material_wall",
+      "polygon": [
+        [
+          2200.0,
+          2200.0
+        ],
+        [
+          2600.0,
+          2200.0
+        ],
+        [
+          2600.0,
+          5000.0
+        ],
+        [
+          2200.0,
+          5000.0
+        ]
+      ],
+      "height_mm": 400,
+      "collision": true,
+      "source": "场地图v_1.0.glb: mesh 0, identity node 1; converted m to mm",
+      "certainty": "cad_geometry",
+      "note": "2800 mm structural span includes two 300 mm joining ends; roof resource region is 2200 mm."
+    },
+    {
+      "id": "orange_shelf_southwest",
+      "label": "西南橙块材料台",
+      "kind": "material_wall",
+      "polygon": [
+        [
+          400.0,
+          4700.0
+        ],
+        [
+          2200.0,
+          4700.0
+        ],
+        [
+          2200.0,
+          5000.0
+        ],
+        [
+          400.0,
+          5000.0
+        ]
+      ],
+      "height_mm": 400,
+      "collision": true,
+      "source": "场地图v_1.0.glb: mesh 0, identity node 1; converted m to mm; RoboGame2026 竞技组规则手册2_1.pdf p10",
+      "certainty": "cad_and_rules",
+      "resource": "orange"
+    },
+    {
+      "id": "orange_shelf_northeast",
+      "label": "东北橙块材料台",
+      "kind": "material_wall",
+      "polygon": [
+        [
+          2600.0,
+          2200.0
+        ],
+        [
+          4400.0,
+          2200.0
+        ],
+        [
+          4400.0,
+          2500.0
+        ],
+        [
+          2600.0,
+          2500.0
+        ]
+      ],
+      "height_mm": 400,
+      "collision": true,
+      "source": "场地图v_1.0.glb: mesh 0, identity node 1; converted m to mm; RoboGame2026 竞技组规则手册2_1.pdf p10",
+      "certainty": "cad_and_rules",
+      "resource": "orange"
+    },
+    {
+      "id": "roof_resource_region",
+      "label": "紫块材料区",
+      "kind": "resource_region",
+      "polygon": [
+        [
+          2200.0,
+          2500.0
+        ],
+        [
+          2600.0,
+          2500.0
+        ],
+        [
+          2600.0,
+          4700.0
+        ],
+        [
+          2200.0,
+          4700.0
+        ]
+      ],
+      "height_mm": 400,
+      "collision": false,
+      "source": "场地图v_1.0.glb: mesh 0, identity node 1; converted m to mm; RoboGame2026 竞技组规则手册2_1.pdf p10",
+      "certainty": "cad_and_rules",
+      "resource": "purple"
+    },
+    {
+      "id": "orange_slot_1",
+      "label": "橙块槽（规则尺寸）",
+      "kind": "slot",
+      "polygon": [
+        [
+          550.0,
+          4795.0
+        ],
+        [
+          2050.0,
+          4795.0
+        ],
+        [
+          2050.0,
+          4905.0
+        ],
+        [
+          550.0,
+          4905.0
+        ]
+      ],
+      "height_mm": 400,
+      "collision": false,
+      "source": "RoboGame2026 竞技组规则手册2_1.pdf p10; center inherited from CAD recess",
+      "certainty": "rule_dimensions_inferred_center",
+      "resource": "orange",
+      "floor_height_mm": 350,
+      "depth_mm": 50,
+      "capacity": 10,
+      "placement_verified": false
+    },
+    {
+      "id": "orange_slot_2",
+      "label": "橙块槽（规则尺寸）",
+      "kind": "slot",
+      "polygon": [
+        [
+          2750.0,
+          2295.0
+        ],
+        [
+          4250.0,
+          2295.0
+        ],
+        [
+          4250.0,
+          2405.0
+        ],
+        [
+          2750.0,
+          2405.0
+        ]
+      ],
+      "height_mm": 400,
+      "collision": false,
+      "source": "RoboGame2026 竞技组规则手册2_1.pdf p10; center inherited from CAD recess",
+      "certainty": "rule_dimensions_inferred_center",
+      "resource": "orange",
+      "floor_height_mm": 350,
+      "depth_mm": 50,
+      "capacity": 10,
+      "placement_verified": false
+    },
+    {
+      "id": "purple_slot_1",
+      "label": "紫块槽（规则尺寸）",
+      "kind": "slot",
+      "polygon": [
+        [
+          2345.0,
+          3855.0
+        ],
+        [
+          2455.0,
+          3855.0
+        ],
+        [
+          2455.0,
+          3965.0
+        ],
+        [
+          2345.0,
+          3965.0
+        ]
+      ],
+      "height_mm": 400,
+      "collision": false,
+      "source": "RoboGame2026 竞技组规则手册2_1.pdf p4,p10: 110 mm square, 200 mm clear spacing, centered group",
+      "certainty": "rule_dimensions_centered_layout",
+      "resource": "purple",
+      "floor_height_mm": 350,
+      "depth_mm": 50,
+      "capacity": 1,
+      "placement_verified": false
+    },
+    {
+      "id": "purple_slot_2",
+      "label": "紫块槽（规则尺寸）",
+      "kind": "slot",
+      "polygon": [
+        [
+          2345.0,
+          3545.0
+        ],
+        [
+          2455.0,
+          3545.0
+        ],
+        [
+          2455.0,
+          3655.0
+        ],
+        [
+          2345.0,
+          3655.0
+        ]
+      ],
+      "height_mm": 400,
+      "collision": false,
+      "source": "RoboGame2026 竞技组规则手册2_1.pdf p4,p10: 110 mm square, 200 mm clear spacing, centered group",
+      "certainty": "rule_dimensions_centered_layout",
+      "resource": "purple",
+      "floor_height_mm": 350,
+      "depth_mm": 50,
+      "capacity": 1,
+      "placement_verified": false
+    },
+    {
+      "id": "purple_slot_3",
+      "label": "紫块槽（规则尺寸）",
+      "kind": "slot",
+      "polygon": [
+        [
+          2345.0,
+          3235.0
+        ],
+        [
+          2455.0,
+          3235.0
+        ],
+        [
+          2455.0,
+          3345.0
+        ],
+        [
+          2345.0,
+          3345.0
+        ]
+      ],
+      "height_mm": 400,
+      "collision": false,
+      "source": "RoboGame2026 竞技组规则手册2_1.pdf p4,p10: 110 mm square, 200 mm clear spacing, centered group",
+      "certainty": "rule_dimensions_centered_layout",
+      "resource": "purple",
+      "floor_height_mm": 350,
+      "depth_mm": 50,
+      "capacity": 1,
+      "placement_verified": false
+    }
+  ],
+  "anchors": {
+    "start_blue": {
+      "x_mm": 700.0,
+      "y_mm": 6500.0,
+      "yaw_deg": 270,
+      "source": "场地图v_1.0.glb: mesh 0, identity node 1; converted m to mm",
+      "certainty": "cad_center_heading_for_demo",
+      "note": "Center from CAD; initial facing chosen for the matching demo half, not measured robot pose."
+    },
+    "start_red": {
+      "x_mm": 4100.0,
+      "y_mm": 700.0,
+      "yaw_deg": 90,
+      "source": "场地图v_1.0.glb: mesh 0, identity node 1; converted m to mm",
+      "certainty": "cad_center_heading_for_demo",
+      "note": "Center from CAD; initial facing chosen for the matching demo half, not measured robot pose."
+    },
+    "orange_ground_face": {
+      "x_mm": 1300.0,
+      "y_mm": 5000.0,
+      "yaw_deg": 270,
+      "source": "场地图v_1.0.glb: mesh 0, identity node 1; converted m to mm",
+      "certainty": "surface_anchor",
+      "note": "Contact surface point; subtract the robot front extent before placing its center."
+    },
+    "orange_highland_face": {
+      "x_mm": 3500.0,
+      "y_mm": 2500.0,
+      "yaw_deg": 270,
+      "source": "场地图v_1.0.glb: mesh 0, identity node 1; converted m to mm",
+      "certainty": "surface_anchor",
+      "note": "Contact surface point; subtract the robot front extent before placing its center."
+    },
+    "purple_highland_face": {
+      "x_mm": 2600.0,
+      "y_mm": 3600.0,
+      "yaw_deg": 180,
+      "source": "场地图v_1.0.glb: mesh 0, identity node 1; converted m to mm",
+      "certainty": "surface_anchor",
+      "note": "Contact surface point; subtract the robot front extent before placing its center."
+    },
+    "blue_building_face": {
+      "x_mm": 3000.0,
+      "y_mm": 6200.0,
+      "yaw_deg": 90,
+      "source": "场地图v_1.0.glb: mesh 0, identity node 1; converted m to mm",
+      "certainty": "surface_anchor",
+      "note": "Contact surface point; subtract the robot front extent before placing its center."
+    },
+    "tag_1": {
+      "x_mm": 400.0,
+      "y_mm": 1600.0,
+      "source": "RaspberryPi/vision/opencv/field_map.json",
+      "certainty": "existing_configuration_not_surveyed"
+    },
+    "tag_2": {
+      "x_mm": 1300.0,
+      "y_mm": 5000.0,
+      "source": "RaspberryPi/vision/opencv/field_map.json",
+      "certainty": "existing_configuration_not_surveyed"
+    },
+    "tag_3": {
+      "x_mm": 2600.0,
+      "y_mm": 3600.0,
+      "source": "RaspberryPi/vision/opencv/field_map.json",
+      "certainty": "existing_configuration_not_surveyed"
+    },
+    "tag_4": {
+      "x_mm": 3500.0,
+      "y_mm": 2500.0,
+      "source": "RaspberryPi/vision/opencv/field_map.json",
+      "certainty": "existing_configuration_not_surveyed"
+    },
+    "tag_5": {
+      "x_mm": 4400.0,
+      "y_mm": 5600.0,
+      "source": "RaspberryPi/vision/opencv/field_map.json",
+      "certainty": "existing_configuration_not_surveyed"
+    },
+    "tag_6": {
+      "x_mm": 3500.0,
+      "y_mm": 6800.0,
+      "source": "RaspberryPi/vision/opencv/field_map.json",
+      "certainty": "existing_configuration_not_surveyed"
+    }
+  },
+  "tags": [
+    {
+      "id": 1,
+      "x_mm": 400.0,
+      "y_mm": 1600.0,
+      "normal_yaw_deg": 0.0,
+      "size_mm": 150.0,
+      "center_height_mm": 325,
+      "configured_center_height_mm": 325.0,
+      "source": "RaspberryPi/vision/opencv/field_map.json",
+      "certainty": "existing_configuration_not_surveyed",
+      "rule_diagram_conflict": true,
+      "note": "Rule p12 Fig3.9 places Tag1 by the start-side left corridor; configured y=+2 m mirrors it vertically."
+    },
+    {
+      "id": 2,
+      "x_mm": 1300.0,
+      "y_mm": 5000.0,
+      "normal_yaw_deg": 90.0,
+      "size_mm": 150.0,
+      "center_height_mm": 325,
+      "configured_center_height_mm": 325.0,
+      "source": "RaspberryPi/vision/opencv/field_map.json",
+      "certainty": "existing_configuration_not_surveyed"
+    },
+    {
+      "id": 3,
+      "x_mm": 2600.0,
+      "y_mm": 3600.0,
+      "normal_yaw_deg": 0.0,
+      "size_mm": 150.0,
+      "center_height_mm": 325,
+      "configured_center_height_mm": 125.0,
+      "source": "RaspberryPi/vision/opencv/field_map.json",
+      "certainty": "existing_configuration_not_surveyed"
+    },
+    {
+      "id": 4,
+      "x_mm": 3500.0,
+      "y_mm": 2500.0,
+      "normal_yaw_deg": 90.0,
+      "size_mm": 150.0,
+      "center_height_mm": 325,
+      "configured_center_height_mm": 125.0,
+      "source": "RaspberryPi/vision/opencv/field_map.json",
+      "certainty": "existing_configuration_not_surveyed"
+    },
+    {
+      "id": 5,
+      "x_mm": 4400.0,
+      "y_mm": 5600.0,
+      "normal_yaw_deg": 180.0,
+      "size_mm": 150.0,
+      "center_height_mm": 325,
+      "configured_center_height_mm": 325.0,
+      "source": "RaspberryPi/vision/opencv/field_map.json",
+      "certainty": "existing_configuration_not_surveyed"
+    },
+    {
+      "id": 6,
+      "x_mm": 3500.0,
+      "y_mm": 6800.0,
+      "normal_yaw_deg": 270.0,
+      "size_mm": 150.0,
+      "center_height_mm": 325,
+      "configured_center_height_mm": 325.0,
+      "source": "RaspberryPi/vision/opencv/field_map.json",
+      "certainty": "existing_configuration_not_surveyed"
+    }
+  ],
+  "rules": {
+    "cube_side_mm": 100,
+    "cube_tolerance_fraction": 0.05,
+    "orange_blocks_total": 20,
+    "purple_blocks_total": 3,
+    "tape_width_mm": 50,
+    "tape_placement_tolerance_fraction": 0.05,
+    "initial_robot_envelope_mm": [
+      600,
+      600,
+      600
+    ],
+    "expanded_robot_envelope_mm": [
+      800,
+      800,
+      1000
+    ],
+    "robot_dimensions_are_limits_not_measurements": true
+  },
+  "cad": {
+    "file": "场地图v_1.0.glb",
+    "generator": "SOLIDWORKSGLTF",
+    "node_count": 2,
+    "mesh_count": 1,
+    "triangle_count": 232,
+    "units": "m; checked against rule outer dimensions",
+    "native_min": [
+      -2.4000000953674316,
+      -3.5999999046325684,
+      0.0
+    ],
+    "native_max": [
+      2.4000000953674316,
+      3.5999999046325684,
+      0.4099999964237213
+    ],
+    "floor_top_m": 0.01,
+    "original_grooves": [
+      {
+        "native_min_m": [
+          -1.600000023841858,
+          -1.2999999523162842,
+          0.36000001430511475
+        ],
+        "native_max_m": [
+          -0.6000000238418579,
+          -1.2000000476837158,
+          0.36000001430511475
+        ],
+        "size_mm": [
+          1000,
+          100
+        ]
+      },
+      {
+        "native_min_m": [
+          -0.05000000074505806,
+          -0.05000000074505806,
+          0.36000001430511475
+        ],
+        "native_max_m": [
+          0.05000000074505806,
+          0.05000000074505806,
+          0.36000001430511475
+        ],
+        "size_mm": [
+          100,
+          100
+        ]
+      },
+      {
+        "native_min_m": [
+          -0.05000000074505806,
+          0.25,
+          0.36000001430511475
+        ],
+        "native_max_m": [
+          0.05000000074505806,
+          0.3499999940395355,
+          0.36000001430511475
+        ],
+        "size_mm": [
+          100,
+          100
+        ]
+      },
+      {
+        "native_min_m": [
+          -0.05000000074505806,
+          -0.3499999940395355,
+          0.36000001430511475
+        ],
+        "native_max_m": [
+          0.05000000074505806,
+          -0.25,
+          0.36000001430511475
+        ],
+        "size_mm": [
+          100,
+          100
+        ]
+      },
+      {
+        "native_min_m": [
+          0.6000000238418579,
+          1.2000000476837158,
+          0.36000001430511475
+        ],
+        "native_max_m": [
+          1.600000023841858,
+          1.2999999523162842,
+          0.36000001430511475
+        ],
+        "size_mm": [
+          1000,
+          100
+        ]
+      }
+    ]
+  },
+  "uncertainties": [
+    "Solid geometry follows supplied CAD; no on-site survey or physics calibration.",
+    "CAD building platforms are 2800x600 mm; rule p9 says approximately 2400x600 mm. Scoring boundary requires confirmation.",
+    "CAD orange recesses are 1000x100 mm; current rules say 1500x110 mm. Display overlays preserve CAD centers with rule sizes.",
+    "Rule p10 orange shelf length 1800, slot length 1500, and two end offsets of 400 mm cannot all hold; slot placement remains unverified.",
+    "CAD purple recesses are 100 mm with 300 mm center spacing; current rules imply 110 mm and 310 mm center spacing.",
+    "Tag1 configured y=+2 m conflicts with the start-side location in rule Fig3.9; current localization data is preserved.",
+    "Configured Tag3/4 heights are 125 mm, while the rule wall-top geometry gives 325 mm globally; a 200 mm platform datum explains the difference but is not independently surveyed.",
+    "Red/blue surfaces are CAD illustration colors. Rules state real surfaces use the boundary color.",
+    "Start heading, cube placements and robot dynamics must be selected separately for simulation; they are not measured facts."
+  ],
+  "sources": {
+    "场地图v_1.0.glb": {
+      "sha256": "30d51aefcff41aac6e90f9dda96d97ed7112be0ce3054d0af7da22cb5abb3b5a"
+    },
+    "RoboGame2026 竞技组规则手册2_1.pdf": {
+      "sha256": "6d696f3c72ce17f12e56a0f9adad258b802347e7f9030fb85bcd53b7e540067a"
+    },
+    "RoboGame 2026 Uniforest队计划书.pdf": {
+      "sha256": "842e88555eb53662da8ee91b0965a7610bc47a0cad271f117ddc7e9bdd888c44"
+    },
+    "RaspberryPi/vision/opencv/field_map.json": {
+      "sha256": "177c66398bf29fbd156ca81a58884ea97027fb2147a681a23e6cdce67fb7353f"
+    }
+  }
+}

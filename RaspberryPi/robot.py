@@ -21,6 +21,10 @@ The official competition entry is main.py. Run this module directly for
 hardware preflight, individual actions, and the manual diagnostic console.
 """
 
+if __name__ == '__main__':
+    from utils.runtime_launcher import launch
+    raise SystemExit(launch('robot'))
+
 import sys
 import time
 import threading

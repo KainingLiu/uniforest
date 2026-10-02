@@ -1,0 +1,896 @@
+"""
+Chassis control — replicates the upper-layer logic from motor3508.c.
+
+Provides:
+- Mecanum inverse kinematics (vx, vy, wz → 4×wheel RPM)
+- PID controller for position and yaw
+- High-level move commands: forward, right, turn
+- Runtime PID tuning via transport
+
+All math matches the STM32 implementation (same constants, same sign conventions).
+"""
+
+from __future__ import annotations
+
+import math
+import time
+from dataclasses import dataclass
+from .motion_law import smoothstep, route_feedforward
+from contextlib import contextmanager
+from typing import TYPE_CHECKING, List, Optional, Tuple
+
+from protocol.commands import (
+    TelemBatch, M3508_IDX_TR, M3508_IDX_TL, M3508_IDX_BL, M3508_IDX_BR,
+)
+
+if TYPE_CHECKING:
+    from protocol.transport import Transport
+
+# ====================== Geometry Constants ===================================
+# Must match motor3508.h exactly.
+
+ENCODER_COUNTS_PER_REV = 8192
+M3508_GEAR_RATIO       = 3591.0 / 187.0    # ≈ 19.203
+WHEEL_DIAMETER_MM      = 152.4
+WHEEL_CIRCUMFERENCE_MM = math.pi * WHEEL_DIAMETER_MM
+WHEEL_RADIUS_MM        = WHEEL_DIAMETER_MM / 2.0
+
+CHASSIS_WHEELBASE_MM    = 240.0
+CHASSIS_TRACK_MM        = 391.0
+CHASSIS_HALF_DIAGONAL_MM = (CHASSIS_WHEELBASE_MM + CHASSIS_TRACK_MM) / 2.0
+
+# RPM per cm/s:  60 * gear_ratio / (π * diameter_cm)
+MECANUM_RPM_PER_CM_S = (60.0 * M3508_GEAR_RATIO
+                        / (math.pi * WHEEL_DIAMETER_MM / 10.0))
+
+# Counts per cm of chassis travel
+COUNTS_PER_CM = int(10.0 * M3508_GEAR_RATIO
+                    * ENCODER_COUNTS_PER_REV
+                    / WHEEL_CIRCUMFERENCE_MM)
+
+# °/s → motor RPM conversion
+TURN_DEG_S_TO_RPM = (MECANUM_RPM_PER_CM_S
+                      * (CHASSIS_HALF_DIAGONAL_MM / 10.0)
+                      * math.pi / 180.0)
+
+# ====================== Default PID Gains ====================================
+
+# Speed loop (runs on STM32 at 1 kHz)
+DEFAULT_SPEED_KP = 10.0
+DEFAULT_SPEED_KI = 0.05
+DEFAULT_SPEED_KD = 0.0
+DEFAULT_SPEED_I_LIM = 6000.0
+DEFAULT_SPEED_O_LIM = 15000.0
+
+# Position loop (runs on Pi at control rate)
+DEFAULT_POS_KP = 0.10
+DEFAULT_POS_KI = 0.003
+DEFAULT_POS_KD = 0.0
+DEFAULT_POS_I_LIM = 800.0
+DEFAULT_POS_O_LIM = 800.0
+
+# Yaw correction
+DEFAULT_YAW_KP = 80.0
+DEFAULT_YAW_KI = 0.4
+DEFAULT_YAW_I_LIM = 1000.0
+
+# ====================== Move Parameters ======================================
+
+LONG_DISTANCE_MOVE_SPEED_MM_S = 1000.0
+LONG_DISTANCE_FORWARD_ACCEL_MS = 800
+NORMAL_DISTANCE_MOVE_SPEED_MM_S = 400.0
+NORMAL_DISTANCE_MOVE_ACCEL_MS = 300
+DEFAULT_MOVE_SPEED_MM_S = LONG_DISTANCE_MOVE_SPEED_MM_S
+FWD_BASE_SPEED_RPM   = 1800.0
+FWD_ACCEL_MS         = LONG_DISTANCE_FORWARD_ACCEL_MS
+FWD_BASE_DECEL_DIST  = 90000   # encoder counts
+FWD_BASE_PID_LIMIT   = 800.0
+FWD_HOLD_MS          = 700
+FWD_TIMEOUT_MS       = 2000
+FWD_SETTLE_COUNTS    = 1000
+FWD_SETTLE_MS        = 50
+FWD_SETTLE_SPEED_RPM = 50
+# Competition routes may stop within this chassis-distance window. Direct
+# positioning keeps the original encoder tolerance and position hold.
+ROUTE_ARRIVAL_TOLERANCE_MM = 8.0
+# Keep only a short grace period after the estimated travel time. Strategy
+# code accepts a near-complete encoder result so a final precise settle is not
+# required for competition routing.
+FWD_TIMEOUT_MARGIN_MS = 2000
+
+# Field calibration on the competition mat: a 500 mm wheel-side command moves
+# the chassis about 465 mm laterally. Command the reciprocal wheel travel.
+LATERAL_DISTANCE_SCALE = 500.0 / 465.0
+
+TURN_BASE_SPEED_DEG_S = 90.0
+TURN_ACCEL_MS        = 600
+TURN_BASE_DECEL_DEG  = 30.0
+TURN_BASE_PID_LIMIT  = 60.0
+TURN_HOLD_MS         = 500
+TURN_TIMEOUT_MARGIN_MS = 1500
+TURN_SETTLE_DEG      = 1.5
+TURN_SETTLE_CYCLES   = 30
+TURN_MIN_SPEED_DEG_S = 8.0
+
+
+@dataclass(frozen=True)
+class LinearMoveResult:
+    requested_mm: float
+    target_counts: int
+    projected_counts: int
+    wheel_counts: Tuple[int, int, int, int]
+    elapsed_ms: float
+    timed_out: bool
+    cancelled: bool = False
+    distance_scale: float = 1.0
+
+    @property
+    def encoder_distance_mm(self) -> float:
+        return self.projected_counts * 10.0 / COUNTS_PER_CM
+
+    @property
+    def estimated_chassis_distance_mm(self) -> float:
+        return self.encoder_distance_mm / self.distance_scale
+
+
+class PID:
+    """Generic PID controller (matches STM32 PID_Compute)."""
+    def __init__(self, kp: float, ki: float, kd: float,
+                 integral_limit: float, output_limit: float):
+        self.kp = kp
+        self.ki = ki
+        self.kd = kd
+        self.integral_limit = integral_limit
+        self.output_limit = output_limit
+        self.integral = 0.0
+        self.prev_error = 0.0
+
+    def compute(self, setpoint: float, measurement: float, dt: float) -> float:
+        error = setpoint - measurement
+        p_term = self.kp * error
+
+        self.integral += error * dt
+        if self.integral > self.integral_limit:
+            self.integral = self.integral_limit
+        elif self.integral < -self.integral_limit:
+            self.integral = -self.integral_limit
+        i_term = self.ki * self.integral
+
+        d_term = 0.0
+        if dt > 0.000001:
+            d_term = self.kd * (error - self.prev_error) / dt
+        self.prev_error = error
+
+        output = p_term + i_term + d_term
+        if output > self.output_limit:
+            output = self.output_limit
+        elif output < -self.output_limit:
+            output = -self.output_limit
+        return output
+
+    def reset(self):
+        self.integral = 0.0
+        self.prev_error = 0.0
+
+
+class Chassis:
+    """
+    Chassis motor control.
+
+    Usage:
+        chassis = Chassis(transport)
+        chassis.start()                    # enable telemetry
+        chassis.set_speeds([100, -100, 100, -100])  # 4×RPM
+        chassis.move_forward(500, 200)     # forward 500mm at 200mm/s
+    """
+
+    def __init__(self, transport: Transport,
+                 lateral_distance_scale: float = LATERAL_DISTANCE_SCALE):
+        if lateral_distance_scale <= 0.0:
+            raise ValueError('lateral_distance_scale must be positive')
+        self._t = transport
+        self._telem: Optional[TelemBatch] = None
+        self._telem_received_at = 0.0
+        self.lateral_distance_scale = lateral_distance_scale
+
+        # Position PID controllers (one per motor)
+        self.pos_pid = [
+            PID(DEFAULT_POS_KP, DEFAULT_POS_KI, DEFAULT_POS_KD,
+                DEFAULT_POS_I_LIM, DEFAULT_POS_O_LIM)
+            for _ in range(4)
+        ]
+
+        # Yaw PID
+        self.yaw_pid = PID(DEFAULT_YAW_KP, DEFAULT_YAW_KI, 0.0,
+                           DEFAULT_YAW_I_LIM, DEFAULT_YAW_I_LIM)
+
+        # State
+        self._yaw_offset = 0.0
+        self._motor_signs = [-1, 1, 1, -1]  # fwd sign per motor
+        self._action_monitor = None
+
+    # ==================== Telemetry ===========================================
+
+    @property
+    def telem(self) -> Optional[TelemBatch]:
+        return self._telem
+
+    def update_telem(self, telem: TelemBatch):
+        """Called by main loop when new telemetry arrives."""
+        self._telem = telem
+        self._telem_received_at = time.monotonic()
+
+    def has_telem(self) -> bool:
+        return self._telem is not None
+
+    def set_lateral_distance_scale(self, scale: float):
+        """Set empirical mecanum lateral compensation (1.0 = geometric)."""
+        if scale <= 0.0:
+            raise ValueError('lateral distance scale must be positive')
+        self.lateral_distance_scale = scale
+
+    @property
+    def yaw(self) -> float:
+        if self._telem:
+            return self._telem.yaw_deg
+        return 0.0
+
+    @property
+    def yaw_rate(self) -> float:
+        if self._telem:
+            return self._telem.yaw_rate_ds
+        return 0.0
+
+    def motor_speed(self, idx: int) -> int:
+        """Get current motor speed in RPM."""
+        if self._telem and idx < 4:
+            return self._telem.motors[idx].speed_rpm
+        return 0
+
+    def motor_position(self, idx: int) -> int:
+        """Get the A-board's multi-turn encoder position."""
+        if self._telem and idx < 4:
+            return self._telem.motors[idx].cumulative_pos
+        return 0
+
+    def capture_motor_positions(self) -> Tuple[int, int, int, int]:
+        """Snapshot all chassis multi-turn encoders for odometry deltas."""
+        telem = self._telem
+        if telem is None:
+            raise RuntimeError('encoder snapshot requires active telemetry')
+        return tuple(m.cumulative_pos for m in telem.motors)
+
+    def lateral_displacement_mm(
+            self, origin: Tuple[int, int, int, int]) -> float:
+        """Return signed chassis displacement, positive toward robot right."""
+        if len(origin) != 4:
+            raise ValueError('lateral encoder origin must contain 4 positions')
+        telem = self._telem
+        if telem is None:
+            raise RuntimeError('lateral displacement requires active telemetry')
+        _, projected_counts = self._project_wheel_positions(
+            telem, origin, [1, 1, -1, -1])
+        wheel_distance_mm = projected_counts * 10.0 / COUNTS_PER_CM
+        return wheel_distance_mm / self.lateral_distance_scale
+
+    def forward_displacement_mm(
+            self, origin: Tuple[int, int, int, int]) -> float:
+        """Body-axis encoder projection; caller guards freshness and heading."""
+        if len(origin) != 4:
+            raise ValueError('forward encoder origin must contain 4 positions')
+        if self._telem is None:
+            raise RuntimeError('forward displacement requires active telemetry')
+        _, counts = self._project_wheel_positions(
+            self._telem, origin, [-1, 1, 1, -1])
+        return counts * 10.0 / COUNTS_PER_CM
+
+    def measured_body_velocity(self):
+        """Encoder-derived mm/s forward/right and deg/s CW; caller guards age."""
+        from control.trajectory import BodyVelocity
+        if self._telem is None:
+            raise RuntimeError('measured velocity requires active telemetry')
+        rpms = tuple(m.speed_rpm for m in self._telem.motors)
+        if len(rpms) != 4 or not all(math.isfinite(v) for v in rpms):
+            raise RuntimeError('measured wheel velocity invalid')
+        tr, tl, bl, br = rpms
+        return BodyVelocity(
+            (-tr+tl+bl-br)*10.0/(4*MECANUM_RPM_PER_CM_S),
+            (tr+tl-bl-br)*10.0/(4*MECANUM_RPM_PER_CM_S*self.lateral_distance_scale),
+            sum(rpms)/(4*TURN_DEG_S_TO_RPM))
+
+    # ==================== Mecanum Kinematics ==================================
+
+    @staticmethod
+    def mecanum_rpm(vx_cm_s: float, vy_cm_s: float,
+                    wz_deg_s: float) -> List[float]:
+        """
+        Convert chassis velocity to 4 wheel RPMs.
+
+        Args:
+            vx_cm_s:  forward velocity in cm/s (+=forward)
+            vy_cm_s:  lateral velocity in cm/s (+=right)
+            wz_deg_s: angular velocity in °/s (+=CCW from top view)
+
+        Returns:
+            [TR_rpm, TL_rpm, BL_rpm, BR_rpm] — motor sign convention
+
+        Matches Motor3508_MecanumRPM() in motor3508.c.
+        """
+        rpm_per = MECANUM_RPM_PER_CM_S
+        base = vx_cm_s * rpm_per
+        lat  = vy_cm_s * rpm_per
+        wz_rad = wz_deg_s * math.pi / 180.0
+        rot = wz_rad * (CHASSIS_HALF_DIAGONAL_MM / 10.0) * rpm_per
+
+        return [
+            -base + lat - rot,   # TR: γ=-1, +vx→negative, +vy→positive
+            +base + lat - rot,   # TL: γ=-1, +vx→positive, +vy→positive
+            +base - lat - rot,   # BL: γ=-1, +vx→positive, +vy→negative
+            -base - lat - rot,   # BR: γ=-1, +vx→negative, +vy→negative
+        ]
+
+    # ==================== Low-Level Control ===================================
+
+    @contextmanager
+    def monitor_action(self, check):
+        """Keep a mechanism action supervised throughout a chassis-only route."""
+        if self._action_monitor is not None:
+            raise RuntimeError('a chassis action monitor is already installed')
+        self._action_monitor = check
+        try:
+            self._check_action()
+            yield
+            self._check_action()
+        finally:
+            self._action_monitor = None
+
+    def _check_action(self):
+        if self._action_monitor is not None:
+            self._action_monitor()
+            if self._telem is None or time.monotonic() - self._telem_received_at > 0.5:
+                raise RuntimeError('chassis telemetry stale during action overlap')
+
+    def set_speeds(self, rpm: List[float]):
+        """Send 4×RPM targets to STM32 speed PID."""
+        self._check_action()
+        sent = self._t.set_chassis_speed([int(round(r)) for r in rpm[:4]])
+        if not sent and self._action_monitor is not None:
+            raise RuntimeError('chassis speed send failed during action overlap')
+        return sent
+
+    def set_torques(self, torque: List[int]):
+        """Send 4×raw torque commands (bypasses PID)."""
+        self._t.set_chassis_torque(torque[:4])
+
+    def stop(self):
+        """Emergency stop all chassis motors."""
+        self._t.emergency_stop()
+        for pid in self.pos_pid:
+            pid.reset()
+        self.yaw_pid.reset()
+
+    # ==================== PID Tuning ==========================================
+
+    def set_speed_pid(self, motor_id: int, kp: float, ki: float,
+                      kd: float, ilim: float, olim: float):
+        """Adjust speed-loop PID on STM32 for one motor."""
+        self._t.set_chassis_speed_pid(motor_id, kp, ki, kd, ilim, olim)
+
+    def set_pos_pid(self, motor_id: int, kp: float, ki: float,
+                    kd: float, ilim: float, olim: float):
+        """Adjust position-loop PID on STM32 for one motor."""
+        self._t.set_chassis_pos_pid(motor_id, kp, ki, kd, ilim, olim)
+
+    def reset_pid(self, motor_id: int):
+        """Reset PID integrators on STM32 for one motor."""
+        self._t.reset_chassis_pid(motor_id)
+
+    def set_all_speed_pid(self, kp: float, ki: float, kd: float,
+                          ilim: float, olim: float):
+        """Set same speed PID for all 4 motors."""
+        for i in range(4):
+            self.set_speed_pid(i, kp, ki, kd, ilim, olim)
+
+    def set_all_pos_pid(self, kp: float, ki: float, kd: float,
+                        ilim: float, olim: float):
+        """Set same position PID for all 4 motors."""
+        for i in range(4):
+            self.set_pos_pid(i, kp, ki, kd, ilim, olim)
+
+    # ==================== High-Level Move Commands =============================
+    # Direct moves retain the motor3508.c positioning behaviour; route_mode
+    # opts into a wider arrival window and braking during acceleration.
+    # They run BLOCKING on the Pi — call from a task thread.
+    # STM32 handles the speed PID; Pi handles the position loop.
+
+    def follow_trajectory(self, waypoints, profile, *, check,
+                          initial_velocity=None):
+        """Follow a configured or recipe-derived local route without intermediate stops.
+
+        Waypoints use local mm forward/right and unwrapped clockwise yaw. ``check``
+        must be the active execution context guard, including cancellation and
+        robot link-generation checks. The IMU's CCW convention is converted here.
+        Existing move/turn commands retain their independent behavior.
+        """
+        from control.trajectory import (
+            BodyVelocity, CubicRoute, PoseSample, follow_trajectory,
+        )
+        points = tuple(waypoints)
+        CubicRoute(points, profile)  # Reject invalid profiles before any output.
+        stop_generation = self._t.emergency_stop_generation
+        last_uptime = None
+        previous_telem = None
+        local_x = local_y = local_yaw = 0.0
+
+        def guard():
+            nonlocal last_uptime
+            check()
+            self._check_action()
+            if (not self._t.connected
+                    or self._t.emergency_stop_generation != stop_generation):
+                raise RuntimeError('trajectory communication or emergency stop fault')
+            telem = self._telem
+            received_at = self._telem_received_at
+            if (telem is None or not math.isfinite(telem.yaw_deg)
+                    or not 0 <= time.monotonic()-received_at
+                    <= profile.max_telemetry_age_s):
+                raise RuntimeError('trajectory telemetry unavailable or stale')
+            if (last_uptime is not None
+                    and ((telem.uptime_ms-last_uptime) & 0xffffffff) >= 0x80000000):
+                raise RuntimeError('A-board restarted during trajectory')
+            last_uptime = telem.uptime_ms
+
+        def project(values, scale):
+            tr, tl, bl, br = values
+            return ((-tr+tl+bl-br)*scale/4,
+                    (tr+tl-bl-br)*scale/(4*self.lateral_distance_scale))
+
+        def read_pose():
+            nonlocal previous_telem, local_x, local_y, local_yaw
+            guard()
+            telem = self._telem
+            received_at = self._telem_received_at
+            values = tuple(m.cumulative_pos for m in telem.motors)
+            rpms = tuple(m.speed_rpm for m in telem.motors)
+            if (len(values) != 4 or len(rpms) != 4
+                    or not all(math.isfinite(v) for v in (*values, *rpms))):
+                raise RuntimeError('trajectory encoder telemetry invalid')
+            if previous_telem is not None:
+                positions, yaw = previous_telem
+                deltas = tuple((b-a+0x80000000) % 0x100000000-0x80000000
+                               for a, b in zip(positions, values))
+                dx, dy = project(deltas, 10.0/COUNTS_PER_CM)
+                # Unwrap adjacent IMU samples, then convert CCW to local CW.
+                d_yaw = -((telem.yaw_deg-yaw+180.0) % 360.0-180.0)
+                angle = math.radians(local_yaw+d_yaw/2.0)
+                local_x += math.cos(angle)*dx-math.sin(angle)*dy
+                local_y += math.sin(angle)*dx+math.cos(angle)*dy
+                local_yaw += d_yaw
+            previous_telem = (values, telem.yaw_deg)
+            vx, vy = project(rpms, 10.0/MECANUM_RPM_PER_CM_S)
+            velocity = BodyVelocity(vx, vy, sum(rpms)/(4*TURN_DEG_S_TO_RPM))
+            return PoseSample(local_x, local_y, local_yaw, velocity, received_at)
+
+        def wheel_rpm(velocity):
+            return self.mecanum_rpm(velocity.vx_mm_s/10.0,
+                                    velocity.vy_mm_s*self.lateral_distance_scale/10.0,
+                                    -velocity.yaw_deg_s)
+
+        def send_velocity(velocity):
+            guard()
+            return self.set_speeds(wheel_rpm(velocity))
+
+        return follow_trajectory(points, profile, read_pose=read_pose,
+                                 send_velocity=send_velocity, wheel_rpm=wheel_rpm,
+                                 check=guard, emergency_stop=self._t.emergency_stop,
+                                 initial_velocity=initial_velocity,
+                                 clock=time.monotonic, sleep=time.sleep)
+
+    @staticmethod
+    def _smoothstep(r: float) -> float:
+        """S-curve: r²(3-2r), zero-slope at both ends."""
+        return smoothstep(r)
+
+    @staticmethod
+    def _mm_s_to_rpm(mm_s: float) -> float:
+        return mm_s * MECANUM_RPM_PER_CM_S / 10.0
+
+    @staticmethod
+    def _project_wheel_positions(telem: TelemBatch,
+                                 origin: Tuple[int, int, int, int],
+                                 signs: List[int]) -> Tuple[
+                                     Tuple[int, int, int, int], int]:
+        wheel_counts = tuple(
+            signs[i] * (telem.motors[i].cumulative_pos - origin[i])
+            for i in range(4)
+        )
+        return wheel_counts, sum(wheel_counts) // 4
+
+    @staticmethod
+    def _linear_settled(telem: TelemBatch, remaining: int,
+                        tolerance_counts: int = FWD_SETTLE_COUNTS) -> bool:
+        return (abs(remaining) <= tolerance_counts
+                and max(abs(m.speed_rpm) for m in telem.motors)
+                <= FWD_SETTLE_SPEED_RPM)
+
+    def _move_linear(self, target_counts: int, signs: List[int],
+                     speed_rpm: float, t: Transport,
+                     telem_getter, requested_mm: float,
+                     sleep_fn=time.sleep,
+                     cancel_event=None,
+                     distance_scale: float = 1.0,
+                     hold_ms: int = FWD_HOLD_MS,
+                     accel_ms: int = FWD_ACCEL_MS,
+                     route_mode: bool = False) -> LinearMoveResult:
+        """
+        Blocking position-loop linear move with S-curve feedforward.
+        Direct positioning retains the motor3508.c profile. Competition routes
+        brake during acceleration and stop correcting inside an arrival window.
+        """
+        control_period = 0.02  # 50 Hz, matching the default telemetry rate
+        scale = speed_rpm / FWD_BASE_SPEED_RPM
+        decel_dist = FWD_BASE_DECEL_DIST * scale
+        pid_limit = FWD_BASE_PID_LIMIT * scale
+
+        if target_counts <= 0 or speed_rpm <= 0.0:
+            raise ValueError('distance and speed must be positive')
+
+        tolerance_counts = FWD_SETTLE_COUNTS
+        if route_mode:
+            # Apply lateral calibration to the tolerance as well as the target.
+            # Very short compensation moves must still leave their origin.
+            tolerance_counts = min(
+                int(ROUTE_ARRIVAL_TOLERANCE_MM * distance_scale
+                    * COUNTS_PER_CM / 10.0), target_counts // 2)
+        stop_generation = t.emergency_stop_generation if route_mode else None
+
+        def check_route():
+            self._check_action()
+            if route_mode and (
+                    not t.connected
+                    or t.emergency_stop_generation != stop_generation
+                    or self._telem is None
+                    or time.monotonic() - self._telem_received_at > 0.5):
+                t.emergency_stop()
+                raise RuntimeError('route move communication/cancellation/telemetry fault')
+
+        check_route()
+        target_wheel_mm = target_counts * 10.0 / COUNTS_PER_CM
+        wheel_speed_mm_s = speed_rpm * 10.0 / MECANUM_RPM_PER_CM_S
+        timeout_ms = max(
+            FWD_TIMEOUT_MS,
+            target_wheel_mm / wheel_speed_mm_s * 1000.0
+            + accel_ms + hold_ms + FWD_TIMEOUT_MARGIN_MS,
+        )
+
+        first_telem = telem_getter()
+        if first_telem is None:
+            raise RuntimeError('position move requires active telemetry')
+        origin = tuple(m.cumulative_pos for m in first_telem.motors)
+        start_yaw = first_telem.yaw_deg
+
+        # Reset state
+        for pid in self.pos_pid:
+            pid.reset()
+            pid.output_limit = 0.0  # ramp up from zero
+        self.yaw_pid.reset()
+
+        t_start = time.monotonic()
+        last_update = t_start
+        settle_cnt = 0
+        settle_cycles = max(1, math.ceil(FWD_SETTLE_MS / (control_period * 1000.0)))
+        hold_active = False
+        hold_start = 0.0
+        position_lock = False
+        timed_out = False
+        cancelled = False
+        wheel_counts = (0, 0, 0, 0)
+        projected_counts = 0
+        last_settle_sample = None
+
+        while True:
+            t0 = time.monotonic()
+            check_route()
+
+            if cancel_event is not None and cancel_event.is_set():
+                cancelled = True
+                break
+
+            # Read latest telemetry
+            telem = telem_getter()
+            if telem is None:
+                if (time.monotonic() - t_start) * 1000.0 >= timeout_ms:
+                    timed_out = True
+                    break
+                sleep_fn(control_period)
+                continue
+
+            now = time.monotonic()
+            dt = max(0.001, min(0.1, now - last_update))
+            last_update = now
+
+            # Project each wheel's action-local displacement onto the requested
+            # chassis axis. This is the same reference used by the 0714 loop.
+            wheel_counts, projected_counts = self._project_wheel_positions(
+                telem, origin, signs)
+            remaining = target_counts - projected_counts
+            in_arrival_window = route_mode and abs(remaining) <= tolerance_counts
+            if remaining <= 0:
+                position_lock = True
+
+            # Feedforward
+            elapsed_ms = (now - t_start) * 1000.0
+            if in_arrival_window:
+                # Brake immediately, then wait for low wheel speed. Do not
+                # keep nudging the final millimetres or yaw while confirming.
+                position_lock = True
+                for pid in self.pos_pid:
+                    pid.reset()
+                self.yaw_pid.reset()
+                ff = 0.0
+            elif position_lock:
+                # No feedforward in the position-lock phase or after an
+                # overshoot. The signed position PID must be able to reverse.
+                for pid in self.pos_pid:
+                    pid.output_limit = pid_limit
+                ff = 0.0
+            elif route_mode:
+                ramp = min(1.0, elapsed_ms / accel_ms) if accel_ms > 0 else 1.0
+                distance_ratio = min(1.0, max(0.0, remaining / decel_dist))
+                for pid in self.pos_pid:
+                    pid.output_limit = pid_limit * ramp
+                ff = route_feedforward(speed_rpm, elapsed_ms, accel_ms,
+                                       remaining, decel_dist)
+            elif accel_ms > 0 and elapsed_ms < accel_ms:
+                r = elapsed_ms / accel_ms
+                for pid in self.pos_pid:
+                    pid.output_limit = pid_limit * r
+                ff = speed_rpm * self._smoothstep(r)
+            else:
+                for pid in self.pos_pid:
+                    pid.output_limit = pid_limit
+                if remaining > decel_dist:
+                    ff = speed_rpm
+                else:
+                    ff = speed_rpm * self._smoothstep(remaining / decel_dist)
+
+            pid_corr = (0.0 if in_arrival_window else self.pos_pid[0].compute(
+                float(target_counts), float(projected_counts), dt))
+            speed_sp = ff + pid_corr
+
+            # Match IMU_ResetYaw() in the 0714 implementation without changing
+            # the global telemetry reference used by other upper-computer code.
+            yaw_delta = telem.yaw_deg - start_yaw
+            while yaw_delta > 180.0:
+                yaw_delta -= 360.0
+            while yaw_delta < -180.0:
+                yaw_delta += 360.0
+            yaw_corr = (0.0 if in_arrival_window else
+                        self.yaw_pid.compute(0.0, -yaw_delta, dt))
+
+            # Distribute to 4 wheels
+            rpm = [speed_sp * signs[i] + yaw_corr for i in range(4)]
+            if cancel_event is not None and cancel_event.is_set():
+                cancelled = True
+                break
+            check_route()
+            sent = t.set_chassis_speed([int(round(r)) for r in rpm])
+            if not sent and route_mode:
+                t.emergency_stop()
+                raise RuntimeError('route move speed send failed')
+            if not sent and self._action_monitor is not None:
+                raise RuntimeError('chassis speed send failed during action overlap')
+
+            # Settle → hold
+            elapsed = (time.monotonic() - t_start) * 1000.0
+
+            if elapsed >= timeout_ms:
+                timed_out = True
+                break
+
+            settled = self._linear_settled(telem, remaining, tolerance_counts)
+            fresh_sample = telem is not last_settle_sample
+            last_settle_sample = telem
+
+            if not hold_active:
+                if settled:
+                    if not route_mode or fresh_sample:
+                        settle_cnt += 1
+                    if settle_cnt >= settle_cycles:
+                        hold_active = True
+                        position_lock = True
+                        hold_start = elapsed
+                else:
+                    settle_cnt = 0
+            elif not settled:
+                # Position lock must be continuous. Re-enter acquisition if
+                # load, inertia or floor slip moves the chassis out of bounds.
+                hold_active = False
+                settle_cnt = 0
+            elif (elapsed - hold_start >= hold_ms
+                  and (not route_mode or fresh_sample)):
+                break
+
+            # Maintain ~50 Hz
+            elapsed_loop = time.monotonic() - t0
+            if elapsed_loop < control_period:
+                sleep_fn(control_period - elapsed_loop)
+
+        check_route()
+        sent = t.set_chassis_speed([0, 0, 0, 0])
+        if not sent and route_mode:
+            t.emergency_stop()
+            raise RuntimeError('route move stop failed')
+        if not sent and self._action_monitor is not None:
+            raise RuntimeError('chassis stop failed during action overlap')
+        check_route()
+        elapsed_ms = (time.monotonic() - t_start) * 1000.0
+        return LinearMoveResult(
+            requested_mm=requested_mm,
+            target_counts=target_counts,
+            projected_counts=projected_counts,
+            wheel_counts=wheel_counts,
+            elapsed_ms=elapsed_ms,
+            timed_out=timed_out,
+            cancelled=cancelled,
+            distance_scale=distance_scale,
+        )
+
+    def move_forward(self, distance_mm: float,
+                     speed_mm_s: float = DEFAULT_MOVE_SPEED_MM_S,
+                     cancel_event=None,
+                     hold_ms: int = FWD_HOLD_MS,
+                     accel_ms: int = FWD_ACCEL_MS,
+                     route_mode: bool = False) -> LinearMoveResult:
+        """
+        Move forward by distance_mm at speed_mm_s (blocking).
+
+        Uses encoder-based position loop + IMU yaw correction.
+        Speed PID runs on STM32 at 1 kHz; position loop runs here at ~50 Hz.
+        """
+        direction = 1 if distance_mm >= 0 else -1
+        requested_mm = abs(distance_mm)
+        target = int(requested_mm * COUNTS_PER_CM / 10.0)
+        signs = [direction * s for s in (-1, 1, 1, -1)]
+        speed_rpm = self._mm_s_to_rpm(speed_mm_s)
+        return self._move_linear(target, signs, speed_rpm,
+                                 self._t, lambda: self._telem, requested_mm,
+                                 cancel_event=cancel_event,
+                                 distance_scale=1.0,
+                                 hold_ms=hold_ms,
+                                 accel_ms=accel_ms, route_mode=route_mode)
+
+    def move_right(self, distance_mm: float,
+                   speed_mm_s: float = DEFAULT_MOVE_SPEED_MM_S,
+                   cancel_event=None,
+                   hold_ms: int = FWD_HOLD_MS,
+                   accel_ms: int = FWD_ACCEL_MS,
+                   route_mode: bool = False) -> LinearMoveResult:
+        """
+        Move right (lateral) by distance_mm at speed_mm_s (blocking).
+        """
+        direction = 1 if distance_mm >= 0 else -1
+        requested_mm = abs(distance_mm)
+        target = int(requested_mm * self.lateral_distance_scale
+                     * COUNTS_PER_CM / 10.0)
+        signs = [direction * s for s in (1, 1, -1, -1)]
+        speed_rpm = self._mm_s_to_rpm(speed_mm_s)
+        return self._move_linear(target, signs, speed_rpm,
+                                 self._t, lambda: self._telem, requested_mm,
+                                 cancel_event=cancel_event,
+                                 distance_scale=self.lateral_distance_scale,
+                                 hold_ms=hold_ms,
+                                 accel_ms=accel_ms, route_mode=route_mode)
+
+    def turn(self, target_deg: float, speed_deg_s: float,
+             hold_ms: int = TURN_HOLD_MS,
+             settle_cycles: int = TURN_SETTLE_CYCLES):
+        """
+        Turn by target_deg degrees (+ = CW, - = CCW) at speed_deg_s (blocking).
+
+        Uses IMU yaw for feedback. Healthy timeouts stop and continue the route;
+        link, telemetry, cancellation and mechanism faults still abort.
+        """
+        if (not math.isfinite(target_deg) or not math.isfinite(speed_deg_s)
+                or speed_deg_s <= 0):
+            raise ValueError('turn requires a finite target and positive speed')
+        # Internal convention: + = CCW. Flip user convention.
+        target = -target_deg
+        dt = 0.02
+        scale = speed_deg_s / TURN_BASE_SPEED_DEG_S
+        decel_deg = TURN_BASE_DECEL_DEG * scale
+        pid_limit = TURN_BASE_PID_LIMIT * scale
+        timeout_ms = (abs(target_deg) / speed_deg_s * 1000.0
+                      + TURN_ACCEL_MS + max(0, hold_ms) + TURN_TIMEOUT_MARGIN_MS)
+        pos_pid = PID(3.0, 0.15, 0.0, pid_limit, pid_limit)
+        stop_generation = self._t.emergency_stop_generation
+        t_start = time.monotonic()
+        settle_cnt = 0
+        hold_start = None
+        last_output = 0.0
+        timed_out = False
+
+        def check_turn():
+            self._check_action()
+            if (not self._t.connected
+                    or self._t.emergency_stop_generation != stop_generation):
+                raise RuntimeError('turn communication/cancellation fault')
+            telem = self._telem
+            if telem is None or time.monotonic() - self._telem_received_at > 0.5:
+                raise RuntimeError('turn telemetry unavailable or stale')
+            if not math.isfinite(telem.yaw_deg):
+                raise RuntimeError('turn yaw invalid')
+            return telem
+
+        try:
+            previous_yaw = check_turn().yaw_deg
+            yaw = 0.0
+            previous_error = target
+            while True:
+                telem = check_turn()
+                # Integrate adjacent samples across the +/-180 degree wrap.
+                yaw_delta = telem.yaw_deg - previous_yaw
+                while yaw_delta > 180:
+                    yaw_delta -= 360
+                while yaw_delta < -180:
+                    yaw_delta += 360
+                yaw += yaw_delta
+                previous_yaw = telem.yaw_deg
+                err = target - yaw
+                remaining = abs(err)
+                elapsed_ms = (time.monotonic() - t_start) * 1000.0
+
+                if remaining <= TURN_SETTLE_DEG:
+                    # Stop immediately in tolerance, including confirmation.
+                    rot_deg_s = 0.0
+                    pos_pid.reset()
+                    settle_cnt += 1
+                    if settle_cnt >= settle_cycles and hold_start is None:
+                        hold_start = elapsed_ms
+                else:
+                    settle_cnt = 0
+                    hold_start = None
+                    if err * previous_error < 0:
+                        pos_pid.reset()
+                    # Brake by current distance even while accelerating; once
+                    # past the target, both feedforward and minimum reverse.
+                    ramp = min(1.0, elapsed_ms / TURN_ACCEL_MS)
+                    pos_pid.output_limit = pid_limit * ramp
+                    distance_ratio = min(1.0, remaining / decel_deg)
+                    ff_deg_s = speed_deg_s * min(
+                        self._smoothstep(ramp), self._smoothstep(distance_ratio))
+                    sign_dir = 1 if err > 0 else -1
+                    pid_deg_s = pos_pid.compute(target, yaw, dt)
+                    toward_target = ff_deg_s + sign_dir * pid_deg_s
+                    rot_deg_s = sign_dir * max(
+                        min(TURN_MIN_SPEED_DEG_S, speed_deg_s), toward_target)
+                previous_error = err
+
+                if hold_start is not None and elapsed_ms - hold_start >= hold_ms:
+                    break
+                if elapsed_ms >= timeout_ms:
+                    timed_out = True
+                    break
+                check_turn()
+                rot_rpm = rot_deg_s * TURN_DEG_S_TO_RPM
+                if not self.set_speeds([int(round(-rot_rpm))] * 4):
+                    raise RuntimeError('turn speed send failed')
+                last_output = rot_deg_s
+                time.sleep(dt)
+
+            check_turn()
+            if not self.set_speeds([0, 0, 0, 0]):
+                raise RuntimeError('turn stop failed')
+            check_turn()
+            if timed_out:
+                print('[Chassis] Warning: turn timeout accepted (degraded): '
+                      f'target={target_deg:+.1f} deg CW, turned={-yaw:+.1f} deg CW, '
+                      f'remaining={-err:+.1f} deg, last_output={-last_output:+.1f} deg/s, '
+                      f'time={elapsed_ms:.0f}/{timeout_ms:.0f} ms', flush=True)
+        except BaseException:
+            self._t.emergency_stop()
+            raise
+        finally:
+            for pid in self.pos_pid:
+                pid.reset()
+            self.yaw_pid.reset()

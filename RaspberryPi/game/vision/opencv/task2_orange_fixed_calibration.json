@@ -1,0 +1,63 @@
+{
+  "resolution": [
+    1280,
+    720
+  ],
+  "fx": 663.8648510814407,
+  "fy": 414.2488458332086,
+  "cx": 640.0,
+  "cy": 360.0,
+  "cube_size_mm": 100.0,
+  "reference_quad_px": [
+    [
+      514.3944702148438,
+      427.201171875
+    ],
+    [
+      766.5631103515625,
+      427.68841552734375
+    ],
+    [
+      795.9056396484375,
+      606.0917358398438
+    ],
+    [
+      488.03533935546875,
+      605.9357299804688
+    ]
+  ],
+  "reference_xyz_mm": [
+    0.47082141012813494,
+    -85.45777922153636,
+    239.43936040586792
+  ],
+  "reference_xyz_convention": "model estimate: X right, Y up, Z forward; no pickup X offset; not measured ground truth",
+  "calibration": {
+    "date": "2026-10-02",
+    "source_resolution": [
+      640,
+      480
+    ],
+    "roi_top_ratio": 0.5,
+    "exposure": 100,
+    "gain": 32,
+    "white_balance": "auto",
+    "cube_size_basis": "existing project 100 mm cube dimension",
+    "fit_frames": 12,
+    "holdout_frames": 12,
+    "holdout_max_corner_error_px": 0.4518820345401764,
+    "source_image": "task2-geometry-20261002/frame-00.png",
+    "hsv_low": [
+      0,
+      45,
+      60
+    ],
+    "hsv_high": [
+      40,
+      255,
+      255
+    ],
+    "hsv_changed": false,
+    "physical_grasp_validated": false
+  }
+}
