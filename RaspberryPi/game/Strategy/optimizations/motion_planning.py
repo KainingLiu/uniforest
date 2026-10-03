@@ -53,6 +53,12 @@ class MotionPlanning:
                 profile=steps[-1].profile,backend=selected.backend)
         return selected.execute()
 
+    def run_refill(self, env, source, destination, **profiles):
+        from .refill_transfer import run_transfer
+        if not self.enabled:
+            raise RuntimeError('refill smoothing requires motion planning')
+        return run_transfer(self._routes, env, source, destination, **profiles)
+
     def run(self, env, route, profile, *, classic_routes=None):
         if classic_routes is None:
             from ..flows.routes import ROUTES

@@ -59,14 +59,15 @@ class TrajectoryProfile:
     route_derived: bool = False
     segment_speeds_mm_s: tuple = ()
     corner_tangent_deviation_mm: float = 40.0
+    monotone_xy: bool = False
 
     def validate(self):
-        if type(self.route_derived) is not bool or type(self.validated) is not bool:
+        if any(type(v) is not bool for v in (self.route_derived,self.validated,self.monotone_xy)):
             raise ValueError('trajectory provenance flags must be boolean')
         if self.validated is not True and not self.route_derived:
             raise ValueError('continuous trajectory profile requires field validation')
         for field in fields(self):
-            if field.name not in ('validated', 'route_derived', 'segment_speeds_mm_s'):
+            if field.name not in ('validated', 'route_derived', 'segment_speeds_mm_s', 'monotone_xy'):
                 value = getattr(self, field.name)
                 if isinstance(value, bool) or not math.isfinite(value) or value <= 0:
                     raise ValueError(f'{field.name} must be finite and positive')
@@ -170,6 +171,17 @@ class CubicRoute:
                 yaw_tangent=(0. if before_yaw*after_yaw<=0 else
                              math.copysign(min(abs(tangent[2]),3*min(abs(before_yaw),abs(after_yaw))),before_yaw))
                 tangent=(tangent[0],tangent[1],yaw_tangent)
+            if profile.monotone_xy:
+                # Shape-preserving Hermite slopes: each coordinate stays
+                # between its segment endpoints, eliminating outward lobes.
+                current = _components(self.points[i])
+                limited = []
+                for axis in (0,1):
+                    incoming = (current[axis]-before[axis])/(self.knots[i]-self.knots[i-1])
+                    outgoing = (after[axis]-current[axis])/(self.knots[i+1]-self.knots[i])
+                    limited.append(0. if incoming*outgoing <= 0 else math.copysign(
+                        min(abs(tangent[axis]),3*min(abs(incoming),abs(outgoing))),incoming))
+                tangent = (*limited,tangent[2])
             self.tangents.append(tangent)
         self.tangents.append((0.0, 0.0, 0.0))
         self.duration_s = self.knots[-1]

@@ -241,6 +241,12 @@ class HighlandCollectionConfig(GroundCollectionConfig):
     final_turn_target_cw_deg: float = 180.0
     build_route_distance_mm: float = 2750.0
     build_route_speed_mm_s: float = RAMP_ROUTE_SPEED_MM_S
+    # Software trial for planned orange refill only, NOT a surveyed ramp edge.
+    # Reuses the 750 mm local corner scale; verify the plateau before field use.
+    refill_downhill_flat_lead_mm: float = 750.0
+    # Trial exit window: original 300 mm unloading retreat + 250 mm blend.
+    # Verify this window is below the real ramp before field use.
+    refill_downhill_flat_tail_mm: float = 550.0
     # Preserve the existing optional Tag3 profile if that route is re-enabled.
     delivery_tag_fast_forward_mm_s: float = 260.0
     delivery_tag_fast_lateral_mm_s: float = 200.0

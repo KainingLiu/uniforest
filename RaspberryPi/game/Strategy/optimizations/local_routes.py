@@ -207,7 +207,7 @@ class LocalRoutes:
         from Strategy.flows.routes import ROUTES
         # A plain move, including strict depart_a, keeps the tested controller
         # and its timeout/arrival semantics exactly. Tag approaches opt in below.
-        if not approach and len(recorder.events) == 1:
+        if not approach and len(recorder.events) == 1 and route in ROUTES:
             return PreparedMotion('classic:single_action',lambda: ROUTES[route](env,profile))
         prepared=[]; actions=[]; group=[]
         origin=Waypoint(0.,0.,0.)
@@ -218,8 +218,13 @@ class LocalRoutes:
                                if route=='to_purple' and not prepared else None),
                 terminal_tag_window_mm=900. if approach else None)
             if len(points)>1:
-                item=round_corners(points,route_profile(group,points))
-                if len(group) == 1 and group[0][0] == 'move':
+                settings=route_profile(group,points)
+                if any(e[3].get('bounded_connector') for e in group):
+                    settings=replace(settings,monotone_xy=True)
+                item=((points,settings) if any(e[3].get('curve_shaped') for e in group)
+                      else round_corners(points,settings))
+                if (len(group) == 1 and group[0][0] == 'move'
+                        and not group[0][3].get('trajectory_only')):
                     actions.append(('straight',group[0]))
                 elif all(e[0] == 'turn' for e in group):
                     actions.extend(('turn',e) for e in group)

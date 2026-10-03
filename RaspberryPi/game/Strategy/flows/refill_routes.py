@@ -1,8 +1,9 @@
-"""Carry cargo between the two orange areas using existing route legs.
+"""Carry cargo between the two orange areas using existing route distances.
 
-Transit is serial and bypasses route fusion/moving-Tag consumption. The hatch
-unloading operation is replaced by its existing chassis retreat only, keeping
-cargo aboard. This new combination still requires loaded field validation.
+With motion planning enabled, connect directly via the original ramp corridor
+and destination goal, skipping Tag6 and intermediate unloading contacts.
+The classic fallback retains its original stops. Both keep cargo aboard;
+the direct combination still requires loaded field validation.
 """
 
 from .routes import ROUTES
@@ -34,6 +35,14 @@ def _keep_cargo_departure(env, profile):
 
 
 def transfer(env, source, destination, *, ground_profile, highland_profile):
+    if getattr(env.transition_config, 'motion_planning_enabled', False):
+        return env.motion_planning.run_refill(env, source, destination,
+            ground_profile=ground_profile, highland_profile=highland_profile)
+    return classic_transfer(env, source, destination, ground_profile=ground_profile,
+                            highland_profile=highland_profile)
+
+
+def classic_transfer(env, source, destination, *, ground_profile, highland_profile):
     if (source, destination) not in (('ground', 'highland'), ('highland', 'ground')):
         raise ValueError('refill transfer must connect different orange regions')
     env.context.check_active()

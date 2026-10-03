@@ -17,6 +17,7 @@ from Strategy.plans import PLANS, StrategyPlan
 from Strategy.settings import PROFILES
 from Strategy.refill_policy import BothOrangeAreasExhausted
 from Strategy.transition_config import TransitionConfig
+from control.trajectory import BodyVelocity
 from tests.test_functional_operations import operation_fixture
 
 
@@ -35,6 +36,9 @@ class Recovery:
         self.env = ActionEnvironment(self.robot, self.context,
             transition_config=TransitionConfig(motion_planning_enabled=planning))
         self.env.motion_planning.run = Mock(side_effect=AssertionError('nested optimized route'))
+        self.env.motion_planning.run_refill = Mock(wraps=self.env.motion_planning.run_refill)
+        self.robot.chassis.measured_body_velocity = Mock(return_value=BodyVelocity())
+        self.robot.chassis.follow_trajectory = Mock()
         for key in PROFILES:
             c = self.env.control(key)
             c._drive_until_wall = Mock()
@@ -102,6 +106,7 @@ class CrossRegionRefillTests(unittest.TestCase):
                         self.assertIsNone(r.env.data[f'{region}_lateral_mm'])
                         self.assertEqual(r.robot.check_carried_cube_count.call_count, 4)
                         r.env.motion_planning.run.assert_not_called()
+                        self.assertEqual(r.env.motion_planning.run_refill.call_count, 2 if planning else 0)
 
     def test_existing_purple_is_preserved_and_only_orange_is_added(self):
         r = Recovery('highland-2', pickups=1, purple=True)
