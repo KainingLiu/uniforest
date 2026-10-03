@@ -119,7 +119,7 @@ class Task3Config(FirstTaskConfig):
     # an axis enters its acceptance window.
     building_linear_accel_mm_s2: float = 1000.0
     building_yaw_accel_deg_s2: float = 60.0
-    post_build_reverse_mm: float = 100.0
+    post_build_reverse_mm: float = 200.0
     post_build_reverse_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
     post_build_turn_cw_deg: float = 180.0
     post_build_route_distance_mm: float = 2500.0

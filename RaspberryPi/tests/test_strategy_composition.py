@@ -269,7 +269,7 @@ class CompositionTests(unittest.TestCase):
                 self.assertEqual(task._heading_zero_deg, 37.0)
                 self.assertIsNone(context.build_approach)
                 self.assertEqual(events, ['tag6', (direction, lateral, 400), 'build_release',
-                    'monitor_enter', 'action_check', ('backward', 100, 400), ('turn', 180),
+                    'monitor_enter', 'action_check', ('backward', 200, 400), ('turn', 180),
                     ('left', return_mm, 1000), ('wall', 'left'), 'action_check', 'monitor_exit', 'build_done'])
                 self.assertNotIn('translation_only_completion', task._align_delivery_tag.call_args.kwargs)
                 self.assertTrue(task._align_delivery_tag.call_args.kwargs['independent_heading'])

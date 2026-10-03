@@ -53,12 +53,12 @@ class WallContactTests(unittest.TestCase):
     def test_relaxed_speed_still_requires_load_and_original_wheel_count(self):
         cfg = FirstTaskConfig()
         for direction, speeds, currents, expected in (
-            ('forward', [700, 700, -80, 80], [0, 0, -2500, 2500], True),
-            ('forward', [0, 0, 81, 80], [3000] * 4, False),
-            ('forward', [0] * 4, [3000, 3000, 2499, 3000], False),
-            ('left', [-80, 80, 80, 700], [-2500, 2500, 2500, 0], True),
-            ('left', [80, 80, 81, 700], [3000] * 4, False),
-            ('left', [0] * 4, [2499] * 4, False),
+            ('forward', [700, 700, -240, 240], [0, 0, -1800, 1800], True),
+            ('forward', [0, 0, 241, 240], [3000] * 4, False),
+            ('forward', [0] * 4, [3000, 3000, 1799, 3000], False),
+            ('left', [-240, 240, 240, 700], [-1800, 1800, 1800, 0], True),
+            ('left', [240, 240, 241, 700], [3000] * 4, False),
+            ('left', [0] * 4, [1799] * 4, False),
             ('left', [700] * 4, [4000] * 4, False),
         ):
             with self.subTest(direction=direction, speeds=speeds, currents=currents):
@@ -98,7 +98,7 @@ class WallContactTests(unittest.TestCase):
         self.assertTrue(tracker.update(True, .53, .3))
 
     def test_wall_loop_confirms_light_slip_and_brief_spike_before_timeout(self):
-        replay = WallReplay(lambda now: (130 if .60 <= now < .65 else 60, 3000))
+        replay = WallReplay(lambda now: (300 if .60 <= now < .65 else 220, 1900))
         with replay.clock():
             replay.task._drive_until_wall(direction='left', timeout_is_success=False)
         self.assertGreaterEqual(replay.now, .8)  # Startup guard plus actual good time.
@@ -107,12 +107,54 @@ class WallContactTests(unittest.TestCase):
         self.assertNotIn('timed out', replay.output.getvalue())
         replay.robot.chassis.set_speeds.assert_called_with([0, 0, 0, 0])
 
+    def test_startup_load_spike_does_not_confirm_normal_wall_approach(self):
+        # Startup spike overlaps the grace boundary but never lasts the
+        # required confirmation time after it. Actual contact arrives later.
+        replay = WallReplay(lambda now: (110, 1900) if now < .65 or now >= 1.2
+                            else (700, 1000))
+        with replay.clock():
+            replay.task._drive_until_wall(direction='left', timeout_is_success=False)
+        self.assertGreaterEqual(replay.now, 1.5)
+        self.assertLess(replay.now, 1.65)
+        self.assertIn('confirmed', replay.output.getvalue())
+
+    def test_grab_startup_spike_is_not_contact_and_real_contact_still_confirms(self):
+        for real_contact in (False, True):
+            replay = WallReplay(lambda now: (110, 1900)
+                                if now < .4 or (real_contact and now >= .6)
+                                else (700, 1000))
+            def grab(*, parallel_step):
+                while not parallel_step():
+                    replay.sleep(.02)
+            with replay.clock():
+                replay.task._grab_with_wall_press(grab)
+            if real_contact:
+                self.assertGreaterEqual(replay.now, .8)
+                self.assertLess(replay.now, 1.0)
+                self.assertIn('press confirmed', replay.output.getvalue())
+            else:
+                self.assertGreaterEqual(replay.now, 1.0)
+                self.assertNotIn('press confirmed', replay.output.getvalue())
+                self.assertIn('timeout accepted', replay.output.getvalue())
+
+    def test_existing_wall_at_start_waits_for_guard_then_fresh_confirmation(self):
+        replay = WallReplay(lambda now: (110, 1900))
+        def grab(*, parallel_step):
+            while not parallel_step():
+                replay.sleep(.02)
+        with replay.clock():
+            replay.task._grab_with_wall_press(grab)
+        self.assertGreaterEqual(replay.now, .5)
+        self.assertLess(replay.now, .6)
+        self.assertIn('press confirmed', replay.output.getvalue())
+
     def test_normal_motion_or_no_load_cannot_be_mistaken_for_wall_contact(self):
         for sample in (lambda now: (700, 3000), lambda now: (0, 1000)):
             replay = WallReplay(sample)
             with replay.clock(), self.assertRaisesRegex(RuntimeError, 'not detected'):
                 replay.task._drive_until_wall(direction='left', timeout_is_success=False)
-            self.assertGreaterEqual(replay.now, 4)
+            self.assertGreaterEqual(replay.now, 2.5)
+            self.assertLess(replay.now, 2.55)
             replay.robot.chassis.set_speeds.assert_called_with([0, 0, 0, 0])
 
     def test_wall_loop_stops_on_repeated_telemetry_disconnect_or_emergency_stop(self):
@@ -131,6 +173,18 @@ class WallContactTests(unittest.TestCase):
                 self.assertLess(replay.now, 1.1)
                 self.assertNotIn('confirmed', replay.output.getvalue())
                 replay.robot.chassis.set_speeds.assert_called_with([0, 0, 0, 0])
+
+    def test_grab_press_keeps_120_rpm_limit_when_regular_limit_is_240(self):
+        replay = WallReplay(lambda now: (200, 1900))
+        def grab(*, parallel_step):
+            while not parallel_step():
+                replay.sleep(.02)
+        with replay.clock():
+            replay.task._grab_with_wall_press(grab)
+        self.assertNotIn('press confirmed', replay.output.getvalue())
+        self.assertIn('timeout accepted', replay.output.getvalue())
+        self.assertGreaterEqual(replay.now, 1.0)
+        self.assertLess(replay.now, 1.1)
 
     def test_grab_press_uses_same_dropout_tolerance_and_stops_on_stale_feedback(self):
         for stale in (False, True):

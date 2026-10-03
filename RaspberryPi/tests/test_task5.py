@@ -73,13 +73,13 @@ class Task5Tests(unittest.TestCase):
             self.assertEqual(task.run(), 0)
         kw = dict(hold_ms=0, accel_ms=300, route_mode=True)
         long_kw = dict(hold_ms=0, accel_ms=800, route_mode=True)
-        load = [('open', {'settle_ms': 200}), ('wall', 'forward', 300, 4),
+        load = [('open', {'settle_ms': 200}), ('wall', 'forward', 300, 2.5),
                 ('close', {'settle_ms': 400}), ('move', 'backward', 250, 400, kw),
                 ('move', 'right', 940, 1000, long_kw), 'building_align']
         self.assertEqual([e for e in events if e != 'action_check'], [
-            ('move', 'left', 700, 1000, long_kw), ('wall', 'left', 300, 4), *load,
+            ('move', 'left', 700, 1000, long_kw), ('wall', 'left', 300, 2.5), *load,
             'third_release', ('move', 'backward', 100, 400, kw),
-            ('move', 'left', 840, 800, long_kw), ('wall', 'left', 300, 4),
+            ('move', 'left', 840, 800, long_kw), ('wall', 'left', 300, 2.5),
             ('move', 'right', 300, 400, kw), 'build_done', *load,
             'third_release', ('move', 'backward', 100, 400, kw),
             ('move', 'left', 440, 800, long_kw), 'build_done'])

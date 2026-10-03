@@ -17,7 +17,7 @@ from control.chassis import (
 )
 from .common import TaskStateReporting, minimum_command, slew_command, wrap_angle
 from .common import VisualAlignmentUnavailable, report_visual_fallback
-from .tag_alignment import median_translation, translation_jump
+from .tag_alignment import median_translation, translation_jump, missing_tag_details
 from .tag_controller import PID as _Pid, TagPidSet, AxisToleranceHold, profiled_command
 from .cube_tracker import CubeTargetTracker, select_tracked_block
 from .wall_approach import velocity_for_direction
@@ -61,7 +61,7 @@ class CompetitionState(Enum):
 class FirstTaskConfig:
     target_cube_count: int = 3
     far_wall_speed_mm_s: float = 300.0
-    far_wall_timeout_s: float = 4.0
+    far_wall_timeout_s: float = 2.5
     near_wall_speed_mm_s: float = 150.0
     near_wall_timeout_s: float = 1.0
     wall_timeout_is_success: bool = True
@@ -69,12 +69,13 @@ class FirstTaskConfig:
     stall_startup_grace_s: float = 0.5
     stall_confirm_s: float = 0.3
     stall_dropout_s: float = 0.08
-    pre_grab_stall_startup_grace_s: float = 0.1
-    pre_grab_stall_confirm_s: float = 0.15
+    pre_grab_stall_startup_grace_s: float = 0.3
+    pre_grab_stall_confirm_s: float = 0.2
     pre_grab_wall_settle_s: float = 0.0
     telemetry_stale_s: float = 0.3
-    stall_speed_rpm: int = 80
-    stall_current_raw: int = 2500
+    stall_speed_rpm: int = 240
+    pre_grab_stall_speed_rpm: int = 120
+    stall_current_raw: int = 1800
     # Default/lateral-wall confirmation remains the original three-wheel
     # criterion. Forward contact uses the two rear wheel indices explicitly.
     stall_motor_count: int = 3
@@ -303,15 +304,18 @@ class TaskControl(TaskStateReporting):
 
     @staticmethod
     def _stall_sample(telem, cfg: FirstTaskConfig,
-                      direction: str = 'forward') -> bool:
+                      direction: str = 'forward', *,
+                      speed_limit_rpm: Optional[int] = None) -> bool:
         # A-board motor order is TL(1), TR(0), BL(2), BR(3); forward contact
         # is confirmed by the rear pair while lateral contact keeps 3/4.
         motors = (telem.motors[2:4] if direction.casefold() == 'forward'
                   else telem.motors)
         required = (2 if direction.casefold() == 'forward'
                     else cfg.stall_motor_count)
+        speed_limit_rpm = (cfg.stall_speed_rpm if speed_limit_rpm is None
+                           else speed_limit_rpm)
         stalled = sum(
-            abs(m.speed_rpm) <= cfg.stall_speed_rpm
+            abs(m.speed_rpm) <= speed_limit_rpm
             and abs(m.torque_current) >= cfg.stall_current_raw
             for m in motors
         )
@@ -423,7 +427,8 @@ class TaskControl(TaskStateReporting):
                 last_uptime = telem.uptime_ms
                 last_telem_time = now
                 stalled = (now - started >= cfg.pre_grab_stall_startup_grace_s
-                           and self._stall_sample(telem, cfg))
+                           and self._stall_sample(
+                               telem, cfg, speed_limit_rpm=cfg.pre_grab_stall_speed_rpm))
                 contact = tracker.update(
                     stalled, now, cfg.pre_grab_stall_confirm_s,
                     dropout_s=cfg.stall_dropout_s)
@@ -1087,8 +1092,12 @@ class TaskControl(TaskStateReporting):
                     pids.reset()
                     self.robot.chassis.set_speeds([0, 0, 0, 0])
                     if now - last_seen >= lost_timeout_s:
+                        details = missing_tag_details(
+                            pose, tag_id, now=time.time(),
+                            max_age_s=vision_stale_s,
+                            not_before=first_valid_frame_after)
                         raise VisualAlignmentUnavailable(
-                            f'tag {tag_id} lost during delivery alignment')
+                            f'tag {tag_id} lost during delivery alignment; {details}')
                     time.sleep(control_period)
                     continue
 

@@ -21,7 +21,7 @@ class Task4State(Enum):
 
 @dataclass(frozen=True)
 class Task4Config(FirstTaskConfig):
-    initial_lateral_left_mm: float = 600.0
+    initial_lateral_left_mm: float = 700.0
     lateral_speed_mm_s: float = 400.0
     long_route_speed_mm_s: float = 1000.0
     post_wall_lateral_right_mm: float = 0.0

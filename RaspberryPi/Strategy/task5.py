@@ -34,6 +34,8 @@ class Task5Config(Task3Config):
     route_speed_mm_s: float = 400.0
     long_route_speed_mm_s: float = 1000.0
     build_followup_speed_mm_s: float = 800.0
+    # Task5 retains two 100 mm retreats independently of Task3.
+    post_build_reverse_mm: float = 100.0
     hatch_open_settle_ms: int = 200
     hatch_close_settle_ms: int = 400
     load_reverse_mm: float = 250.0

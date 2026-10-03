@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Keep only PlanA and PlanB desktop launchers; never connect to hardware."""
+"""Manage PlanA, PlanB, set1 and set2 desktop launchers; never connect to hardware."""
 import argparse
 import json
 from pathlib import Path
@@ -10,6 +10,8 @@ ROOT = Path(__file__).resolve().parents[1]
 ENTRIES = {
     'uniforest-all.desktop': ('PlanA', 'Uniforest PlanA 原策略'),
     'uniforest-planb.desktop': ('PlanB', 'Uniforest PlanB 采集投放策略'),
+    'uniforest-set1.desktop': ('set1', 'Uniforest set1 任务组合'),
+    'uniforest-set2.desktop': ('set2', 'Uniforest set2 任务组合'),
 }
 # Exact names previously managed by this installer; unrelated shortcuts stay.
 LEGACY_ENTRIES = tuple(f'uniforest-{selection}.desktop' for selection in (

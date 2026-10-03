@@ -101,7 +101,7 @@ class PlanBTests(unittest.TestCase):
         self.assertEqual(events.mock_calls, [
             call.turn(180, 120, hold_ms=0, settle_cycles=1),
             call.move('left', 2600, 1000, hold_ms=0, accel_ms=800, route_mode=True),
-            call.wall(timeout_s=4, speed_mm_s=300, direction='left',
+            call.wall(timeout_s=2.5, speed_mm_s=300, direction='left',
                       context='Task0-3 left wall approach')])
         robot.transport.emergency_stop.assert_not_called()
 
@@ -149,10 +149,10 @@ class PlanBTests(unittest.TestCase):
                 self.assertEqual(task.run(), 0)
                 move_kw = dict(hold_ms=0, accel_ms=300, route_mode=True)
                 long_kw = dict(hold_ms=0, accel_ms=800, route_mode=True)
-                expected = [('move', 'left', 600, 1000, long_kw), ('wall', 'left', 300, 4)]
+                expected = [('move', 'left', 700, 1000, long_kw), ('wall', 'left', 300, 2.5)]
                 if right_mm:
                     expected.append(('move', 'right', right_mm, 400, move_kw))
-                expected += [('wall', 'forward', 300, 4), ('open', {'settle_ms': 300}),
+                expected += [('wall', 'forward', 300, 2.5), ('open', {'settle_ms': 300}),
                              ('move', 'backward', 300, 400, move_kw), ('close', {'settle_ms': 0}),
                              ('move', 'right', final_mm, 1000, long_kw)]
                 self.assertEqual(events, expected)
@@ -253,7 +253,8 @@ class PlanBTests(unittest.TestCase):
                 self.assertEqual(main.main(), expected)
                 robot.assert_not_called()
         from tools.install_desktop_entries import ENTRIES
-        self.assertEqual(len(ENTRIES), 2)
+        self.assertEqual({selection for selection, _ in ENTRIES.values()},
+                         {"PlanA", "PlanB", "set1", "set2"})
         self.assertEqual(ENTRIES['uniforest-all.desktop'][0], 'PlanA')
         self.assertNotIn('uniforest-task0.desktop', ENTRIES)
         self.assertIn('PlanB', [selection for selection, _ in ENTRIES.values()])
