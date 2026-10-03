@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Optional
 from control.chassis import LONG_DISTANCE_MOVE_SPEED_MM_S
 from .common import minimum_command, slew_command, wrap_angle
 from .common import VisualAlignmentUnavailable, report_visual_fallback
-from .tag_alignment import median_translation, translation_jump
+from .tag_alignment import median_translation, translation_jump, missing_tag_details
 from .tag_controller import PID as _Pid, TagPidSet, AxisToleranceHold, profiled_command
 from .cube_tracker import CubeTargetTracker, select_tracked_block
 from .wall_approach import velocity_for_direction
@@ -983,8 +983,12 @@ class RobotController(BuildingAlignment):
                     pids.reset()
                     self.robot.chassis.set_speeds([0, 0, 0, 0])
                     if now - last_seen >= lost_timeout_s:
+                        details = missing_tag_details(
+                            pose, tag_id, now=time.time(),
+                            max_age_s=vision_stale_s,
+                            not_before=first_valid_frame_after)
                         raise VisualAlignmentUnavailable(
-                            f'tag {tag_id} lost during delivery alignment')
+                            f'tag {tag_id} lost during delivery alignment; {details}')
                     time.sleep(control_period)
                     continue
 

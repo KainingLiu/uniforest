@@ -31,4 +31,30 @@ def median_translation(samples: Iterable[Translation]) -> Translation:
             median(item[1] for item in values))
 
 
-__all__ = ['Translation', 'median_translation', 'translation_jump']
+def missing_tag_details(pose, tag_id: int, *, now: float,
+                        max_age_s: float, not_before: float) -> str:
+    """Describe the rejected observation without changing any control gates."""
+    if pose is None:
+        return 'reason=no_frame'
+    timestamp = getattr(pose, 'timestamp', 0.0)
+    age = now - timestamp
+    raw = getattr(pose, 'raw_tag_ids', getattr(pose, 'tag_ids', ()))
+    accepted = tuple(item.tag_id for item in getattr(pose, 'tag_solutions', ()))
+    capture_error = getattr(pose, 'capture_error', '')
+    if capture_error:
+        reason = 'camera_unavailable'
+    elif timestamp <= not_before:
+        reason = 'no_new_frame_since_alignment'
+    elif age > max_age_s:
+        reason = 'stale_frame'
+    elif tag_id not in raw:
+        reason = 'tag_not_decoded'
+    else:
+        reason = 'pose_rejected'
+    rejected = getattr(pose, 'rejection_reasons', ())
+    return (f'reason={reason}, age={age:.3f}s, raw_ids={raw}, '
+            f'accepted_ids={accepted}, rejected={rejected}, capture_error={capture_error}')
+
+
+__all__ = ['Translation', 'median_translation', 'translation_jump',
+           'missing_tag_details']

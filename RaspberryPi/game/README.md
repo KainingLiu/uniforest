@@ -10,18 +10,18 @@
 
 ## 选择 game
 
-在树莓派的上层 `RaspberryPi/` 目录，通过参数显式启动 game：
+在树莓派的 `RaspberryPi/game/` 目录直接启动 game：
 
 ```bash
-cd /home/uniforest/Uniforest/RaspberryPi
-source .venv/bin/activate
-python main.py --runtime game --strategy PlanA --show-plan
-python main.py --runtime game --strategy PlanB --show-plan
+cd /home/uniforest/Uniforest/RaspberryPi/game
+source ../.venv/bin/activate
+python main.py --strategy PlanA --show-plan
+python main.py --strategy PlanB --show-plan
 ```
 
 确认预览与车辆起始状态后，去掉 `--show-plan` 才执行动作。
-同样可以使用 `python task2_main.py --runtime game --variant 1 --show-plan`；
-`python robot.py --runtime game --help` 查看 game 的调试入口。
+同样可以使用 `python task2_main.py --variant 1 --show-plan`；
+`python robot.py --help` 查看 game 的调试入口。最新主代码已移除上层 `--runtime game` 转发入口。
 
 ## 本文其余命令的执行目录
 
@@ -36,6 +36,14 @@ python main.py --strategy PlanA --show-plan
 已检出独立 `game` Git 分支时，game 实现位于其 `RaspberryPi/` 根目录；
 进入该目录并 `source .venv/bin/activate` 后，后面的命令同样适用。
 相对配置路径按执行命令时的当前目录解释；切换实现前先停止并退出原任务。
+
+## Tag 相机配置同步
+
+2026-10-04已同步GitHub main `ead61d5` 的Tag曝光150、增益32、断流恢复与识别失败诊断。
+配置来自本目录下的 `vision/opencv/field_map.json`，内参来自同目录的 `tag_camera_calib.json`；
+主代码与game仍各自加载独立副本。更新部署文件后重启game入口加载，game现场效果待确认。
+Tag6目标距离仍为425 mm，内参文件仍标记 `calibrated=false`。
+保留game行进Tag接管需要的解算前单调时钟时间戳；相机恢复不自动重启已经失败的任务。
 
 ## 运行方式与优化插拔
 

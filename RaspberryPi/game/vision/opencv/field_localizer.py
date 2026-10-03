@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import argparse
 import json
 import math
@@ -10,6 +10,7 @@ import os
 import sys
 import threading
 import time
+import traceback
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import cv2
@@ -55,6 +56,9 @@ class FieldPose:
     calibrated: bool = False
     tag_solutions: Tuple[TagSolution, ...] = field(default_factory=tuple)
     captured_monotonic: float = 0.0
+    raw_tag_ids: Tuple[int, ...] = field(default_factory=tuple)
+    rejection_reasons: Tuple[str, ...] = field(default_factory=tuple)
+    capture_error: str = ""
 
 
 def _wrap_angle(angle_deg: float) -> float:
@@ -144,15 +148,22 @@ def _candidate_to_world(rvec, tvec, tag: dict, config: dict):
 
 def solve_tag_pose(corners: np.ndarray, tag_id: int, config: dict,
                    camera_matrix: np.ndarray,
-                   dist_coeffs: np.ndarray) -> Optional[TagSolution]:
+                   dist_coeffs: np.ndarray,
+                   rejection_reasons: Optional[List[str]] = None) -> Optional[TagSolution]:
+    def reject(reason):
+        if rejection_reasons is not None:
+            rejection_reasons.append(f"tag{tag_id}:{reason}")
+
     tag = config["tags"].get(str(tag_id))
     if tag is None:
+        reject("unknown_tag")
         return None
     solver = config["solver"]
     points = np.asarray(corners, dtype=np.float32).reshape(4, 2)
     points = points[np.asarray(solver["corner_order"], dtype=np.int32)]
     sides = [np.linalg.norm(points[(i + 1) % 4] - points[i]) for i in range(4)]
     if float(np.mean(sides)) < float(solver["min_tag_side_px"]):
+        reject("too_small")
         return None
 
     obj_pts = _object_points(float(config["tag_size_m"]))
@@ -162,8 +173,10 @@ def solve_tag_pose(corners: np.ndarray, tag_id: int, config: dict,
             obj_pts, img_pts, camera_matrix, dist_coeffs,
             flags=cv2.SOLVEPNP_IPPE_SQUARE)
     except cv2.error:
+        reject("pnp_error")
         return None
     if not count:
+        reject("pnp_no_solution")
         return None
 
     half_w = float(config["field_width_m"]) / 2.0
@@ -185,21 +198,26 @@ def solve_tag_pose(corners: np.ndarray, tag_id: int, config: dict,
 
     for rvec, tvec in zip(rvecs, tvecs):
         if float(tvec[2, 0]) <= 0.01:
+            reject("behind_camera")
             continue
         (x_m, y_m, yaw_deg, height_m, distance_m,
          lateral_m, relative_yaw) = _candidate_to_world(
             rvec, tvec, tag, config)
         if distance_m <= 0.01:
+            reject("nonpositive_distance")
             continue
         if not (-half_w - margin <= x_m <= half_w + margin
                 and -half_h - margin <= y_m <= half_h + margin):
+            reject(f"outside_field(x={x_m:.3f},y={y_m:.3f})")
             continue
         height_error = abs(height_m - expected_height)
         if height_error > max_height_error:
+            reject(f"height_error({height_error:.3f}>{max_height_error:.3f}m)")
             continue
         reproj = _reprojection_error(
             obj_pts, img_pts, rvec, tvec, camera_matrix, dist_coeffs)
         if reproj > max_reproj:
+            reject(f"reprojection({reproj:.3f}>{max_reproj:.3f}px)")
             continue
         score = reproj + height_weight * height_error
         solution = TagSolution(
@@ -243,6 +261,10 @@ def fuse_tag_solutions(solutions: Sequence[TagSolution], config: dict):
 class FieldLocalizer:
     """Background AprilTag detector exposing thread-safe field poses."""
 
+    FRAME_WAIT_NS = 200_000_000
+    REOPEN_AFTER_S = 0.6
+    REOPEN_RETRY_S = 1.0
+
     def __init__(self, camera="tag", map_file: str = DEFAULT_MAP_FILE,
                  calibration_file: str = DEFAULT_CALIB_FILE,
                  show_gui: bool = False):
@@ -254,86 +276,148 @@ class FieldLocalizer:
         self._thread = None
         self._cap = None
         self._result_lock = threading.Lock()
+        self._filter_lock = threading.Lock()
+        self._lifecycle_lock = threading.Lock()
+        self._stop_event = threading.Event()
         self._result = None
         self._smoothed = None
         self._fps = 0.0
         self._frame_count = 0
         self._fps_started = time.monotonic()
+        self._last_frame_monotonic = self._fps_started
+        self._capture_error = ""
+        self._last_error_log = -math.inf
+        self._last_error_key = ""
+        self._reopen_count = 0
 
     def start(self) -> bool:
-        if self._running:
-            return True
+        with self._lifecycle_lock:
+            return self._start()
+
+    def _start(self) -> bool:
+        if self._thread is not None and self._thread.is_alive():
+            # A timed-out stop must never create a second camera owner.
+            return self._running
         if not hasattr(cv2, "aruco") or not hasattr(cv2.aruco, "ArucoDetector"):
             print("[定位] OpenCV 缺少 aruco/AprilTag 支持")
-            return False
-        try:
-            source = resolve_camera_source(self._camera_selector)
-        except (FileNotFoundError, RuntimeError, ValueError) as exc:
-            print(f"[定位] 标签摄像头配置错误: {exc}")
-            return False
-        camera_cfg = self._config["camera"]
-        width, height = map(int, camera_cfg["resolution"])
-        self._cap = cv2.VideoCapture(source, cv2.CAP_V4L2)
-        if not self._cap.isOpened():
-            print(f"[定位] 无法打开标签摄像头 {source}")
-            self._cap = None
-            return False
-        self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
-        self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
-        self._cap.set(cv2.CAP_PROP_FPS, int(camera_cfg["fps"]))
-        self._cap.set(cv2.CAP_PROP_AUTOFOCUS, 0)
-        if camera_cfg.get("exposure") is not None:
-            self._cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1.0)
-            self._cap.set(
-                cv2.CAP_PROP_EXPOSURE, float(camera_cfg["exposure"]))
-        if camera_cfg.get("gain") is not None:
-            self._cap.set(cv2.CAP_PROP_GAIN, float(camera_cfg["gain"]))
-        actual_w = int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH))
-        actual_h = int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
-        try:
-            self._camera_matrix, self._dist_coeffs, self._calibrated = \
-                load_camera_model(self._calibration_file, actual_w, actual_h)
-        except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            print(f"[定位] 标签相机标定配置错误: {exc}")
-            self._cap.release()
-            self._cap = None
             return False
         dictionary_id = getattr(cv2.aruco, self._config["tag_family"])
         dictionary = cv2.aruco.getPredefinedDictionary(dictionary_id)
         params = cv2.aruco.DetectorParameters()
         params.cornerRefinementMethod = cv2.aruco.CORNER_REFINE_SUBPIX
         self._detector = cv2.aruco.ArucoDetector(dictionary, params)
+        self._stop_event.clear()
+        self._capture_error = ""
+        self._reopen_count = 0
+        self._last_error_log = -math.inf
+        self._last_error_key = ""
+        self._fps = 0.0
+        self._frame_count = 0
+        self._fps_started = time.monotonic()
+        with self._result_lock:
+            self._result = None
+        self.reset_filter()
+        if not self._open_camera():
+            return False
         self._running = True
-        self._thread = threading.Thread(target=self._capture_loop, daemon=True)
+        self._thread = threading.Thread(
+            target=self._capture_loop, name="tag-camera", daemon=True)
         self._thread.start()
+        return True
+
+    def _open_camera(self) -> bool:
+        """Open the stable role again after disconnect/re-enumeration."""
+        try:
+            source = resolve_camera_source(self._camera_selector)
+            camera_cfg = self._config["camera"]
+            width, height = map(int, camera_cfg["resolution"])
+            self._cap = cv2.VideoCapture(source, cv2.CAP_V4L2)
+            if not self._cap.isOpened():
+                raise RuntimeError(f"cannot open {source}")
+            self._cap.set(cv2.CAP_PROP_FRAME_WIDTH, width)
+            self._cap.set(cv2.CAP_PROP_FRAME_HEIGHT, height)
+            self._cap.set(cv2.CAP_PROP_FPS, int(camera_cfg["fps"]))
+            self._cap.set(cv2.CAP_PROP_AUTOFOCUS, 0)
+            if camera_cfg.get("exposure") is not None:
+                self._cap.set(cv2.CAP_PROP_AUTO_EXPOSURE, 1.0)
+                self._cap.set(
+                    cv2.CAP_PROP_EXPOSURE, float(camera_cfg["exposure"]))
+            if camera_cfg.get("gain") is not None:
+                self._cap.set(cv2.CAP_PROP_GAIN, float(camera_cfg["gain"]))
+            actual_w = int(self._cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+            actual_h = int(self._cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
+            self._camera_matrix, self._dist_coeffs, self._calibrated = \
+                load_camera_model(self._calibration_file, actual_w, actual_h)
+        except Exception as exc:
+            self._record_error("open_failed", exc)
+            self._release_camera()
+            return False
+        self._last_frame_monotonic = time.monotonic()
         quality = "calibrated" if self._calibrated else "FOV estimate"
         print(f"[定位] tag 摄像头 {source}: {actual_w}x{actual_h}, {quality}")
         return True
 
+    def _release_camera(self):
+        cap, self._cap = self._cap, None
+        if cap is not None:
+            cap.release()
+
+    def _record_error(self, reason, exc=None):
+        self._capture_error = reason + (f":{type(exc).__name__}:{exc}" if exc else "")
+        now = time.monotonic()
+        key = (reason, type(exc).__name__ if exc else "")
+        if key != self._last_error_key or now - self._last_error_log >= 5.0:
+            print(f"[定位] Tag camera {self._capture_error}; "
+                  f"reopens={self._reopen_count}", flush=True)
+            if exc is not None:
+                # Python-level run loggers may not capture native stderr.
+                print(traceback.format_exc(), flush=True)
+            self._last_error_log = now
+            self._last_error_key = key
+
     def stop(self):
-        self._running = False
-        if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=2.0)
-        if self._cap is not None:
-            self._cap.release()
-            self._cap = None
-        if self._show_gui:
-            cv2.destroyWindow("Field Localization")
+        with self._lifecycle_lock:
+            self._running = False
+            self._stop_event.set()
+            if self._thread and self._thread.is_alive():
+                self._thread.join(timeout=2.0)
+            if self._thread and self._thread.is_alive():
+                # Only the owner thread may release a capture during native I/O.
+                print("[定位] Tag camera stopping; waiting for native I/O", flush=True)
+            else:
+                self._release_camera()
         print("[定位] 已停止")
 
     @property
     def is_running(self) -> bool:
-        return self._running
+        return bool(self._running and self._thread and self._thread.is_alive())
 
     @property
     def result(self) -> Optional[FieldPose]:
         with self._result_lock:
-            return self._result
+            result = self._result
+        if result is None:
+            return None
+        error = self._capture_error
+        if not self.is_running:
+            error = error or "capture_thread_stopped"
+        elif time.monotonic() - self._last_frame_monotonic > self.REOPEN_AFTER_S:
+            error = error or "capture_stalled"
+        if error:
+            # Never refresh the timestamp of a failed read or serve an old pose
+            # as valid during recovery.
+            return replace(result, valid=False, tag_solutions=(), capture_error=error)
+        return result
 
     def reset_filter(self):
-        self._smoothed = None
+        with self._filter_lock:
+            self._smoothed = None
 
     def _smooth(self, x_m: float, y_m: float, yaw_deg: float):
+        with self._filter_lock:
+            return self._smooth_locked(x_m, y_m, yaw_deg)
+
+    def _smooth_locked(self, x_m: float, y_m: float, yaw_deg: float):
         if self._smoothed is None:
             self._smoothed = (x_m, y_m, yaw_deg)
             return self._smoothed
@@ -350,65 +434,128 @@ class FieldLocalizer:
         )
         return self._smoothed
 
+    def _read_frame(self):
+        # V4L2 poll bounds normal inter-frame waits. Its first grab/open may
+        # still take the backend timeout; never release it from another thread.
+        if hasattr(cv2.VideoCapture, "waitAny"):
+            ready, indices = cv2.VideoCapture.waitAny(
+                [self._cap], timeoutNs=self.FRAME_WAIT_NS)
+            if not ready or len(indices) == 0:
+                return False, None
+            return self._cap.retrieve()
+        return self._cap.read()
+
     def _capture_loop(self):
-        while self._running and self._cap is not None:
-            ok, frame = self._cap.read()
-            # Host frame acquisition time, before marker solving/filtering.
-            # Driver/exposure delay must be calibrated separately for navigation.
-            captured_monotonic = time.monotonic()
-            if not ok:
-                time.sleep(0.01)
-                continue
-            corners, ids, _ = self._detector.detectMarkers(frame)
-            detected_ids = tuple(int(value) for value in ids.flatten()) \
-                if ids is not None else ()
-            solutions: List[TagSolution] = []
-            if ids is not None:
-                for marker_corners, tag_id in zip(corners, ids.flatten()):
-                    solution = solve_tag_pose(
-                        marker_corners.reshape(4, 2), int(tag_id), self._config,
-                        self._camera_matrix, self._dist_coeffs)
-                    if solution is not None:
-                        solutions.append(solution)
-
-            fused = fuse_tag_solutions(solutions, self._config)
-            now = time.time()
-            if fused is None:
-                result = FieldPose(
-                    valid=False, tag_ids=detected_ids, timestamp=now,
-                    fps=self._fps, calibrated=self._calibrated,
-                    captured_monotonic=captured_monotonic)
-            else:
-                x_m, y_m, yaw_deg, camera_height, error, used = fused
-                x_m, y_m, yaw_deg = self._smooth(x_m, y_m, yaw_deg)
-                result = FieldPose(
-                    valid=True, x_m=x_m, y_m=y_m, yaw_deg=yaw_deg,
-                    camera_height_m=camera_height,
-                    reprojection_error_px=error,
-                    tag_ids=tuple(item.tag_id for item in used),
-                    timestamp=now, fps=self._fps,
-                    calibrated=self._calibrated,
-                    tag_solutions=tuple(solutions),captured_monotonic=captured_monotonic)
-            with self._result_lock:
-                self._result = result
-
-            self._frame_count += 1
-            elapsed = time.monotonic() - self._fps_started
-            if elapsed >= 1.0:
-                self._fps = self._frame_count / elapsed
-                self._frame_count = 0
-                self._fps_started = time.monotonic()
-            if self._show_gui:
-                cv2.aruco.drawDetectedMarkers(frame, corners, ids)
-                if result.valid:
-                    cv2.putText(
-                        frame, f"x={result.x_m:.2f} y={result.y_m:.2f} m",
-                        (12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.7,
-                        (0, 255, 0), 2)
-                cv2.imshow("Field Localization", frame)
-                if cv2.waitKey(1) & 0xFF == 27:
-                    self._running = False
+        try:
+            while self._running and not self._stop_event.is_set():
+                if self._cap is None:
+                    if not self._open_camera():
+                        self._stop_event.wait(self.REOPEN_RETRY_S)
+                        continue
+                    self.reset_filter()
+                try:
+                    ok, frame = self._read_frame()
+                except Exception as exc:
+                    self._record_error("read_exception", exc)
+                    ok, frame = False, None
+                if not self._running or self._stop_event.is_set():
                     break
+                if not ok or frame is None or frame.size == 0:
+                    if not self._capture_error:
+                        self._record_error("read_failed")
+                    if time.monotonic() - self._last_frame_monotonic >= self.REOPEN_AFTER_S:
+                        self._record_error("capture_stalled_reopening")
+                        self._release_camera()
+                        self._reopen_count += 1
+                        self._stop_event.wait(0.05)
+                    else:
+                        self._stop_event.wait(0.01)
+                    continue
+                captured_at = time.time()
+                self._last_frame_monotonic = time.monotonic()
+                try:
+                    self._process_frame(frame, captured_at,
+                                        captured_monotonic=self._last_frame_monotonic)
+                except Exception as exc:
+                    # A single corrupt frame or detector exception must not
+                    # permanently kill localization for all remaining tasks.
+                    self._record_error("processing_error", exc)
+                    self._stop_event.wait(0.01)
+                    continue
+                if self._capture_error:
+                    print(f"[定位] Tag camera recovered; reopens={self._reopen_count}",
+                          flush=True)
+                self._capture_error = ""
+        except Exception as exc:
+            self._record_error("capture_thread_error", exc)
+        finally:
+            self._running = False
+            self._release_camera()
+            if self._show_gui:
+                cv2.destroyWindow("Field Localization")
+
+    def _process_frame(self, frame, captured_at, *, captured_monotonic=None):
+        # Preserve game moving-Tag guidance: acquisition time precedes solving.
+        # Exposure/driver latency still needs separate hardware calibration.
+        if captured_monotonic is None:
+            captured_monotonic = time.monotonic()
+        corners, ids, _ = self._detector.detectMarkers(frame)
+        detected_ids = tuple(int(value) for value in ids.flatten()) \
+            if ids is not None else ()
+        solutions: List[TagSolution] = []
+        rejected = []
+        if ids is not None:
+            for marker_corners, tag_id in zip(corners, ids.flatten()):
+                reasons = []
+                solution = solve_tag_pose(
+                    marker_corners.reshape(4, 2), int(tag_id), self._config,
+                    self._camera_matrix, self._dist_coeffs, reasons)
+                if solution is not None:
+                    solutions.append(solution)
+                else:
+                    rejected.extend(reasons)
+
+        fused = fuse_tag_solutions(solutions, self._config)
+        now = captured_at
+        if fused is None:
+            result = FieldPose(
+                valid=False, tag_ids=detected_ids, timestamp=now,
+                fps=self._fps, calibrated=self._calibrated,
+                raw_tag_ids=detected_ids, rejection_reasons=tuple(rejected),
+                captured_monotonic=captured_monotonic)
+        else:
+            x_m, y_m, yaw_deg, camera_height, error, used = fused
+            x_m, y_m, yaw_deg = self._smooth(x_m, y_m, yaw_deg)
+            result = FieldPose(
+                valid=True, x_m=x_m, y_m=y_m, yaw_deg=yaw_deg,
+                camera_height_m=camera_height,
+                reprojection_error_px=error,
+                tag_ids=tuple(item.tag_id for item in used),
+                timestamp=now, fps=self._fps,
+                calibrated=self._calibrated,
+                tag_solutions=tuple(solutions),
+                raw_tag_ids=detected_ids, rejection_reasons=tuple(rejected),
+                captured_monotonic=captured_monotonic)
+        with self._result_lock:
+            self._result = result
+
+        self._frame_count += 1
+        elapsed = time.monotonic() - self._fps_started
+        if elapsed >= 1.0:
+            self._fps = self._frame_count / elapsed
+            self._frame_count = 0
+            self._fps_started = time.monotonic()
+        if self._show_gui:
+            cv2.aruco.drawDetectedMarkers(frame, corners, ids)
+            if result.valid:
+                cv2.putText(
+                    frame, f"x={result.x_m:.2f} y={result.y_m:.2f} m",
+                    (12, 28), cv2.FONT_HERSHEY_SIMPLEX, 0.7,
+                    (0, 255, 0), 2)
+            cv2.imshow("Field Localization", frame)
+            if cv2.waitKey(1) & 0xFF == 27:
+                self._running = False
+                self._stop_event.set()
 
 
 def main() -> int:

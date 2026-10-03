@@ -1,5 +1,36 @@
 # 变更与验证记录
 
+## 2026-10-04：同步 GitHub main 的 Tag 相机更新
+
+来源：GitHub main `ead61d5`（含 `62cafe6` 的相机恢复修复）。此前核对时远端仍为 `53b5e6e`，
+本次重新获取后将本地main快进到最新版本，再单独移植Tag视觉相关改动到game。
+
+| 行为变化 | 受影响模块 | 测试 / 文档 |
+| --- | --- | --- |
+| Tag相机曝光100→150，增益32保持；沿用主代码已有静态采集标定，game尚未实机验证 | vision/opencv/field_map.json | 重开相机重新应用曝光/增益；game README |
+| 连续无帧0.6 s后重开相机，失败按1 s重试；单帧异常不终止采集线程，失败期间旧帧失效且时间戳不更新 | field_localizer | test_tag_camera_recovery：断流、重开、阻塞停止、滤波锁、异常恢复 |
+| 丢失诊断区分相机故障、无新帧、过期、未解码和几何拒绝 | tag_alignment、controllers、FieldPose | test_tag_diagnostics及Tag6控制回放 |
+| 保留game的captured_monotonic，成功/拒绝帧都记录解算前采集时刻，故障不会刷新旧采集时刻 | field_localizer、原行进Tag接管 | 新增采集时间戳回归；test_moving_tag_approach |
+
+Tag6目标距离425 mm、几何过滤和原PID不变，相机内参文件仍为calibrated=false。
+未将主代码的补抓回退、顶墙/路线/机构参数变更移入game；game补抓和路径规划保持。
+协议未变：双方命令编号、载荷长度、数值大端/CRC小端、80 B遥测和200 ms失联急停保持。
+相机恢复只恢复视觉流，不自动重启失败任务；本次无新增依赖、无下位机修改或实机操作。
+验证：game全量636项测试通过；56项Tag视觉、行进接管和协议定向测试通过；模块导入及主入口语法检查通过。
+
+## 2026-10-04：同步核对主代码 Tag6 标定
+
+| 行为变化 | 受影响模块 | 测试 / 文档 |
+| --- | --- | --- |
+| 按当前电脑主代码重同步 tag_camera_calib.json、field_map.json、camera_settings.json、camera_devices.json；源与目标原本逐字节一致，无参数变更 | game/vision/opencv 配置副本 | 复制后逐字节核对；两套加载路径各自位于本运行目录 |
+| 核对主代码三轮 Task1 / Task3 与 game 三轮 ground / building 的运行时 Tag 参数 | competition/task1/task3 与 game/Strategy/settings | 6 组共309项参数及 TAG_FOV_RETUNE_SCALE 相同；Tag6目标距离425 mm |
+
+同步来源为本机 RaspberryPi 主代码（当前HEAD 53b5e6e），未读取树莓派或其他工作区尚未回传的标定。
+相机内参文件仍为 calibrated=false，此次核对不构成新的实机标定。两套保持独立副本，后续主代码修改仍需同步。
+game路径规划、行进Tag接管和控制实现无修改，无新增依赖。协议未变：命令编号、载荷长度、
+数值大端/CRC小端、80 B遥测和200 ms失联急停保持，下位机无改动。
+验证：Tag6固定对准、行进接管及协议相关41项测试通过；导入和主入口语法检查通过。未执行实机动作。
+
 ## 2026-10-03：补抓换区直达规划，绕过Tag6
 
 | 行为变化 | 受影响模块 | 测试 / 文档 |
