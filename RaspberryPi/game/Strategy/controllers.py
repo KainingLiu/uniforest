@@ -18,7 +18,7 @@ from .wall_approach import velocity_for_direction
 from .wall_controller import StallConfirmation
 from .orange_search import OrangeSearchRecovery, find_orange
 from .errors import SearchRangeExhausted
-from .settings import CommonControlConfig, GroundCollectionConfig
+from .settings import CommonControlConfig, GroundCollectionConfig, FLAT_ROUTE_SPEED_MM_S
 from .building_alignment import BuildingAlignment
 
 if TYPE_CHECKING:
@@ -375,13 +375,15 @@ class RobotController(BuildingAlignment):
             self.robot.chassis.set_speeds([0, 0, 0, 0])
 
     def _checked_move(self, direction: str, distance_mm: float,
-                      speed_mm_s: float, *, accel_ms: Optional[int] = None):
+                      speed_mm_s: float, *, accel_ms: Optional[int] = None,
+                      ramp_straight: bool = False):
         self._check_active()
         if accel_ms is None:
             accel_ms = self.config.delivery_linear_accel_ms
             if (direction.casefold() in ('forward', 'backward', 'left', 'right')
-                    and abs(speed_mm_s - LONG_DISTANCE_MOVE_SPEED_MM_S) < 1e-6):
-                accel_ms = self.config.long_distance_forward_accel_ms
+                    and speed_mm_s >= LONG_DISTANCE_MOVE_SPEED_MM_S):
+                accel_ms = max(accel_ms,round(self.config.long_distance_forward_accel_ms
+                                            * speed_mm_s / FLAT_ROUTE_SPEED_MM_S))
         result = self.robot.move_chassis(
             direction, distance_mm, speed_mm_s,
             hold_ms=0, accel_ms=accel_ms, route_mode=True)
@@ -389,6 +391,8 @@ class RobotController(BuildingAlignment):
             raise RuntimeError(
                 f'chassis move failed: {direction} {distance_mm:.0f} mm')
         if result.timed_out:
+            if ramp_straight:
+                raise RuntimeError('ramp move did not complete; do not turn on the ramp')
             # A move can reach its commanded position just before the
             # controller's timeout while settling. Do not abort the whole
             # strategy when encoder progress proves that the move completed.

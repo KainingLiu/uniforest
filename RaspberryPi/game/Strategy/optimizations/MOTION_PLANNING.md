@@ -1,146 +1,113 @@
-# 可插拔运动规划
+# 原路线局部平滑与行进中 Tag6 接近
 
-2026-10-02：PlanA/PlanB 的原路线终点现由完整位置间规划器执行。开关默认关闭；
-`--enable-motion-planning` 开启，`--disable-motion-planning` / `--classic-motion` 关闭。
-部署和实机状态见 [CHANGELOG](../../CHANGELOG.md)。
+2026-10-03，主分支 RaspberryPi/game。按用户确认，唯一比赛优化链路为原动作序列的局部等价变换。
+默认关闭；--enable-motion-planning 开启，--classic-motion / --disable-motion-planning 关闭。
+Tag6持续修正为独立可选模块，默认关闭。--enable-moving-tag6显式接入，--disable-moving-tag6关闭。
+开启持续修正还须开启运动规划；原有七项优化、试跑开关及加载参数文件都不会自动启用它。
+关闭时仍对原ROUTES目标做局部平滑，到原识别位置后执行原Tag对准，再走原横移偏置。
+相机可继续后台检测，但运输轨迹不读取Tag6反馈、不提前900 mm接管、不合并或跳过Tag/偏置步骤。
+原位置的Tag对准内部仍按旧逻辑读取多帧；本开关只控制运输中的持续修正。
+不使用名义start_blue、不做全场CAD可行性门禁、不要求启动时看到Tag，不再接受--navigation-config。
+navigation/保留独立位置间规划与仿真研究代码，比赛MotionPlanning只调用LocalRoutes。
 
-## 原目标与新的规划器
+## 原动作怎样进入优化
 
-默认调用链：`ActionEnvironment.run_route → MotionPlanning → RecipeRoutes → FieldPlanner.plan_between
-→ CompetitionMotion/route_timing → RobotNavigation.execute → PositionTracker → 轮速接口`。
-沿用原 `ROUTES` 的距离、终点朝向、搜块编码器补偿和完成标志。原中间移动/转向点仅用于计算终点，
-不传给路径搜索。19 类具名路线都经该入口；接墙、Tag 校正、航向重标和原有净空退离仍是操作边界。
-每个边界之后，从当时的实际里程计位置计算后续原代码的相对目标。
+ROUTES → RouteRecorder → 按操作边界分组 → 原直线/转向或局部CubicRoute → 原轮速接口。
 
-规划器比较直达、搜索及圆滑候选，选择预计耗时较短的可行曲线；不保证数学上的全局最优。
-曲率、墙面余量、制动、轮速和转向约束由同一套速度规划处理，执行器使用完整位置 PID 与加加速度限制。
-`LocalRoutes`、`CalibratedCurves` 保留为显式注入的独立后端，普通比赛开关不再选择它们。
-加载旧 `curves` 参数不会绕过完整规划器。
+- 单动作路线直接调用原函数。depart_a仍由原严格定距控制器前进1200 mm，速度/超时/到位语义保持。
+- 组内单段直线继续使用_checked_move；净空后退先完成，后面的移动转向才可合并。
+- to_purple的2500/2350 mm上坡段标记ramp_straight，单独编译为两点直线，入口参考横向/角速度为零。
+  前后轨迹必须分别完成停稳，禁止邻接切弯、提前转身或视觉横向修正进入该段；限速1000 mm/s。
+  入坡测得平移速度超过现有停稳阈值（约20.8 mm/s）或角速度超过1°/s则急停中止。
+  经典模式上坡超时也不能按90%进度放行，防止尚未走完就执行转向。非坡道定距语义保持。
+- 连续移动与转向逐条累计局部x向前/y向右/顺时针航向，保留真实横移补偿、原终点和最终朝向。
+- 原直角允许向内切弯：沿相邻直线最多提前/延后750 mm进入圆滑过渡，短边自动缩小。
+  整体参考轨迹限制在原折线250 mm范围内；逐段用Hermite对应的Bezier控制点凸包验证，超界则缩小切弯。
+  原转角顶点可跳过，起终点、最终朝向和操作边界保持。局部切弯同时将底层Hermite切线限幅放宽至250 mm，
+  并验证编译参考轨迹的整体范围，避免切弯后仍在各控制点形成小折角。独立标定轨迹默认仍为40 mm。
+- 起始转向在随后首250 mm内完成，普通末端转向集中在原转弯点前250 mm；长直线中段保持原航向。
+  仅显式开启Tag6持续修正时，末段转向窗口放宽到900 mm，参考航向在终点前约585 mm完成，以便提前看到目标；实际参考进度受跟踪误差限制。
+  以上为软件局部衔接参数，待现场验证；短段按实际可用长度缩小窗口。
+- 靠墙、Tag3校正等保持分组边界，不跨越抓取或检查。PlanB首程的纯逻辑重标航向可换算并合并，
+  其他重标航向保持原分组边界。
+- 19个具名路线经同一派发；单动作日志为classic:single_action，复合路线为local_route:existing_recipe。
+- 速度及加速时间来自原路线每段命令：2026-10-03按用户要求更新为平地2000 mm/s、1600 ms加速；
+  上下坡1000 mm/s、1000 ms加速。坡道按to_purple长退2500/2350 mm及orange_to_build前进2750 mm整段标定。
+  单独路线及PlanB融合首程均继承分段速度，切弯交界取两段较低限速，不叠加1.10倍倍率。
+  带转向的短段还按位移/转角与角速度限制降速，避免高速平移后原地补转。
+  CubicRoute时间估算采用6d/T²加速度条件，控制器仍执行轮速/加速度/跟踪误差保护。
+  定距路线将前馈加位置修正的平移指令一并限制到本段目标速度；靠墙、视觉、盲移保持原低速。
+- 平移、航向、轮速及加速度限幅保持。参考进度随跟踪误差或末段限速放慢，避免参考时钟跑离实际车位。
+- 通信、陈旧遥测、取消和急停沿用现有停止链路；优化动作失败不自动重放原整段路线。
 
-```bash
-python main.py --strategy PlanA --enable-motion-planning --show-plan
-python main.py --strategy PlanB --enable-motion-planning --show-plan
-```
+## Tag6 在行进中接近
 
-预览不创建 Robot；移除 `--show-plan` 才进入硬件启动。默认不要求新增 JSON 或 Tag 标定。
-场地图与车体模型直接使用现有 `simulation/field_model.json`、`robot_model.json` 数据；
-仿真动作、虚拟传感器和场景中的目标点不进入实机执行。模型保留原有 CAD/未确认当前机械外包的来源标记。
-整局启动坐标沿用现有 `start_blue` 约定；`RouteOdometry` 从启动时的编码器基线连续积累所有遥测帧，
-包含搜索、抓取顶墙、对准及其它控制器的运动。每次换路线都不重置到理想终点。
-独立的中途任务缺少整局起点时，需通过已有的显式视觉导航入口提供当前位置；不假设已在启动区。
+以下仅适用于--enable-motion-planning与--enable-moving-tag6同时开启。
+用户目前仅确认固定识别点附近的视觉可用性，默认保持关闭；移动观测的准确性待现场验证。
 
-当前默认适配器要求每段入口静止且机构空闲；不支持未完成机构动作的全场曲线接管。
-旧提前移动开关与其混用时仍执行入口检查，不会静默回退经典路线。
-故障、遥测陈旧、重连、A 板重启或急停会中止本轮，通信恢复后不自动继续。
-原目标在 CAD 模型内碰撞时直接报告冲突，禁止自动裁剪终点或修改原距离。
-当前 PlanA 出发原终点与旧 CAD 外包存在冲突，具体数值和验证边界见 CHANGELOG。
+只匹配计划里相邻的 navigate(ground_to_delivery或orange_to_build) → align_tag(Tag6) → navigate(原横移偏置)。
+PlanA为三组地面卸料接近和三组搭建接近；PlanB为两组地面卸料接近。没有这组原动作的独立流程不额外引入Tag目标。
+搭建三轮偏置分别沿用右100、右400、左500 mm，Tag目标距离沿用425 mm。Tag6目标与建筑目标分开。
 
-诊断 `motion_backend_selected=field_curve:recipe_endpoints` 表示完整规划器，
-`planned_recipe_curve` 记录原目标、实际起点、曲线长度、候选数和模型来源。
-`route_planner_started` 记录整局起点与速度/PID 实现。
-协议未变：沿用 0x10 轮速、现有遥测、取消与 200 ms 失联急停；没有新增下位机命令。
+1. 从原路线末组开始观察；距离原终点900 mm内、航向接近最终朝向25°内才建立移动接管。
+2. 使用原Tag6相对distance/lateral量，按图像采集时刻插值本段编码器历史，再转换到局部目标。
+   不依赖全场x_m/y_m，不额外要求calibrated=true；相对距离仍依赖现有Tag相机标定与原实机目标参数。
+3. 两张独立新帧确认目标；相邻目标变化超过120 mm重新确认。地面目标修正限200 mm，搭建末段放宽至400 mm。
+4. 本轮横移偏置用平滑权重逐渐并入剩余接近，避免先在Tag中心停车再走偏置。目标修正以200 mm/s限速更新。
+   这些值是2026-10-03软件试跑初值，依据用户指定的开阔末段放宽，尚无实际净空或精度验证结论。
+5. 接近速度逐渐收敛到原Tag控制参数，当前地面最大基准350 mm/s、搭建260 mm/s；轮速/加速度和150 mm跟踪误差保护保持。
+6. 达到原Tag距离、横向与航向窗口，四张独立新帧确认且底盘停稳后，才记录后续Tag/偏置动作已完成。
+   标记绑定原动作名、仅消费一次；缺少完成证据绝不跳过原步骤。
+7. 始终没有可靠Tag：停在原运输终点，保留原Tag对准和横移步骤。接管后短暂丢帧冻结目标，超过原丢失时限则停止；
+   不把已经执行的偏置重新走一遍。断链/急停始终中止。
 
-## 显式视觉导航
+Tag6采用同一轨迹循环输出底盘指令，视觉模块只修正目标，没有并行的第二个底盘写入者。
+目前成功接近Tag6+本轮偏置目标后仍停车，再复用建筑视觉末端对准。优化开启时建筑视觉缺失会阻止Build，
+不会把Tag完成当作建筑已对准。未宣称整段一直不停直达最终75 mm建筑距离。
+检查退离即使沿用下一动作名，也不会误触发运输的Tag6接管；机构衔接、盲移100/200 mm和补抓返回规则保持。
 
-`--navigation-config` 仍可选用 `CompetitionRoutes` 的已标定 Tag 起点。
-下面的标定要求只适用于该显式入口。默认整局编码器模式不借此伪造标定记录。
+## 入口
 
-## 可选的全场导航配置与执行条件
+PlanB首个采集目标是紫矿区。原完整启动链为depart_b（前900、右2700、朝向180°）→
+rebase_heading(180°)→to_purple（后退2500、转到270°、前250）→靠墙→紫块搜索。
+开启运动规划时，编译器把前三个动作合并为一次运输：保留沿途位移与速度约束，取消中途180°航向要求。
+2026-10-03按用户进一步要求，坡口改为停稳交接：平地曲线到(900,2700)，直线上坡至(3400,2700)，
+随后才允许左转90°接近紫矿。坐标为首程入口局部前/右向mm；中间上坡2500 mm不再切弯。
+未获得精确坡脚与坡顶坐标前，保守保护原整段上坡路线；该范围属于软件参考几何，实际净空待现场确认。
+当前首轮终点为入口局部前3400、右2450 mm、航向-90°（与270°等价），随后执行原靠墙与搜索。
+heading_zero从首程入口IMU与原重标参考换算，故障时恢复旧逻辑参考；没有把最终朝向强行写成测量事实。
+合并只匹配原depart_b→逻辑重标→to_purple组合；缺少前后动作、单独路线或经典模式仍原样执行。
+启用Tag3时保留Tag3前停车、视觉对准和后续接近。计划声明不变，--show-plan另显示Fused transport。
+日志后端为local_route:fused_departure，当前默认内部三次跟踪（平地/直坡/坡后）；
+成功后直接提交purple_area锚点，失败不回放原路线。
 
-以下条件只适用于显式传入 `--navigation-config` 的全场导航；默认整局编码器模式不要求该文件或 Tag 标定。
-
-`--navigation-config` JSON 包含 `version: 1`、`verified`、`record`、`capture_delay_s`、`field_file`、`robot_file`。
-几何文件路径相对于该 JSON；地图/车体格式与现有规划器一致，坐标为 `field_mm_cw`。
-`competition.example.json` 引用名义 CAD，`verified: false`，只允许 `--show-plan`。
-现场测量并确认几何、相机外参和采集延迟后才填写验证记录，不能通过改布尔值代替测量。
-
-实机开启前校验配置，运行时要求已标定、有效且延迟修正后不超过 300 ms 的原始 Tag 位姿。
-无有效定位、多 Tag 解算不一致、机构忙、非静止入口、起终点碰撞或规划期间位姿变化均在轮速指令前拒绝。
-规划或执行失败沿用策略急停，不执行原路线重放，也不自动续跑。协议未变。
-
-覆盖：`depart_a`、`depart_b`、`return_orange`、`ground_to_delivery`、`purple_to_orange`、
-`orange_to_build`、`build_return`、`staged_initial`、`staged_to_build`、`staged_return_first`、
-`staged_return_final`、`ground_tag_offset`、`ground_delivery_depart`、`build_offset`、`unload_depart`。
-`to_purple`、`unload_approach` 等带内部视觉/接墙屏障的路线保留原执行，日志注明 `classic:contact_or_visual_barrier`。
-机构并行窗口保留原路线，注明 `classic:mechanism_overlap`；关闭对应衔接后可在机构完成时规划。
-预览逐条列出路线覆盖，运行日志 `planned_competition_route` 记录实测起点、计算终点、路径长度及候选数。
-
-接入已通过虚拟底盘测试；当前 Tag 相机仍报告 FOV estimate、未标定，整场实机规划效果尚未验证。
-
-### 注入或移除规划实现
-
-下面是已有机器人生命周期内的接入函数，调用前须完成 Robot 连接、增量会话协商和原有设备准备。
-`bindings` 和 `adapter_factory` 必须由实际场地接入代码提供；示例不填入名义坐标或测试标定。
-首次接入只绑定机构已经空闲、底盘静止且满足原路线出口契约的路线。
-
-```python
-from dataclasses import replace
-from Strategy.runner import run_selection
-from Strategy.optimizations.motion_planning import (
-    MotionPlanning, FieldNavigation, CalibratedCurves,
-)
-
-def run_with_navigation(robot, config, bindings, adapter_factory):
-    config = replace(config, motion_planning_enabled=True)
-    planning = MotionPlanning(optimizers=[
-        FieldNavigation(bindings, adapter_factory),
-        CalibratedCurves(),
-    ])
-    return run_selection(robot, 'PlanA', transition_config=config,
-                         motion_planning=planning)
-```
-
-`bindings` 的键为合法的 `profile/route`，回调 `request(env)` 返回
-`(Location, Location, measured_start_pose)` 或 `None`。
-`adapter_factory(env)` 返回持有已验证 `NavigationCalibration` 的 `RobotNavigation`。
-必须保留原路线出口、上下文锚点及后续操作条件；此接口用于自定义后端。
-比赛内置接入使用上文的 `CompetitionRoutes`，无需手写位置族绑定。
-
-列表顺序即选择优先级。移除 `FieldNavigation(...)` 后，保留标定曲线后端；删除某个绑定时，
-仅该路线继续尝试后续后端。全部返回 `None` 时使用经典路线。
-显式传入 `optimizers=[]` 可仅使用经典路线；配置的 `motion_planning_enabled: false`
-具有更高优先级，即使注入规划对象也关闭替换。
-准备阶段的错误直接传播，只有返回 `None` 才表示允许尝试下一实现。
-
-`RobotNavigation.prepare/execute` 均检查机构空闲和底盘静止。将它用于仍持有抓取/检查/Build
-会话的衔接窗口会被拒绝；当前不支持任意非零速度或未完成机构动作的导航接管。
-单条导航内部保持连续，两个独立导航调用之间仍有停车边界。
-
-## 参数来源和速度
-
-位置间导航使用 `navigation.motion.CompetitionMotion`，复用 `Strategy.settings.PROFILES` 和
-`control.chassis` 的长短距速度、加速时长、坡道速度、横移补偿、转向、制动距离与到位窗口。
-长距离巡航设定默认乘 1.10，即 1000→1100 mm/s；短距 400、坡道 800、搜索/沿墙 300、接近 150 保持来源配置。
-倍率允许调整到 1.20，超过时拒绝配置。它不绕过弯道、轮速或制动限制。
-
-旧直线控制器的速度前馈外还有位置 PID 修正，1000 mm/s 设定在当前虚拟底盘内可达到约 1444 mm/s。
-新参考速度包络保留对应的有限位置修正预算，并根据平移转向叠加后的每个轮速再次限幅。
-轮速上限由经典纯横移的前馈＋修正上限及巡航倍率推导；这是指令上限，不构成电机能力实测结论。
-`control.motion_law` 提取原有三次平滑与距离制动函数，原经典执行器数值行为不变。
-
-位置间导航另外有曲率加速度、模型响应补偿、误差余量等新增参数，均明确为待实机确认项。
-普通到位复用 8 mm 窗口，并预留 1 mm 模型定位余量；搭建保持 5 mm 和新鲜视觉证据要求。
-
-## PID 跟踪
-
-`navigation.tracking.PositionTracker` 对世界坐标 X/Y 和顺时针航向分别计算 P、I、D 修正，叠加轨迹速度前馈，
-再转换为车体速度、轮速。`TrackingGains` 可传给 `FieldPlanner(..., tracking=...)`。
-初始平移参数为 Kp=2.5、Ki=0.12、Kd=0.08；航向为 2.5、0.10、0.05，均待现场验证。
-Ki 有独立积分区间和限幅；轮速、墙面或加速度约束挡住输出时，撤销推动饱和方向的本次积分。
-D 来自参考速度与测量速度之差，滤波时间 60 ms；视觉修正不会被除以采样周期变成微分脉冲。
-到位低速保持时清空积分与输出，避免加加速度状态把已停稳的底盘再次推走。
-遥测过期、通信中断和急停仍终止本次执行。
-
-## 验证入口
+上层RaspberryPi目录只读预览：
 
 ```bash
-python -m unittest tests.test_competition_navigation tests.test_motion_planning_plugin tests.test_navigation_motion tests.test_position_tracking -q
-python -m simulation.linear_comparison
-python -m simulation.navigation_verify
-python -m simulation.navigation_server --port 8766
+python main.py --runtime game --strategy PlanA --enable-motion-planning --show-plan
+python main.py --runtime game --strategy PlanB --enable-motion-planning --show-plan
+# 仍保留原目标与原Tag对准位置（显式关闭可选模块）
+python main.py --runtime game --strategy PlanA --enable-motion-planning --disable-moving-tag6 --show-plan
+# 可选移动视觉试跑预览
+python main.py --runtime game --strategy PlanA --enable-motion-planning --enable-moving-tag6 --show-plan
 ```
 
-直线对照通过同一个四轮模型运行真实 `Chassis._move_linear` 与新版执行器，覆盖不同距离和四个方向。
-报告区分控制器差异，不把模型时间当成实机时间；网页可调巡航倍率并显示 PID 误差。
-本轮协议未变：0x10/8 B、0x80/80 B、0x83/11 B、数值大端/CRC 小端和 200 ms 失联急停保持。
-现有扩展会话、机构动作和协议兼容工作区改动均保留，无新增依赖。
+进入game目录时省略--runtime game。关闭全场定位仍可运行普通局部优化，但无法提供移动Tag6观测。
+缺失Tag的原对准降级保持；最终建筑确认在优化模式下必须成功。
+无额外地图JSON要求、无新运行依赖、协议未变。新接管参数待实机验证，未部署或烧录。
+
+## 验证
+
+复用原路线/四轮模型检查所有轮次的目标与最终朝向，原直线实际调用Chassis._move_linear参与同一模型；
+原有轨迹连续性、速度约束、取消及遥测故障测试保留。新增延迟Tag帧、三轮偏置、错误目标、接管后丢Tag、
+原点返回、一次性步骤消费与建筑确认失败阻止Build等回归。
+独立开关测试覆盖PlanA/PlanB全部8处接近：关闭时保持原目标且不实例化移动视觉模块，
+后续Tag对准/偏置实际调用；开启时仍使用原移动视觉回放与接管测试。
+
+```bash
+python -m unittest tests.test_local_routes tests.test_local_planning_entry tests.test_moving_tag6_switch tests.test_moving_tag_approach tests.test_continuous_trajectory -q
+python tests/import_smoke.py
+```
+
+本轮协议未变：0x10/8 B、0x50/6 B、0x80/80 B、0x83/11 B，数值大端/CRC小端和200 ms失联急停保持。
+扩展会话与固件不变。测试验证软件顺序、几何与假设动力学，不代替机械净空、吸附与实机精度确认。

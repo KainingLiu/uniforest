@@ -1,4 +1,4 @@
-"""Read-only implementation audit; fake devices, never runs a robot or deploys.
+"""Current local-route coverage with isolated, non-guided dispatch probes.
 
 Outputs describe source coverage and isolated dispatch probes. They deliberately
 do not label simulation, mocked execution, or deployment notes as field evidence.
@@ -30,12 +30,12 @@ FLAGS=['--trial-optimizations','--enable-transition','next-cube',
        '--enable-motion-planning','--enable-fast-alignment']
 
 COMPONENTS={
-    'navigate':('局部曲线（当前命令）','19 个具名路线入口可派发；保留接墙/视觉屏障，非全场路径规划', 'Strategy/optimizations/local_routes.py'),
+    'navigate':('原路线局部平滑','单直线复用原控制器，连续移动转向按原路线合并', 'Strategy/optimizations/local_routes.py'),
     'anchor_wall':('专用贴墙控制','直接轮速与堵转反馈，不经过 MotionPlanning','Strategy/controllers.py:_drive_until_wall'),
     'acquire_cube':('专用搜索＋快速视觉对准','搜索/边缘恢复直接轮速；当前命令开启 fast_alignment；条件槽可能跳过','Strategy/flows/operations.py:acquire_cube'),
     'grab_cube':('机构＋专用顶墙＋可选衔接','顶墙直接轮速；下一块盲移/接管为独立控制；紫块后续路线经 run_route','Strategy/flows/transitions.py:start_grab'),
     'inspect_cargo':('机构检查＋可选路线＋补抓恢复','exit_route 经 run_route；补抓返回 _return_for_refill 直接经典前进/贴墙；可能循环','Strategy/flows/transitions.py:inspect'),
-    'align_tag':('独立 Tag PID','固定目标对准、停止；没有和前后导航合并为移动定位','Strategy/flows/factory.py:_align_tag'),
+    'align_tag':('行进 Tag6 或原对准','相邻运输/Tag6/偏置匹配时融合；未接管则保留原对准','Strategy/flows/factory.py:_align_tag'),
     'align_building':('独立建筑视觉控制','直接轮速；没有走 navigation.tracking.PositionTracker','Strategy/building_alignment.py:_align_building'),
     'unload':('经典定距后退','_unload_cubes 内部直接 _checked_move，绕过 MotionPlanning','Strategy/controllers.py:_unload_cubes'),
     'load_staged':('机构＋专用贴墙','开舱、向前贴墙、关舱；贴墙直接控制','Strategy/flows/operations.py:load_staged'),
@@ -102,18 +102,18 @@ def audit():
     hashes={str(p.relative_to(ROOT)).replace('\\','/'):hashlib.sha256(p.read_bytes()).hexdigest() for p in sorted(sources)}
     result=dict(generated_at=datetime.now(timezone(timedelta(hours=8))).isoformat(),
         scope='current local source plus isolated entry probes; no robot commands, no deployment',
-        remote_check='SSH read-only connection closed; user confirms Raspberry Pi is offline. Deployed files and current run logs unverified.',
+        remote_check='No deployment or hardware checks performed by this audit.',
         plans=plans,route_probes=probes,actions=rows,source_sha256=hashes,
         findings=[
             dict(id='F01',finding='用户命令仅启用 LocalRoutes，未选择全场 FieldPlanner',source='Strategy/cli.py; Strategy/optimizations/motion_planning.py'),
             dict(id='F02',finding='LocalRoutes 使用 control.trajectory 的比例反馈，新增 PositionTracker 的 I/D 未接入该链路',source='control/trajectory.py:follow_trajectory'),
-            dict(id='F03',finding='CompetitionRoutes 的 prepare_between 使用 route_goal，needs_tag6=False；未注入 building_controller；比赛仍有独立 align_tag/align_building',source='Strategy/navigation/competition.py; Strategy/navigation/planner.py:plan_between'),
+            dict(id='F03',finding='相邻运输/Tag6/偏置可融合；本工具单路线探测未配置计划，移动视觉另由 test_moving_tag_approach 验证',source='Strategy/optimizations/local_routes.py; tests/test_moving_tag_approach.py'),
             dict(id='F04',finding='PlanB depart_b 的 180 度终点朝向保留，未联合后续 to_purple 消除中间朝向要求',source='Strategy/settings.py:Departure2Config; Strategy/plans/plan_b.py'),
             dict(id='F05',finding='局部轨迹终点要求零速；无匹配衔接的动作边界再次 stop，尚无整局连续轨迹编译',source='control/trajectory.py; Strategy/execution/runtime.py'),
             dict(id='F06',finding='卸货内部后退、补抓返回直接经典控制；搜索/贴墙/视觉/盲移使用各自控制器',source='Strategy/controllers.py:_unload_cubes; Strategy/flows/transitions.py:_return_for_refill'),
             dict(id='F07',finding='LocalRoutes 速度从旧命令生成，未使用 CompetitionMotion 的 1.10 倍巡航',source='Strategy/optimizations/local_routes.py:route_profile'),
-            dict(id='F08',finding='即使指定全场配置，四类未登记路线或机构重叠窗口仍显式回退经典路线',source='Strategy/navigation/competition.py:CompetitionRoutes.prepare'),
-            dict(id='F09',finding='Tag/建筑对准缺失可返回 False，_start_build 未以 build_ready 或对准成功为前置条件',source='Strategy/flows/factory.py:_ordinary/_start_build; Strategy/building_alignment.py:_align_building_or_continue'),
+            dict(id='F08',finding='单动作、净空退离及接触/视觉边界保持原控制语义；比赛无全场配置入口',source='Strategy/optimizations/local_routes.py:LocalRoutes.prepare'),
+            dict(id='F09',finding='开启优化时最终建筑视觉对准必须成功，异常由执行器停止且不进入Build；Tag6完成独立于建筑确认',source='Strategy/flows/factory.py:_ordinary; tests/test_local_planning_entry.py'),
         ],
         limitations=['declarative slots are not actual movement counts',
                      'conditional third orange slot, already-completed callback routes, retries and stops change runtime execution',

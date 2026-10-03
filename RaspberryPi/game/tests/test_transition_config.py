@@ -42,7 +42,7 @@ class TransitionConfigTests(unittest.TestCase):
         config=self.load(self.document())
         self.assertTrue(config.pickup('ground-1','grap3').last_departure)
         self.assertEqual(config.pickup('ground-1','grap3').arm_restore_s,.2)
-        self.assertEqual(config.pickup('ground-1','grap3').next_cube_distance_mm,80.0)
+        self.assertEqual(config.pickup('ground-1','grap3').next_cube_distance_mm,100.0)
         self.assertIsNone(config.pickup('ground-2','grap3'))
         self.assertEqual(set(config.curves),{'building-1/build_return'})
         with self.assertRaises(TypeError):config.curves['other']=None

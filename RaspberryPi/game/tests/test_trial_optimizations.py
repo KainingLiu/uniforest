@@ -43,7 +43,8 @@ class TrialTests(unittest.TestCase):
                 self.assertTrue(p.departure)
             else:
                 self.assertTrue(p.last_departure)
-                self.assertEqual(p.next_cube_distance_mm,80)
+                self.assertEqual(p.next_cube_distance_mm,100)
+                self.assertEqual(p.next_blind.max_distance_mm,120)
                 self.assertFalse(p.next_blind.validated)
                 self.assertTrue(p.next_blind.trial_enabled)
                 self.assertFalse(p.next_acquire.validated)

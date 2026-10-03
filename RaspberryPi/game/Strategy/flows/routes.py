@@ -153,7 +153,7 @@ def to_purple(env, profile):
     cfg = c.config
     _phase(env, c, 'INITIAL_MOVE')
     c._checked_move('backward', cfg.initial_distance_mm, cfg.initial_speed_mm_s,
-                    accel_ms=cfg.long_distance_forward_accel_ms)
+                    accel_ms=cfg.ramp_accel_ms, ramp_straight=True)
     _phase(env, c, 'TURN_TO_COLLECTION')
     c._turn_to_heading(cfg.delivery_heading_target_cw_deg)
     if cfg.tag3_alignment_enabled:
@@ -232,7 +232,7 @@ def orange_to_build(env, profile):
     _phase(env, c, 'BUILD_ROUTE')
     c._checked_move('forward', cfg.build_route_distance_mm,
                     cfg.build_route_speed_mm_s,
-                    accel_ms=cfg.long_distance_forward_accel_ms)
+                    accel_ms=cfg.ramp_accel_ms)
 
 
 def build_offset(env, profile):

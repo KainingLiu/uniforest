@@ -32,7 +32,7 @@ def resolve_selection(selection='PlanA'):
     return PLANS[name]
 
 
-def run_plan(robot, plan, *, context=None, heading_zero_deg=None, transition_config=None, motion_planning=None):
+def run_plan(robot, plan, *, context=None, heading_zero_deg=None, transition_config=None):
     from protocol.transport import Transport
     if isinstance(robot.transport, Transport) and not robot.transport.execution_active:
         raise RuntimeError('extended execution requires a negotiated additive firmware session')
@@ -63,8 +63,6 @@ def run_plan(robot, plan, *, context=None, heading_zero_deg=None, transition_con
         context.check_active(require_telemetry=False)
         env = (ActionEnvironment(robot,context) if transition_config is None else
                ActionEnvironment(robot,context,transition_config=transition_config))
-        if motion_planning is not None and env.transition_config.motion_planning_enabled:
-            env.motion_planning=motion_planning
         # Only wait for telemetry/cameras; this never starts a mission routine.
         env.control(plan.steps[0].profile)._wait_ready()
         if context.heading_zero_deg is None:
@@ -106,9 +104,9 @@ def run_plan(robot, plan, *, context=None, heading_zero_deg=None, transition_con
         robot.strategy_lock.release()
 
 
-def run_selection(robot, selection='PlanA', *, context=None, heading_zero_deg=None, transition_config=None, motion_planning=None):
+def run_selection(robot, selection='PlanA', *, context=None, heading_zero_deg=None, transition_config=None):
     plan=resolve_selection(selection)
     if selection in LEGACY_SELECTIONS:
         print(f'[Strategy] Legacy selector {selection!r} -> {plan.name}')
     return run_plan(robot,plan,context=context,heading_zero_deg=heading_zero_deg,
-                    transition_config=transition_config,motion_planning=motion_planning)
+                    transition_config=transition_config)

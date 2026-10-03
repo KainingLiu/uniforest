@@ -1,20 +1,14 @@
 # 上位机操作与参数参考
 
-当前路线优化：`--enable-motion-planning` 将原起终点交给完整曲线、速度规划与位置 PID，使用连续编码器/IMU，
-无需 `field-transitions.json` 或全场 Tag 定位。`--navigation-config` 仅用于另外选择全场导航。
+当前比赛路径优化仅有原路线局部平滑：--enable-motion-planning开启，--classic-motion关闭。
+单段直线仍走原控制器，连续移动转向按相对位移与最终朝向合并，靠墙/退离/抓取等边界保留。
+Tag6持续修正默认关闭：运输平滑到原目标后按原顺序对准Tag及横移。额外--enable-moving-tag6才接入移动反馈，
+--disable-moving-tag6关闭反馈且保留局部平滑；建筑视觉最终确认后才允许优化流程Build。
+无全场地图或Tag起点门禁；--navigation-config已从比赛入口移除，详见[规划模块](Strategy/optimizations/MOTION_PLANNING.md)。
 
-2026-10-02 本地修复：此前 `to_purple` 被按整条视觉路线排除，开启优化后仍倒车、停车转向、再接近。
-现在仅在真实 Tag 校正/接墙处划分轨迹；当前关闭 Tag3 的配置下一次执行整个紫块转场。
-原启用命令保持；日志 `motion_backend_selected` 应显示 `to_purple` 为 `local_route:existing_recipe`，
-`planned_local_route` 给出轨迹点、逐段速度和 `standalone_turn_count`。本条修复尚未同步树莓派，需更新代码后生效。
-
-2026-10-02 最新修改：未确认下一块时搜索预移 **300 mm**（连续排 100 mm），
-预移最高 160 mm/s（原 80 mm/s 的两倍）、时间上限 8 秒、预观测有效期 12 秒；新姿态画面出现有效橙块才提前接管。
-紫块未完成抓取时停止混合采集，禁止用三橙块替代继续搭建；搭建还要求数量检查确认为 3。
-`inspect-departure` 与 `last-departure` 同开时，后退由低头检查阶段执行一次，
-头部动作和新图像采集在后退循环中推进。查看 `inspection_sampling.moving_frames` 确认实际重叠，
-查看 `blind_feedback` 的 requested_distance_mm / displacement_mm / reason 确认实际预移。
-按用户要求本轮不运行测试或实机；以上为代码实现及待验证参数，不构成现场效果确认。
+2026-10-03盲移：固定100 mm，连续排100 mm，已定位下一块最多200 mm，无可靠下一块时200 mm；
+160 mm/s试跑速度、固定4秒/自适应8秒、12秒预观测有效期保持。物理效果待验证。
+后退检查、明确少块返回和未知分支见[衔接说明](Strategy/TRANSITIONS.md)。
 
 ## 通过 SSH 启动持续运行的任务
 
@@ -263,22 +257,23 @@ enabled 表示允许使用，现场仍需满足抓取成功路径、完整抬升
 
 | 命令行参数 | 配置对应项 | 关闭范围 | 保留的行为 |
 | --- | --- | --- | --- |
-| `--enable-motion-planning` | `motion_planning_enabled: true` | 开启完整曲线/速度规划（默认关闭） | 沿用原终点、现有 CAD 和编码器/IMU；完整 FieldPlanner、CompetitionMotion 与位置 PID，保留操作边界 |
+| `--enable-motion-planning` | `motion_planning_enabled: true` | 开启完整曲线/速度规划（默认关闭） | 原局部目标＋关键经过区域；单动作原控制、复合动作平滑 |
+| `--enable-moving-tag6` / `--disable-moving-tag6` | `moving_tag6_enabled: true/false` | 独立选择行进中Tag6持续修正，默认关闭 | 需同时开启运动规划；关闭后在原目标处执行原Tag对准和横移 |
 | `--enable-fast-alignment` | 保留已加载的 `alignments` | 开启快速抓取入窗对准（默认关闭） | 衔接和运动规划独立选择；缺参数时拒绝启动 |
-| `--classic-motion` | `motion_planning_enabled: false` | 所有经 `MotionPlanning` 选择的路线优化，包括标定曲线及程序注入的场地导航 | 使用原 `ROUTES` 路线；动作衔接和快速对准仍按各自开关选择 |
+| `--classic-motion` | `motion_planning_enabled: false` | 原路线局部平滑和行进Tag6接管 | 使用原 `ROUTES` 路线；动作衔接和快速对准仍按各自开关选择 |
 | `--disable-fast-alignment` | `alignments: {}` | 快速抓取入窗对准 | 使用原抓取对准路径；路线与跨动作衔接保持各自选择 |
 
 比赛入口的运动规划须显式传入 `--enable-motion-planning`；仅加载配置文件仍关闭。
 开启参数与 `--disable-motion-planning`（兼容 `--classic-motion`）互斥；命令行参数在读取配置后覆盖本次选择，不改写文件。
 快速对准也须显式传入 `--enable-fast-alignment`，与 `--disable-fast-alignment` 互斥。
-七项优化均默认关闭；标定和试跑参数只提供数据。
+原七项优化及新增Tag6持续修正模块均默认关闭；标定和试跑参数只提供数据。
 配置文件会先完整校验，无效标定仍会拒绝启动，
 关闭参数不能跳过文件校验。
 
 下面用仓库自带的空标定配置演示，均为只读预览：
 
 ```bash
-# 预览原目标上的完整规划；沿用现有地图，无需额外 Tag 标定文件
+# 局部平滑只读预览；不连接机器人
 python main.py --strategy PlanA --enable-motion-planning --show-plan
 
 # 只使用经典路线
@@ -327,9 +322,10 @@ python main.py --strategy PlanA --classic-motion --disable-fast-alignment --show
 | 紫块抓取→转场 | 提供本轮 `grap2` 标定，并加 `--enable-transition purple-departure` | `--disable-transition purple-departure` | 要求完整抬升能力与现场记录；机构与转场均完成后才结束衔接 |
 | 数量检查复位→运输 | `--enable-transition inspect-departure` | `--disable-transition inspect-departure` | 默认关闭；开启后按当前检查会话和路线条件执行 |
 | Build→返程 | `--enable-transition build-return` | `--disable-transition build-return` | 默认关闭；关闭后先完成机构退出再返程；开启仍要求 `after_build` 和锚点匹配 |
-| 标定连续曲线 | 在 `curves` 增加合法的 `轮次配置/路线名` 条目，填写 `points` 与 `profile`，并加 `--enable-motion-planning` | 移除开启参数或使用 `--classic-motion`；删除单条标定恢复该路线 | 保留原路线出口和接墙步骤；仅供显式注入 `CalibratedCurves`；普通运动规划开关使用完整规划器 |
+| 旧曲线记录 | curves字段仅保留读取兼容 | 不参与比赛规划 | 不再提供独立曲线后端或注入入口 |
 | 快速抓取对准 | 在 `alignments` 增加 `轮次配置/颜色` 条目及 `profile`，并加 `--enable-fast-alignment` | 移除开启参数或使用 `--disable-fast-alignment` | 与抓取提前移动独立，普通搜索及盲移接管均可使用；不改变 Tag/建筑对准 |
-| 场地比赛路线规划 | `--navigation-config 实际标定文件 --enable-motion-planning`，自动接入 15 类路线 | 运动规划关闭开关 | 使用原路线参数终点、实测横移补偿和新鲜已标定 Tag 位姿；接墙/视觉屏障及机构重叠窗口保留原路线并注明原因 |
+| 原路线局部平滑 | --enable-motion-planning | --classic-motion | 19类路线统一派发，单动作保留原控制；默认保持原Tag识别位置 |
+| 行进Tag6持续修正 | --enable-moving-tag6 | --disable-moving-tag6 | 独立模块，默认关闭；开启需同时启用局部平滑，仅匹配现有Tag/偏置动作 |
 
 配置键的范围：
 
@@ -407,10 +403,10 @@ python main.py --strategy PlanA --classic-motion --disable-fast-alignment --enab
 
 ### 开发接口与组合限制
 
-路线替换使用 `MotionPlanning(optimizers=[...])`，经 `run_selection(..., motion_planning=...)` 注入。
-插件实现无运动副作用的 `prepare(env, route, profile)`，返回 `PreparedMotion` 或 `None`。
-按列表顺序选择第一个适用实现；全部返回 `None` 才走经典路线。准备或执行异常均交给停止流程，
-不会在已移动后自动重跑经典路线。接口示例见[运动规划模块](Strategy/optimizations/MOTION_PLANNING.md)。
+比赛运行器只保留LocalRoutes，原动作决定终点、朝向、速度和操作边界。
+MotionPlanning不接受后端列表；Tag6为独立可选引导模块，默认不挂载。
+开启后在同一轨迹循环中修正目标，不创建第二个底盘控制线程。
+详见[规划模块](Strategy/optimizations/MOTION_PLANNING.md)。
 
 动作衔接通过 `TransitionRegistry` 注册匹配条件、优先级和执行函数。当前比赛入口内部组装注册表；
 新增或单独替换检查/Build 衔接，需要修改 `flows/transitions.py` 或 `flows/factory.py`，
@@ -418,14 +414,11 @@ python main.py --strategy PlanA --classic-motion --disable-fast-alignment --enab
 “前动作退出完成 → 停车 → 后动作进入”，后动作的主体仍照常执行。
 快速对准可以独立启停，换成另一套算法仍需要修改现有调用处。
 
-场地导航的 `RobotNavigation` 要求机构动作结束且底盘静止。接入比赛流程时，先选择满足该条件的路线；
-需要替换机构重叠窗口内的路线时，可先用衔接开关关闭对应重叠，并验证机构已完成、底盘已停稳。
-PlanA/PlanB 开启运动规划后，通过 `RecipeRoutes` 把 19 类原路线的终点送入完整规划器。
-默认沿用现有 CAD 与连续编码器/IMU；显式 `--navigation-config` 才要求对应 Tag 标定。
-原起终点和操作边界保持；当前模型存在 PlanA 起步终点冲突，详见 CHANGELOG，尚无本轮实机结果。
-导航里的位置 PID、视觉延迟补偿、近墙限速、加加速度限制目前随导航整体使用，
-可通过 `TrackingGains`、`CompetitionMotion` 调参，尚无逐项替换算法的统一接口。
-长距 1.10 倍速度设定只属于新场地导航；经典路线参数保持原值，仿真时间不作为实机提速结论。
+比赛局部规划复用Chassis.follow_trajectory及原直线控制器，不调用RobotNavigation的全场位置接口。
+原直线速度、坡道限速及加速时间保持，连续转向减少中间停车；未引入1.10倍速度提升。
+显式开启移动Tag6后，接管需要两帧稳定目标，末端四帧与停稳确认才消费原Tag/偏置步骤。
+无可靠Tag时保留原步骤；接管后长时间丢Tag、断链或取消则停止，禁止重复回放。
+目标偏置与建筑目标保持区分；优化模式最终建筑视觉不成功会阻止Build。
 
 本次文档整理**协议未变**：旧 0x10/8 B、0x50/6 B、0x80/80 B、0x83/11 B，
 已有扩展 0x52～0x55 / 0x84～0x86、数值大端/CRC 小端、200 ms 失联与会话期限均保持。
@@ -515,18 +508,18 @@ python main.py --task task2-2
 
 `PlanB: task0-2 → task2-1 → task4-1 → task2-2 → task4-2 → task0-3 → task1-1 → task0-3 → task1-2 → task5`
 
-Task0-2 以 1000 mm/s 前进 900 mm、右移 2700 mm，两段均使用 800 ms 加速。
+Task0-2 以 2000 mm/s 前进 900 mm、右移 2700 mm，两段均使用 1600 ms 加速。
 右移结束后以 120°/s 转到相对启动零点的 180°，再进入 Task2。
-Task0-3 从 Task4/Task1 的 180°结束朝向进入：先转到 0°，以 1000 mm/s 左移 2600 mm，
+Task0-3 从 Task4/Task1 的 180°结束朝向进入：先转到 0°，以 2000 mm/s 左移 2600 mm，
 再以 300 mm/s 向左顶墙，随后交给 Task1；定距左移加速 800 ms，顶墙复用堵转检测和 4 秒上限。
 独立运行 `main.py --task task0-3` 时也需从相应位置以 180°摆车。
 Task5 接在 PlanB 的 Task1-2 后，以 180°进入，执行两次开舱顶墙取块、建筑对准和 Build。
 开舱各等 200 ms，关舱各等 400 ms，再以 400 mm/s 各后退 250 mm；每次 Build 第三块释放后，先以 400 mm/s 后退 100 mm，再执行原左移路线，与机构收尾并行。详见策略说明。
-Task5 恢复指定路段提速：起步左移 700 mm、两次右移 940 mm 为 1000 mm/s；Build 后左移 840/440 mm 为 800 mm/s，以上加速均为 800 ms。后退 250/100 mm、中间右移 300 mm 保持 400 mm/s、300 ms 加速。
-Task4 初始航向 180°：1000 mm/s 左移 600 mm、300 mm/s 左顶墙；Task4-2 再以 400 mm/s 右移 300 mm。
+Task5 恢复指定路段提速：起步左移 700 mm、两次右移 940 mm 及 Build 后左移 840/440 mm 为 2000 mm/s，以上加速均为 1600 ms。后退 250/100 mm、中间右移 300 mm 保持 400 mm/s、300 ms 加速。
+Task4 初始航向 180°：2000 mm/s 左移 600 mm、300 mm/s 左顶墙；Task4-2 再以 400 mm/s 右移 300 mm。
 随后两版均 300 mm/s 前顶墙，开舱等待 300 ms，400 mm/s 后退 300 mm、关舱不等待；
-1000 mm/s 分别右移 800/500 mm 后保持 180° 结束；首尾长段加速 800 ms，短段加速 300 ms。Task1 也取消末尾回零转向，
-Task2 两版均从 180° 起步，以 800 mm/s 后退 2500/2350 mm。详见 [策略说明](Strategy/README.md)，现场效果待验证。
+2000 mm/s 分别右移 800/500 mm 后保持 180° 结束；首尾长段加速 1600 ms，短段加速 300 ms。Task1 也取消末尾回零转向，
+Task2 两版均从 180° 起步，以 1000 mm/s 后退 2500/2350 mm。详见 [策略说明](Strategy/README.md)，现场效果待验证。
 
 `set1`/`set2` 分别运行 task0-1 和对应编号的 task1、task2、task3。
 `collect-build-1`/`collect-build-2` 只运行对应 task2 → task3。
@@ -573,16 +566,16 @@ python main.py --strategy PlanA --diagnostics-log /tmp/uniforest-run.jsonl
 | --- | ---: | ---: |
 | Task1 三个变体普通定距、Task2 短退与顶墙前进 250 mm | 400 mm/s | 300 ms |
 | Task2 紫块后前进 / 橙块后横移：实际补偿距离 <500 mm | 400 mm/s | 300 ms |
-| Task2 紫块后前进 / 橙块后横移：实际补偿距离 ≥500 mm | 1000 mm/s | 800 ms |
-| Task0、Task1 投放前进 | 1000 mm/s | 800 ms |
-| Task0-2 前进 900 mm、右移 2700 mm | 1000 mm/s | 800 ms |
-| Task4 起步左移 600 mm、末尾右移 800/500 mm | 1000 mm/s | 800 ms |
+| Task2 紫块后前进 / 橙块后横移：实际补偿距离 ≥500 mm | 2000 mm/s | 1600 ms |
+| Task0、Task1 投放前进 | 2000 mm/s | 1600 ms |
+| Task0-2 前进 900 mm、右移 2700 mm | 2000 mm/s | 1600 ms |
+| Task4 起步左移 600 mm、末尾右移 800/500 mm | 2000 mm/s | 1600 ms |
 | Task4 中间右移 300 mm、后退 300 mm | 400 mm/s | 300 ms |
-| Task5 起步左移 700 mm、两次右移 940 mm | 1000 mm/s | 800 ms |
-| Task5 Build 后左移 840/440 mm | 800 mm/s | 800 ms |
+| Task5 起步左移 700 mm、两次右移 940 mm | 2000 mm/s | 1600 ms |
+| Task5 Build 后左移 840/440 mm | 2000 mm/s | 1600 ms |
 | Task5 后退 250/100 mm、中间右移 300 mm | 400 mm/s | 300 ms |
-| Task2 起步后退：第一轮 2500 mm、第二轮 2350 mm；两轮末段前进 2750 mm（坡道） | 800 mm/s | 800 ms |
-| Task3-1/Task3-2/Task3-3 Build 后左移 2500/2200/3000 mm | 1000 mm/s | 800 ms |
+| Task2 起步后退：第一轮 2500 mm、第二轮 2350 mm；两轮末段前进 2750 mm（坡道） | 1000 mm/s | 1000 ms |
+| Task3-1/Task3-2/Task3-3 Build 后左移 2500/2200/3000 mm | 2000 mm/s | 1600 ms |
 | 连续横向搜索方块 | 300 mm/s | 无额外软件起步斜坡 |
 | 常规向前/向左顶墙 | 300 mm/s | 无额外软件起步斜坡 |
 | 与抓取同时启动的短压墙 | 150 mm/s | 无额外软件起步斜坡 |
@@ -591,8 +584,11 @@ python main.py --strategy PlanA --diagnostics-log /tmp/uniforest-run.jsonl
 公共参数在 `control/chassis.py`：
 `NORMAL_DISTANCE_MOVE_SPEED_MM_S=400`、`NORMAL_DISTANCE_MOVE_ACCEL_MS=300`、
 `LONG_DISTANCE_MOVE_SPEED_MM_S=1000`、`LONG_DISTANCE_FORWARD_ACCEL_MS=800`。
-路线层通过 `TaskControl._checked_move()` 选择普通/高速加速参数；Task2 两段
-坡道显式传入 800 ms，避免独立速度不再等于公共长距离常量后退回普通 300 ms。
+比赛路线参数在 `Strategy/settings.py`：平地2000 mm/s、1600 ms；坡道1000 mm/s、1000 ms。
+路线层按巡航速度缩放加速时长，Task2两段坡道显式使用1000 ms。通用手动默认值保持。
+上坡2500/2350 mm整段禁止切弯：局部规划在坡口停稳，以两点固定航向参考直行，段尾停稳后才转向。
+PlanB融合首程同样执行上坡保护，仍省去180°中间掉头；这里采用原整段路线范围，实际坡脚/坡顶待现场确认。
+新值为2026-10-03用户指定的软件试跑目标，尚未实机验证；短段与弯道可能无法达到巡航上限。
 
 视觉对准使用加速度限制，不是固定加速时长：
 
@@ -630,7 +626,8 @@ A 板以 1 kHz 运行四轮速度环并上报累计编码器；树莓派根据�
 - 手动单次定位默认 `route_mode=False`，保留 1000 counts（约 3 mm）窗口、
   原前馈和位置锁定；视觉对准、顶墙控制不使用此到位窗口。
 - 新路线模式检测连接、急停代次、0.5 秒遥测陈旧和发送失败，异常中止，不作为到位。
-- 策略允许定距控制器超时但编码器进度达到 90% 以上的结果；取消、遥测丢失和进度不足不适用。
+- 非坡道策略允许定距控制器超时但编码器进度达到 90% 以上的结果；受保护上坡必须完整到位，超时即中止。
+  取消、遥测丢失和进度不足始终不适用进度放行。
 - 直线总超时为 `max(2000 ms, 预计匀速行驶时间 + accel_ms + hold_ms + 2000 ms)`。
   已取消原来的 5 秒最低总时长；2 秒为估算行程后的额外余量，不是所有动作总共只运行 2 秒。
   例如前进 100 mm、400 mm/s、加速 300 ms、无额外保持时，总超时约 2.55 秒。
@@ -680,7 +677,7 @@ Task1 卸载横移后保持 180°结束，交给 Task2；原有起始顶墙、�
 2. 以 300 mm/s 连续向右搜索橙色，累计搜索上限 1800 mm；锁定目标后进行粗对准和末端微调。
 3. 对准后同时启动 Grap3 和 150 mm/s 短压墙，短压墙结束后重新校准航向；抓取后执行数量检查及补抓。3 或 null 继续，搜索距离耗尽则跳过检查。
 4. 以 400 mm/s 后退 400 mm，转到启动零点顺时针 90° 航向。
-5. 以 1000 mm/s 前进 `2800 mm - 抓取阶段编码器实测净右移量`，再转到 180° 航向。
+5. 以 2000 mm/s 前进 `2800 mm - 抓取阶段编码器实测净右移量`，再转到 180° 航向。
 6. 对准 Tag6 至距离 425 mm、横向零点；前后/横向单轴进入 ±8 mm 即停止该轴平移，两帧超差后重启。航向独立向 180° 纠偏，0.5° 死区；前后、横向和航向 ±3° 均合格连续确认 4 个新帧后停车继续，不执行精对准。按变体定距横移后顶墙卸载。
 7. 打开舱门并等待 300 ms，以 400 mm/s 后退 300 mm，关闭舱门后不等待；按变体定距横移后以 180° 结束，取消末尾转回 0°。
 
@@ -698,17 +695,17 @@ Tag6 后左移 500 mm、投放后右移 500 mm，两段均为 400 mm/s、300 ms 
 
 对应原 Task2 的第 1-14 步，代码在 `Strategy/task2.py`：
 
-1. 从 180° 起步，以 800 mm/s、800 ms 加速后退 2500/2350 mm，再转到 -90°。入口按 `零点 = 当前 yaw + 180°` 换算，不把当前朝向设为零。当前跳过 Tag3 对准及其后横移。
+1. 从 180° 起步，以 1000 mm/s、1000 ms 加速后退 2500/2350 mm，再转到 -90°。入口按 `零点 = 当前 yaw + 180°` 换算，不把当前朝向设为零。当前跳过 Tag3 对准及其后横移。
 2. 前进 250 mm，再以 300 mm/s 向前顶墙。
 3. 向左搜索紫色，搜索上限 750/650 mm；找到后执行 Grap2 和短压墙。找不到则跳过紫色，初始橙色数量从 2 个增至 3 个。
 4. Grap2 回升到 5 cm 且短压墙结束后，机构收尾与后退 100 mm、转回 0°、补偿前进并行，保持机构监视。Task2-1 前进 `350 mm - 紫色阶段实测净右移量`；Task2-2 前进 `500 mm - 紫色阶段实测净右移量`。
 5. 向左顶墙、向前顶墙，重新校准航向。
 6. 向右搜索橙色，累计上限 1800 mm，使用 Grap1；执行原数量检查及补抓流程，搜索耗尽则跳过数量检查。
 7. 后退 100 mm（可与数量检查复位重叠），再按 `550 mm - 橙色阶段实测净右移量` 横移补偿。
-8. 转到 180°，以 800 mm/s、800 ms 加速前进 2750 mm，结束并输出航向交接数据。这里不执行 Tag6 或 Build。
+8. 转到 180°，以 1000 mm/s、1000 ms 加速前进 2750 mm，结束并输出航向交接数据。这里不执行 Tag6 或 Build。
 
 Task2 的单次执行返回时，此前 Grap2/Grap1 和数量检查均已完成，不留跨 Task 的后台机械动作。
-紫块后前进、橙块后横移按补偿计算后的实际距离选速：≥500 mm 为 1000 mm/s、800 ms 加速，
+紫块后前进、橙块后横移按补偿计算后的实际距离选速：≥500 mm 为 2000 mm/s、1600 ms 加速，
 不足 500 mm 为 400 mm/s、300 ms 加速；橙块后横移取补偿绝对值，方向沿用原计算，零距离跳过。
 `Task2Config.tag3_alignment_enabled=False` 保持；如显式启用，原 Tag3 目标和控制参数保留，
 task2-1 对准后右移 100 mm，task2-2 不执行这段横移。
@@ -721,7 +718,7 @@ task2-1 对准后右移 100 mm，task2-2 不执行这段横移。
 2. 对准 Tag6：距离 425 mm、横向 0 mm，两平移轴容差 ±8 mm，合格平移轴停止。航向独立向 180° 纠偏，0.5° 死区；三轴均合格（含航向 ±3°）连续 4 个新帧后完成，无精对准。
 3. Task3-1/2 分别右移 100/400 mm，Task3-3 左移 500 mm，速度均为 400 mm/s；再用方块相机对准实际建筑。沿用建筑丢失/超时停车告警后继续 Build 的既有分支，通信及取消异常仍终止。
 4. 执行 Build。最后一次释放后，机构收尾与返程并行：后退 100 mm → 顺时针相对转 180° → 左移 → 左顶墙。
-5. 三个变体都等机构和返程全部完成后结束；task3-1 左移 **2500 mm**，task3-2 左移 **2200 mm**，task3-3 左移 **3000 mm**，速度均为 1000 mm/s、加速 800 ms。
+5. 三个变体都等机构和返程全部完成后结束；task3-1 左移 **2500 mm**，task3-2 左移 **2200 mm**，task3-3 左移 **3000 mm**，速度均为 2000 mm/s、加速 1600 ms。
 
 | 任务差异 | `-1` | `-2` |
 | --- | ---: | ---: |

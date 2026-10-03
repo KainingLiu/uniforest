@@ -404,7 +404,7 @@ class Chassis:
     # STM32 handles the speed PID; Pi handles the position loop.
 
     def follow_trajectory(self, waypoints, profile, *, check,
-                          initial_velocity=None):
+                          initial_velocity=None, guidance=None):
         """Follow a configured or recipe-derived local route without intermediate stops.
 
         Waypoints use local mm forward/right and unwrapped clockwise yaw. ``check``
@@ -484,6 +484,7 @@ class Chassis:
                                  send_velocity=send_velocity, wheel_rpm=wheel_rpm,
                                  check=guard, emergency_stop=self._t.emergency_stop,
                                  initial_velocity=initial_velocity,
+                                 guidance=guidance,
                                  clock=time.monotonic, sleep=time.sleep)
 
     @staticmethod
@@ -657,6 +658,10 @@ class Chassis:
             pid_corr = (0.0 if in_arrival_window else self.pos_pid[0].compute(
                 float(target_counts), float(projected_counts), dt))
             speed_sp = ff + pid_corr
+            if route_mode:
+                # A route speed is a translation ceiling, including feedback;
+                # position correction must not raise a 1 m/s ramp above it.
+                speed_sp = max(-speed_rpm,min(speed_rpm,speed_sp))
 
             # Match IMU_ResetYaw() in the 0714 implementation without changing
             # the global telemetry reference used by other upper-computer code.

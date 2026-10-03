@@ -1,4 +1,10 @@
-"""Shared law parity, bounded cruise uplift, and real classic-loop comparison."""
+"""Standalone field research and current capped classic-loop contracts.
+
+The field experiment is not selected by competition MotionPlanning. Its timing
+study used a 1 m/s profile; current 2 m/s transport is tested through LocalRoutes
+in test_terrain_speeds. Feedback is now capped in the classic loop, so the old
+15% timing-parity and relative peak-speed assertions no longer apply.
+"""
 from dataclasses import replace
 import math
 import unittest
@@ -26,27 +32,31 @@ class MotionTests(unittest.TestCase):
         self.assertEqual(m.accel_s,PROFILES['depart-b'].accel_ms/1000)
         self.assertEqual(m.ramp_mm_s,PROFILES['highland-1'].build_route_speed_mm_s)
         self.assertEqual(m.approach_mm_s,PROFILES['ground-1'].near_wall_speed_mm_s)
-        self.assertEqual(m.travel_mm_s,1100)
+        self.assertEqual(m.travel_mm_s,PROFILES['depart-b'].speed_mm_s*1.1)
         legacy=FWD_BASE_DECEL_DIST*(1000*MECANUM_RPM_PER_CM_S/10/FWD_BASE_SPEED_RPM)*10/COUNTS_PER_CM
         self.assertAlmostEqual(m.braking_distance(1000),legacy)
         lowered=replace(m,cruise_multiplier=1, wheel_rpm=None)
-        self.assertEqual(lowered.travel_mm_s,1000)
+        self.assertEqual(lowered.travel_mm_s,PROFILES['depart-b'].speed_mm_s)
         self.assertEqual(lowered.ramp_mm_s,m.ramp_mm_s)
         self.assertAlmostEqual(m.wheel_rpm/lowered.wheel_rpm,1.1)
         for bad in (0,True,float('nan'),1.21):
             with self.assertRaises(ValueError): replace(m,cruise_multiplier=bad)
 
-    def test_same_plant_classic_and_new_straight_motion_have_comparable_timing(self):
+    def test_historical_field_experiment_and_capped_classic_both_reach_goal(self):
+        motion=replace(CompetitionMotion.competition(),cruise_mm_s=1000,
+                       accel_s=.8,wheel_rpm=None)
         for distance in (300,1200,2500):
             for direction in ('forward','backward','right','left'):
                 with self.subTest(distance=distance,direction=direction):
-                    r=compare(distance,direction)
+                    r=compare(distance,direction,motion=motion)
                     old,new=r['classic'],r['optimized']
                     self.assertFalse(old['timed_out'])
                     self.assertEqual(new['status'],'arrived')
                     self.assertLess(new['error_mm'],8)
-                    self.assertLess(abs(new['elapsed_s']-old['elapsed_s']),max(.2,old['elapsed_s']*.15))
-                    self.assertLessEqual(new['peak_speed_mm_s'],old['peak_speed_mm_s']*1.11)
+                    self.assertLess(old['error_mm'],8)
+                    ceiling=motion.short_mm_s if distance<motion.short_distance_mm else motion.cruise_mm_s
+                    self.assertLessEqual(old['peak_speed_mm_s'],ceiling+1)
+                    self.assertLessEqual(new['peak_speed_mm_s'],motion.command_mm_s+1)
                     # No terminal reverse correction hidden by a total-time metric.
                     axis='vx' if direction in ('forward','backward') else 'vy'
                     sign=1 if direction in ('forward','right') else -1

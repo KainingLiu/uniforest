@@ -52,7 +52,7 @@ class PlanBTests(unittest.TestCase):
                 robot.move_chassis = Mock(return_value=SimpleNamespace(timed_out=False, cancelled=False))
                 self.assertEqual(self.run_selection(robot, selection), 0)
                 self.assertEqual(robot.move_chassis.call_args_list, [
-                    call(direction, distance, 1000, hold_ms=0, accel_ms=800, route_mode=True)
+                    call(direction, distance, 2000, hold_ms=0, accel_ms=1600, route_mode=True)
                     for direction, distance in legs])
                 if selection == 'depart-b':
                     robot.chassis.turn.assert_called_once_with(180, 120, hold_ms=0, settle_cycles=1)
@@ -108,7 +108,7 @@ class PlanBTests(unittest.TestCase):
         self.assertEqual(context.heading_zero_deg, 37)
         self.assertEqual(events.mock_calls, [
             call.turn(180, 120, hold_ms=0, settle_cycles=1),
-            call.move('left', 2600, 1000, hold_ms=0, accel_ms=800, route_mode=True),
+            call.move('left', 2600, 2000, hold_ms=0, accel_ms=1600, route_mode=True),
             call.wall(timeout_s=4, speed_mm_s=300, direction='left',
                       context='LEFT_WALL_APPROACH')])
         robot.transport.emergency_stop.assert_not_called()
@@ -161,13 +161,13 @@ class PlanBTests(unittest.TestCase):
                 robot, context, flow, events = self.unload_fixture(selection)
                 self.assertEqual(flow.run(), 0)
                 move_kw = dict(hold_ms=0, accel_ms=300, route_mode=True)
-                long_kw = dict(hold_ms=0, accel_ms=800, route_mode=True)
-                expected = [('move', 'left', 600, 1000, long_kw), ('wall', 'left', 300, 4)]
+                long_kw = dict(hold_ms=0, accel_ms=1600, route_mode=True)
+                expected = [('move', 'left', 600, 2000, long_kw), ('wall', 'left', 300, 4)]
                 if right_mm:
                     expected.append(('move', 'right', right_mm, 400, move_kw))
                 expected += [('wall', 'forward', 300, 4), ('open', {'settle_ms': 300}),
                              ('move', 'backward', 300, 400, move_kw), ('close', {'settle_ms': 0}),
-                             ('move', 'right', final_mm, 1000, long_kw)]
+                             ('move', 'right', final_mm, 2000, long_kw)]
                 self.assertEqual(events, expected)
                 # yaw=-143 and zero=37 mean an entry heading of 180 degrees.
                 robot.chassis.turn.assert_not_called()

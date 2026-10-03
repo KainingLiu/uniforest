@@ -6,8 +6,6 @@ Profiles select calibration and destinations; they do not execute missions.
 
 from dataclasses import dataclass
 from control.chassis import (
-    LONG_DISTANCE_FORWARD_ACCEL_MS,
-    LONG_DISTANCE_MOVE_SPEED_MM_S,
     NORMAL_DISTANCE_MOVE_SPEED_MM_S,
     NORMAL_DISTANCE_MOVE_ACCEL_MS,
 )
@@ -19,6 +17,13 @@ from .vision_targets import (
 
 # Retain tuned physical stopping positions after the tag-camera FOV correction.
 TAG_FOV_RETUNE_SCALE = 0.300549527
+
+# User-requested software targets (2026-10-03), pending field validation.
+# Longer ramps preserve the previous feedforward acceleration intensity.
+FLAT_ROUTE_SPEED_MM_S = 2000.0
+RAMP_ROUTE_SPEED_MM_S = 1000.0
+FLAT_ROUTE_ACCEL_MS = 1600
+RAMP_ROUTE_ACCEL_MS = 1000
 
 
 @dataclass(frozen=True)
@@ -105,7 +110,7 @@ class GroundCollectionConfig:
     delivery_turn_speed_deg_s: float = 120.0
     delivery_turn_heading_hold_ms: int = 0
     delivery_forward_base_mm: float = 2800.0
-    delivery_forward_speed_mm_s: float = LONG_DISTANCE_MOVE_SPEED_MM_S
+    delivery_forward_speed_mm_s: float = FLAT_ROUTE_SPEED_MM_S
     delivery_tag_id: int = 6
     delivery_tag_distance_mm: float = 425.0
     delivery_tag_distance_tolerance_mm: float = 8.0
@@ -164,7 +169,7 @@ class GroundCollectionConfig:
     pre_final_turn_lateral_direction: str = 'left'
     pre_final_turn_lateral_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
     delivery_linear_accel_ms: int = NORMAL_DISTANCE_MOVE_ACCEL_MS
-    long_distance_forward_accel_ms: int = LONG_DISTANCE_FORWARD_ACCEL_MS
+    long_distance_forward_accel_ms: int = FLAT_ROUTE_ACCEL_MS
 
 
 @dataclass(frozen=True)
@@ -185,7 +190,8 @@ class GroundCollection3Config(GroundCollectionConfig):
 class HighlandCollectionConfig(GroundCollectionConfig):
     initial_heading_cw_deg: float = 180.0
     initial_distance_mm: float = 2500.0
-    initial_speed_mm_s: float = 800.0  # Highland collection ramp approach, independent of cruise speed.
+    initial_speed_mm_s: float = RAMP_ROUTE_SPEED_MM_S
+    ramp_accel_ms: int = RAMP_ROUTE_ACCEL_MS
     delivery_heading_target_cw_deg: float = -90.0
     delivery_tag_id: int = 3
     # Temporary route: skip Tag3 and its post-alignment lateral move together.
@@ -220,7 +226,7 @@ class HighlandCollectionConfig(GroundCollectionConfig):
     post_grab_forward_base_mm: float = 350.0
     post_grab_forward_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
     compensation_fast_distance_mm: float = 500.0
-    compensation_fast_speed_mm_s: float = LONG_DISTANCE_MOVE_SPEED_MM_S
+    compensation_fast_speed_mm_s: float = FLAT_ROUTE_SPEED_MM_S
     left_wall_approach_enabled: bool = True
     orange_target_count: int = 2
     orange_target_count_without_purple: int = 3
@@ -234,7 +240,7 @@ class HighlandCollectionConfig(GroundCollectionConfig):
     post_orange_lateral_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
     final_turn_target_cw_deg: float = 180.0
     build_route_distance_mm: float = 2750.0
-    build_route_speed_mm_s: float = 800.0  # Highland collection second ramp section.
+    build_route_speed_mm_s: float = RAMP_ROUTE_SPEED_MM_S
     # Preserve the existing optional Tag3 profile if that route is re-enabled.
     delivery_tag_fast_forward_mm_s: float = 260.0
     delivery_tag_fast_lateral_mm_s: float = 200.0
@@ -350,7 +356,7 @@ class BuildingConfig(GroundCollectionConfig):
     post_build_reverse_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
     post_build_turn_cw_deg: float = 180.0
     post_build_route_distance_mm: float = 2500.0
-    post_build_route_speed_mm_s: float = LONG_DISTANCE_MOVE_SPEED_MM_S
+    post_build_route_speed_mm_s: float = FLAT_ROUTE_SPEED_MM_S
 
 
 @dataclass(frozen=True)
@@ -370,7 +376,7 @@ class Building3Config(BuildingConfig):
 class WallUnloadConfig(GroundCollectionConfig):
     initial_lateral_left_mm: float = 600.0
     lateral_speed_mm_s: float = 400.0
-    long_route_speed_mm_s: float = 1000.0
+    long_route_speed_mm_s: float = FLAT_ROUTE_SPEED_MM_S
     post_wall_lateral_right_mm: float = 0.0
     final_lateral_right_mm: float = 800.0
 
@@ -386,8 +392,8 @@ class StagedBuildingConfig(BuildingConfig):
     initial_heading_cw_deg: float = 180.0
     initial_left_mm: float = 700.0
     route_speed_mm_s: float = 400.0
-    long_route_speed_mm_s: float = 1000.0
-    build_followup_speed_mm_s: float = 800.0
+    long_route_speed_mm_s: float = FLAT_ROUTE_SPEED_MM_S
+    build_followup_speed_mm_s: float = FLAT_ROUTE_SPEED_MM_S
     hatch_open_settle_ms: int = 200
     hatch_close_settle_ms: int = 400
     load_reverse_mm: float = 250.0
@@ -402,9 +408,9 @@ class StagedBuildingConfig(BuildingConfig):
 @dataclass(frozen=True)
 class DepartureConfig:
     distance_mm: float = 1200.0
-    speed_mm_s: float = LONG_DISTANCE_MOVE_SPEED_MM_S
+    speed_mm_s: float = FLAT_ROUTE_SPEED_MM_S
     hold_ms: int = 0
-    accel_ms: int = LONG_DISTANCE_FORWARD_ACCEL_MS
+    accel_ms: int = FLAT_ROUTE_ACCEL_MS
     telemetry_wait_s: float = 2.0
 
 
@@ -421,7 +427,7 @@ class ReturnToOrangeConfig(GroundCollectionConfig):
     initial_heading_cw_deg: float = 180.0
     target_heading_cw_deg: float = 0.0
     lateral_left_mm: float = 2600.0
-    lateral_speed_mm_s: float = LONG_DISTANCE_MOVE_SPEED_MM_S
+    lateral_speed_mm_s: float = FLAT_ROUTE_SPEED_MM_S
     far_wall_speed_mm_s: float = 300.0
 
 

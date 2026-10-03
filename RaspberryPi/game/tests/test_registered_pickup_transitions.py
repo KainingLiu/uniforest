@@ -409,7 +409,7 @@ class RegisteredPickupTransitionTests(unittest.TestCase):
         f.run(self.next_pair(f), blind=bounded)
         self.assertEqual(seen, [20.0])
 
-    def test_next_cube_expected_80mm_keeps_the_smaller_safety_limit(self):
+    def test_next_cube_expected_100mm_keeps_the_smaller_safety_limit(self):
         for name,method in (('ground-1','grap3'),('ground-2','grap3'),('ground-3','grap3'),
                             ('highland-1','grap1'),('highland-2','grap1')):
             for hard_limit in (120.0,60.0):
@@ -423,7 +423,7 @@ class RegisteredPickupTransitionTests(unittest.TestCase):
                         kwargs['stop']()
                         return SimpleNamespace(status=BlindStatus.BOUND_REACHED)
                     fixture.run(self.next_pair(fixture),blind=bounded)
-                    self.assertEqual(seen,[min(hard_limit,80.0+policy.next_blind.braking_margin_mm)])
+                    self.assertEqual(seen,[min(hard_limit,100.0+policy.next_blind.braking_margin_mm)])
 
     def test_invalid_yaw_never_reaches_warm_controller_or_next_grip(self):
         f = Fixture()

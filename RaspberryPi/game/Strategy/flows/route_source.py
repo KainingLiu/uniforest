@@ -1,13 +1,15 @@
 """Read the original route functions without sending hardware commands.
 
-Both optimization backends consume this recorder so endpoint calculation and
-encoder compensation have one source. It imposes no path or speed profile.
+The local optimizer records original commands without hardware side effects.
+Distances, ordered turns, measured search compensation and barriers stay owned
+by the original route functions; no field map or assumed start is involved.
 """
 import math
 from types import SimpleNamespace
 from control.chassis import NORMAL_DISTANCE_MOVE_ACCEL_MS, LONG_DISTANCE_MOVE_SPEED_MM_S
 from control.trajectory import Waypoint
 from ..common import wrap_angle
+from ..settings import FLAT_ROUTE_SPEED_MM_S
 
 CLEARANCE_RETREATS = {'ground_to_delivery','purple_to_orange','orange_to_build',
                      'build_return','staged_to_build','staged_return_first','staged_return_final'}
@@ -15,13 +17,13 @@ CLEARANCE_RETREATS = {'ground_to_delivery','purple_to_orange','orange_to_build',
 
 class RouteRecorder:
     """Read-only stand-in for the original route's hardware-facing methods."""
-    def __init__(self, env, profile):
+    def __init__(self, env, profile, *, heading_cw_deg=None):
         self.env, self.profile = env, profile
         self.source = env.control(profile)
         self.config = self.source.config
         self.context = env.context
         self.data = dict(env.data)
-        self.heading = self.source._heading_error(0)
+        self.heading = self.source._heading_error(0) if heading_cw_deg is None else heading_cw_deg
         self.pose = Waypoint(0.,0.,0.)
         self.events = []
         self.robot = SimpleNamespace(telem=SimpleNamespace(yaw_deg=wrap_angle(-self.heading)),
@@ -43,9 +45,10 @@ class RouteRecorder:
         if not all(math.isfinite(v) and v >= 0 for v in (distance_mm,speed_mm_s)) or speed_mm_s == 0:
             raise ValueError('invalid source route motion')
         if kwargs.get('accel_ms') is None:
-            kwargs['accel_ms'] = (getattr(self.config,'long_distance_forward_accel_ms',NORMAL_DISTANCE_MOVE_ACCEL_MS)
-                if abs(speed_mm_s-LONG_DISTANCE_MOVE_SPEED_MM_S)<1e-6 else
-                getattr(self.config,'delivery_linear_accel_ms',NORMAL_DISTANCE_MOVE_ACCEL_MS))
+            kwargs['accel_ms'] = getattr(self.config,'delivery_linear_accel_ms',NORMAL_DISTANCE_MOVE_ACCEL_MS)
+            if speed_mm_s>=LONG_DISTANCE_MOVE_SPEED_MM_S:
+                kwargs['accel_ms']=max(kwargs['accel_ms'],round(
+                    self.config.long_distance_forward_accel_ms*speed_mm_s/FLAT_ROUTE_SPEED_MM_S))
         dx,dy = {'forward':(distance_mm,0), 'backward':(-distance_mm,0),
                  'right':(0,distance_mm), 'left':(0,-distance_mm)}[direction]
         angle = math.radians(self.pose.yaw_deg)

@@ -156,7 +156,6 @@ class Robot:
         self._telem: Optional[TelemBatch] = None
         self._telem_received_at: Optional[float] = None
         self._telem_lock = threading.Lock()
-        self._route_odometry = None
         self._inspection_link_generation = 0
         self._pong_received_at = 0.0
         self._pong_event = threading.Event()
@@ -313,10 +312,6 @@ class Robot:
             self._telem_received_at = now
             # Forward to chassis for position tracking
             self.chassis.update_telem(telem)
-            odometry = getattr(self, '_route_odometry', None)
-            if odometry is not None:
-                odometry.update(telem, now, self._inspection_link_generation,
-                                self.transport.emergency_stop_generation)
 
     def _on_ack(self, ack):
         if ack.status != 0:
@@ -339,26 +334,6 @@ class Robot:
         with self._telem_lock:
             return (self._telem, self._telem_received_at, self._pong_received_at,
                       self._inspection_link_generation)
-
-    def begin_route_odometry(self, start):
-        """Attach run-scoped odometry to every frame without opening any device."""
-        from Strategy.navigation.odometry import RouteOdometry
-        with self._telem_lock:
-            if self._route_odometry is not None:
-                raise RuntimeError('route odometry is already owned by a task')
-            odometry = RouteOdometry(start, self.chassis.lateral_distance_scale,
-                self._inspection_link_generation, self.transport.emergency_stop_generation)
-            if self._telem is not None:
-                odometry.update(self._telem, self._telem_received_at,
-                    self._inspection_link_generation, self.transport.emergency_stop_generation)
-            odometry.snapshot()
-            self._route_odometry = odometry
-            return odometry
-
-    def end_route_odometry(self, owner):
-        with self._telem_lock:
-            if self._route_odometry is owner:
-                self._route_odometry = None
 
     @property
     def cube_raw_frame(self):

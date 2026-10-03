@@ -39,8 +39,8 @@ class RouteSpeedProfileTests(unittest.TestCase):
 
     def test_purple_return_uses_actual_distance_and_preserves_short_reverse(self):
         for profile, base_mm in (('highland-1', 350), ('highland-2', 500)):
-            for distance, speed, accel in ((499.5, 400, 300), (500, 1000, 800),
-                                           (1000, 1000, 800)):
+            for distance, speed, accel in ((499.5, 400, 300), (500, 2000, 1600),
+                                           (1000, 2000, 1600)):
                 with self.subTest(profile=profile, distance=distance):
                     env, control = route_fixture(profile)
                     env.data['purple_origin'] = 'purple-origin'
@@ -62,13 +62,13 @@ class RouteSpeedProfileTests(unittest.TestCase):
                         routes.to_purple(env, profile)
                         routes.orange_to_build(env, profile)
                         initial = 2500 if profile == 'highland-1' else 2350
-                        expected = [move_call('backward', initial, 800, 800),
+                        expected = [move_call('backward', initial, 1000, 1000),
                                     move_call('forward', 250, 400, 300),
                                     move_call('backward', 100, 400, 300)]
                         if direction:
-                            speed, accel = (1000, 800) if distance >= 500 else (400, 300)
+                            speed, accel = (2000, 1600) if distance >= 500 else (400, 300)
                             expected.append(move_call(direction, distance, speed, accel))
-                        expected.append(move_call('forward', 2750, 800, 800))
+                        expected.append(move_call('forward', 2750, 1000, 1000))
                         self.assertEqual(env.robot.move_chassis.call_args_list, expected)
                         env.robot.transport.emergency_stop.assert_not_called()
 
@@ -83,7 +83,7 @@ class RouteSpeedProfileTests(unittest.TestCase):
         self.assertEqual(env.robot.move_chassis.call_args_list, [
             move_call('backward', 100, 400, 300),
             move_call('right', 300, 400, 300),
-            move_call('forward', 2750, 800, 800),
+            move_call('forward', 2750, 1000, 1000),
         ])
 
 

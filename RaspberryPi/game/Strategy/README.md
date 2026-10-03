@@ -6,13 +6,10 @@
 
 ## 当前调用链
 
-2026-10-02 [运动规划模块](optimizations/MOTION_PLANNING.md)由 `--enable-motion-planning` 显式开启，默认关闭。
-新增 [参数化位置间导航](navigation/README.md)：实际抓取结束位置可直接生成离场路线，
-统一处理通道、坡道、整车包络和墙面余量。PlanA/PlanB 开启运动规划后，原路线终点接入同一个
-`FieldPlanner / CompetitionMotion / PositionTracker`；默认使用现有 CAD 和连续编码器/IMU。
-`navigation.recipe` 只读取原路线终点及操作边界，不使用局部轨迹的曲线或控制器。
-可选的已标定视觉导航仍通过 `--navigation-config` 选择。
-
+2026-10-03 [运动规划模块](optimizations/MOTION_PLANNING.md)采用唯一局部动作优化链路。
+--enable-motion-planning开启；单段移动保持原控制，连续移动/转向保持终点和关键经过区域并平滑衔接。
+Tag6持续修正默认关闭，运输平滑到原目标后执行原Tag对准和偏置；额外--enable-moving-tag6才合并末段。
+--disable-moving-tag6可独立关闭该模块。建筑视觉仍确认最终位置。无需名义地图起点或启动Tag。
 ```text
 main.py
   → plans：PlanA/PlanB 或独立功能流程，生成 ActionSpec 列表
@@ -37,7 +34,7 @@ competition.py 已删除。控制算法保留在独立控制模块，那里没�
 | flows/routes.py | 去某区的标定路线及编码器补偿；路线可内部包含多段运动 |
 | flows/factory.py、transitions.py | 参数/能力验证、动作绑定、抓取/检查/Build 专门衔接与少块回补 |
 | flows/curves.py、control/trajectory.py | 保留路线出口和接墙约束，执行局部连续曲线及平移旋转 |
-| navigation/recipe.py、odometry.py | 原路线终点接入完整路径/速度规划；在整局所有遥测帧上维护连续位置 |
+| optimizations/local_routes.py、tag_approach.py | 原动作局部等价平滑、行进Tag6修正与后续步骤一次性接管 |
 | execution/ | 通用 Action/ActionFlow、编译、段替换、取消、盲移与带速度视觉接管 |
 | transition_config.py | 加载逐轮抓取与逐路线的现场标定；未提供的项保持原执行方式 |
 | controllers.py | 底盘、靠墙、方块/Tag 对准等可复用控制；不决定比赛顺序 |
@@ -84,9 +81,8 @@ PlanB 仍采用固定批次，没有“已抢空所有材料”的感知结束�
 抓取→下一块的盲移及带速度视觉接管、最后一抓→退离及缺块回补、紫块抓取→转场、
 数量检查→退离、Build→返程重叠、局部连续曲线、动作会话、相机旧帧隔离、故障后关闭执行。
 这些衔接已接入真实动作注册表；五类跨动作衔接默认全部关闭，需启动参数显式开启。
-新增抓取衔接还需加载标定或显式试跑参数；曲线参数继续由标定文件提供。
-运动规划默认把原路线的横平竖直动作转换为局部连续轨迹，15 类路线复用原参数与实测补偿，使用编码器和 IMU。
-无需全场 Tag 定位或额外 JSON。`--navigation-config` 另行选择全场导航，详见[规划模块](optimizations/MOTION_PLANNING.md)。
+新增抓取衔接还需加载标定或显式试跑参数。19类路线统一派发，单动作复用原控制、复合动作局部平滑。
+Tag6仅在显式开启持续修正模块后参与运输末段；旧curves字段保留文件兼容，详见[规划模块](optimizations/MOTION_PLANNING.md)。
 数量检查恢复期间只重叠原有直线后退，完成恢复后再执行剩余运输路线。
 运动规划默认关闭，由 `--enable-motion-planning` 独立开启、`--classic-motion` 独立关闭；
 快速对准默认关闭，由 `--enable-fast-alignment` 独立开启、`--disable-fast-alignment` 独立关闭。

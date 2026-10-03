@@ -1,4 +1,4 @@
-"""Pluggable route optimization with a classic, pre-motion fallback.
+"""One competition optimizer: original local commands plus moving Tag6 guidance.
 
 prepare() must not command hardware. Once an optimized operation starts, any
 exception propagates to the existing emergency-stop path; never replay classic
@@ -17,67 +17,41 @@ class PreparedMotion:
             raise ValueError('prepared motion requires a backend and callable')
 
 
-class CalibratedCurves:
-    """Existing curve implementation remains one interchangeable optimizer."""
-    def prepare(self, env, route, profile):
-        calibration=env.transition_config.curves.get(f'{profile}/{route}')
-        if calibration is None:
-            return None
-        from ..flows.curves import run_curve
-        return PreparedMotion('calibrated_curve',lambda:run_curve(env,route,profile,calibration))
-
-
-class FieldNavigation:
-    """Use the goal navigator for explicitly mapped competition routes.
-
-    bindings maps profile/route to a read-only request callback. It returns
-    (source Location, target Location, measured start Pose), or None when its
-    localization/operation contract is unavailable. The adapter factory binds
-    a calibrated RobotNavigation to this execution context. No nominal start
-    is silently substituted for a missing measured pose.
-    """
-    def __init__(self, bindings, adapter_factory):
-        self.bindings=dict(bindings)
-        if not callable(adapter_factory) or any(not callable(v) for v in self.bindings.values()):
-            raise ValueError('field navigation requires request callbacks and an adapter factory')
-        self.adapter_factory=adapter_factory
-
-    def prepare(self, env, route, profile):
-        request=self.bindings.get(f'{profile}/{route}')
-        if request is None: return None
-        values=request(env)
-        if values is None: return None
-        source,target,pose=values
-        from ..navigation import Location, Pose
-        if not isinstance(source,Location) or not isinstance(target,Location) or not isinstance(pose,Pose):
-            raise ValueError('field route needs operation locations and measured pose')
-        adapter=self.adapter_factory(env)
-        planned=adapter.prepare(source,target,actual_start=pose)
-        return PreparedMotion('field_navigation',lambda:adapter.execute(planned))
-
-
 class MotionPlanning:
-    def __init__(self, *, enabled=True, optimizers=None):
-        from ..navigation.competition import CompetitionRoutes
-        from ..navigation.recipe import RecipeRoutes
+    def __init__(self, *, enabled=True, moving_tag6_enabled=False):
+        from .local_routes import LocalRoutes
         if type(enabled) is not bool: raise ValueError('motion planning switch must be boolean')
+        if type(moving_tag6_enabled) is not bool: raise ValueError('moving Tag6 switch must be boolean')
+        if moving_tag6_enabled and not enabled: raise ValueError('moving Tag6 requires motion planning')
         self.enabled=enabled
-        self.optimizers=tuple(optimizers) if optimizers is not None else (CompetitionRoutes(), RecipeRoutes())
-        if any(not callable(getattr(item,'prepare',None)) for item in self.optimizers):
-            raise TypeError('optimizer must implement prepare')
+        self.moving_tag6_enabled=moving_tag6_enabled
+        self._routes=LocalRoutes()
 
     def start(self, env, plan):
         if self.enabled:
-            for optimizer in self.optimizers:
-                start=getattr(optimizer,'start',None)
-                if start is not None:
-                    start(env,plan)
+            self._routes.configure(plan, moving_tag6_enabled=self.moving_tag6_enabled)
 
     def close(self, env):
-        for optimizer in self.optimizers:
-            close=getattr(optimizer,'close',None)
-            if close is not None:
-                close(env)
+        self._routes.completed_actions.clear()
+
+    def consume_completed(self, name):
+        return self.enabled and self._routes.consume_completed(name)
+
+    def group_steps(self, steps):
+        from .route_chain import grouped_steps
+        return grouped_steps(steps,enabled=self.enabled)
+
+    def run_chain(self, env, steps):
+        from .route_chain import prepare_chain
+        if not self.enabled:
+            raise RuntimeError('route fusion requires motion planning')
+        env.context.check_active()
+        selected=prepare_chain(self._routes,env,steps)
+        diagnostics=getattr(env.robot,'diagnostics',None)
+        if diagnostics is not None:
+            diagnostics.write('motion_backend_selected',route='plan_b_first',
+                profile=steps[-1].profile,backend=selected.backend)
+        return selected.execute()
 
     def run(self, env, route, profile, *, classic_routes=None):
         if classic_routes is None:
@@ -88,17 +62,11 @@ class MotionPlanning:
             if diagnostics is not None:
                 diagnostics.write('motion_backend_selected',route=route,profile=profile,backend=backend)
         env.context.check_active()
-        selected=None
-        if self.enabled:
-            for optimizer in self.optimizers:
-                selected=optimizer.prepare(env,route,profile)
-                if selected is not None:
-                    if not isinstance(selected,PreparedMotion): raise TypeError('invalid prepared motion')
-                    break
-        if selected is None:
-            reason='disabled' if not self.enabled else 'no_applicable_calibration_or_binding'
-            record(f'classic:{reason}')
+        if not self.enabled:
+            record('classic:disabled')
             return classic_routes[route](env,profile)
+        selected=self._routes.prepare(env,route,profile)
+        if not isinstance(selected,PreparedMotion): raise TypeError('local optimizer did not prepare a route')
         record(selected.backend)
         env.context.check_active()
         return selected.execute()

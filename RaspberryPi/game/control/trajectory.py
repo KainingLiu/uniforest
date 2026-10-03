@@ -58,6 +58,7 @@ class TrajectoryProfile:
     max_telemetry_age_s: float
     route_derived: bool = False
     segment_speeds_mm_s: tuple = ()
+    corner_tangent_deviation_mm: float = 40.0
 
     def validate(self):
         if type(self.route_derived) is not bool or type(self.validated) is not bool:
@@ -109,6 +110,8 @@ class CubicRoute:
     """
     def __init__(self, points, profile, initial_velocity=BodyVelocity()):
         profile.validate()
+        self.profile = profile
+        self.initial_velocity = initial_velocity
         self.points = tuple(points)
         if len(self.points) < 2 or any(
                 not isinstance(p, Waypoint) or not _finite(_components(p))
@@ -129,8 +132,11 @@ class CubicRoute:
                 raise ValueError('adjacent duplicate waypoints are invalid')
             duration = max(1.5 * distance / speed_limit,
                            1.5 * angle / profile.max_yaw_speed_deg_s,
-                           2 * math.sqrt(distance / profile.max_accel_mm_s2),
-                           2 * math.sqrt(angle / profile.max_yaw_accel_deg_s2),
+                           # A cubic zero-endpoint-velocity segment peaks at
+                           # 6*d/T^2 acceleration. The former 4*d/T^2 estimate
+                           # outran the controller when cruise rose to 2 m/s.
+                           math.sqrt(6 * distance / profile.max_accel_mm_s2),
+                           math.sqrt(6 * angle / profile.max_yaw_accel_deg_s2),
                            profile.control_period_s)
             self.knots.append(self.knots[-1] + duration)
         self.tangents = [_components(initial_velocity)]
@@ -144,7 +150,7 @@ class CubicRoute:
                 tangent=(tangent[0]*translation_scale,tangent[1]*translation_scale,tangent[2])
             if profile.route_derived:
                 # Bound the generated path's departure from its original line
-                # segments. 40 mm is a software smoothing limit, not surveyed
+                # segments. This is a software smoothing limit, not surveyed
                 # obstacle clearance. Clearance retreats remain separate runs.
                 adjacent = max(self.knots[i]-self.knots[i-1], self.knots[i+1]-self.knots[i])
                 left,right=self.points[i-1],self.points[i+1]
@@ -153,7 +159,8 @@ class CubicRoute:
                 bx,by=right.x_mm-current.x_mm,right.y_mm-current.y_mm
                 straight=ax*bx+ay*by>.99999*math.hypot(ax,ay)*math.hypot(bx,by)
                 limit=(3*min(math.hypot(ax,ay)/(self.knots[i]-self.knots[i-1]),
-                             math.hypot(bx,by)/(self.knots[i+1]-self.knots[i])) if straight else 3*40.0/adjacent)
+                             math.hypot(bx,by)/(self.knots[i+1]-self.knots[i])) if straight else
+                       3*profile.corner_tangent_deviation_mm/adjacent)
                 scale = min(1.0, limit/max(math.hypot(*tangent[:2]), 1e-9))
                 tangent = (tangent[0]*scale, tangent[1]*scale, tangent[2])
                 # A constant-heading entry span must stay constant. Central
@@ -209,7 +216,7 @@ def _limited(velocity, previous, profile, dt, wheel_rpm, *, speed_limit=None):
 
 def follow_trajectory(points, profile, *, read_pose, send_velocity, wheel_rpm,
                       check, emergency_stop, initial_velocity=None,
-                      clock=time.monotonic, sleep=time.sleep):
+                      clock=time.monotonic, sleep=time.sleep, guidance=None):
     """Track a single route; faults raise and latch the caller's emergency stop.
 
     ``check`` must reject cancellation, reconnect generation changes and emergency
@@ -230,6 +237,7 @@ def follow_trajectory(points, profile, *, read_pose, send_velocity, wheel_rpm,
             raise RuntimeError('entry velocity exceeds validated trajectory envelope')
         last_tick, settled_at = started, None
         last_stamp = None
+        reference_time = 0.0
         while True:
             check()
             pose = read_pose()
@@ -248,18 +256,37 @@ def follow_trajectory(points, profile, *, read_pose, send_velocity, wheel_rpm,
             if dt == 0:
                 dt = profile.control_period_s
             last_tick = now
-            target, feedforward = route.sample(elapsed)
+            sample_time = reference_time if profile.route_derived else elapsed
+            target, feedforward = route.sample(sample_time)
+            reference_done = sample_time >= route.duration_s
+            completion_ready = True
+            speed_limit = route.speed_limit_at(sample_time)
+            if guidance is not None:
+                reference = guidance.update(route, sample_time, pose, now)
+                target, feedforward = reference.target, reference.velocity
+                reference_done, completion_ready = reference.finished, reference.ready
+                speed_limit = min(speed_limit, reference.speed_limit_mm_s)
+                if not _finite((*_components(target), *_components(feedforward),speed_limit)) or speed_limit<=0:
+                    raise RuntimeError('invalid visual trajectory reference')
             dx, dy = target.x_mm-pose.x_mm, target.y_mm-pose.y_mm
             yaw_error = target.yaw_deg-pose.yaw_deg
             if (math.hypot(dx, dy) > profile.max_tracking_error_mm
                     or abs(yaw_error) > profile.max_tracking_yaw_error_deg):
                 raise RuntimeError('trajectory tracking error exceeded validated envelope')
-            at_end = (elapsed >= route.duration_s
+            at_end = (reference_done
                       and math.hypot(dx, dy) <= profile.position_tolerance_mm
                       and abs(yaw_error) <= profile.yaw_tolerance_deg)
             if at_end:
                 desired = BodyVelocity()
             else:
+                if profile.route_derived:
+                    # A slower corner/visual envelope slows the reference too,
+                    # preventing a fast nominal clock from running away.
+                    rate=min(1.,max(0.,1-math.hypot(dx,dy)/profile.max_tracking_error_mm),
+                        max(0.,1-abs(yaw_error)/profile.max_tracking_yaw_error_deg),
+                        speed_limit/max(speed_limit,math.hypot(feedforward.vx_mm_s,feedforward.vy_mm_s)))
+                    reference_time += dt*rate
+                    feedforward=BodyVelocity(*(v*rate for v in _components(feedforward)))
                 vx = feedforward.vx_mm_s + profile.position_gain_s*dx
                 vy = feedforward.vy_mm_s + profile.position_gain_s*dy
                 angle = math.radians(pose.yaw_deg)
@@ -267,12 +294,12 @@ def follow_trajectory(points, profile, *, read_pose, send_velocity, wheel_rpm,
                                        -math.sin(angle)*vx + math.cos(angle)*vy,
                                        feedforward.yaw_deg_s + profile.yaw_gain_s*yaw_error)
             command = _limited(desired, previous, profile, dt, wheel_rpm,
-                               speed_limit=route.speed_limit_at(elapsed))
+                               speed_limit=speed_limit)
             check()
             if send_velocity(command) is not True:
                 raise RuntimeError('trajectory velocity send failed')
             previous = command
-            settled = (at_end and command == BodyVelocity()
+            settled = (at_end and completion_ready and command == BodyVelocity()
                        and math.hypot(pose.velocity.vx_mm_s, pose.velocity.vy_mm_s)
                        <= profile.settle_speed_mm_s
                        and abs(pose.velocity.yaw_deg_s) <= profile.settle_yaw_speed_deg_s)
@@ -281,6 +308,8 @@ def follow_trajectory(points, profile, *, read_pose, send_velocity, wheel_rpm,
                     settled_at = pose.received_at
                 if pose.received_at-settled_at >= profile.settle_time_s:
                     check()
+                    if guidance is not None:
+                        guidance.finish()
                     return TrajectoryResult(elapsed, pose, len(route.points)-1)
             else:
                 settled_at = None

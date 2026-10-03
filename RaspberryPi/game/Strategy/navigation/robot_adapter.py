@@ -34,23 +34,17 @@ class RobotNavigation:
     The owner holds the robot-wide strategy lock. A successful building result
     is a precondition for a later Build; navigation never starts the mechanism.
     """
-    def __init__(self,robot,context,planner,calibration,*,building_controller=None,odometry=None):
-        if calibration is not None:
-            calibration.validate()
-        elif odometry is None:
-            raise ValueError('navigation needs calibrated vision or continuous route odometry')
+    def __init__(self,robot,context,planner,calibration,*,building_controller=None):
+        if not isinstance(calibration, NavigationCalibration):
+            raise ValueError('navigation requires measured Tag calibration')
+        calibration.validate()
         self.robot,self.context,self.planner=robot,context,planner
         self.calibration,self.building_controller=calibration,building_controller
-        self.odometry=odometry
         self.pose=None; self.previous=None; self.history=deque()
         self.locked_building=None
 
     def _feedback(self):
         self.context.check_active()
-        if self.odometry is not None:
-            result=self.odometry.snapshot()
-            self.pose=result.pose
-            return result
         telem,received,_,_=self.robot.inspection_link_snapshot()
         counts=tuple(m.cumulative_pos for m in telem.motors)
         if len(counts)!=4 or not math.isfinite(telem.yaw_deg):
@@ -71,8 +65,6 @@ class RobotNavigation:
         return MotionFeedback(self.pose,self.robot.chassis.measured_body_velocity(),received)
 
     def _observations(self,goal):
-        if self.calibration is None:
-            return []
         result=[]; field=self.robot.field_pose
         if field is not None and field.valid and field.calibrated and field.captured_monotonic>0:
             tag=next((t for t in field.tag_solutions if t.tag_id==6),None)
@@ -122,10 +114,7 @@ class RobotNavigation:
 
     def prepare_between(self, start, goal):
         """Plan a recipe endpoint from an observed field pose without movement."""
-        if self.calibration is not None:
-            self.calibration.validate()
-        else:
-            self.odometry.snapshot()
+        self.calibration.validate()
         self.context.check_active()
         telem,_,_,_=self.robot.inspection_link_snapshot()
         velocity=self.robot.chassis.measured_body_velocity()
@@ -138,10 +127,7 @@ class RobotNavigation:
     def execute(self,route):
         # Planning may take time. Recheck mechanism, stationary entry and link
         # immediately before using its result; never continue a stale session.
-        if self.calibration is not None:
-            self.calibration.validate()
-        else:
-            self.odometry.snapshot()
+        self.calibration.validate()
         self.context.check_active()
         telem,_,_,_=self.robot.inspection_link_snapshot()
         velocity=self.robot.chassis.measured_body_velocity()

@@ -26,10 +26,10 @@ class AdaptiveBlindProfile:
     settled_speed_mm_s: float = 20.0
     frame_timeout_s: float = .3
     max_prediction_age_s: float = 12.0
-    fallback_distance_mm: float = 300.0
+    fallback_distance_mm: float = 200.0
     continuous_pitch_mm: float = 100.0
-    observed_distance_limit_mm: float = 100.0
-    unseen_search_mm: float = 300.0
+    observed_distance_limit_mm: float = 200.0
+    unseen_search_mm: float = 200.0
     confirm_frames: int = 2
     validated: bool = False
     trial_enabled: bool = False
@@ -49,7 +49,8 @@ class AdaptiveBlindProfile:
                 or self.max_prediction_age_s < self.frame_timeout_s
                 or self.max_yaw_change_deg > 10
                 or not self.min_gap_mm <= self.continuous_pitch_mm <= self.max_gap_mm
-                or not self.continuous_pitch_mm <= self.observed_distance_limit_mm < self.unseen_search_mm):
+                or not self.continuous_pitch_mm <= self.observed_distance_limit_mm <= self.unseen_search_mm
+                or self.fallback_distance_mm > self.unseen_search_mm):
             raise ValueError('invalid adaptive observation limits')
 
 

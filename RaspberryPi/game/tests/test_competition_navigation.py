@@ -1,4 +1,4 @@
-"""Real competition dispatch and planner/follower checks using synthetic geometry."""
+"""Standalone field-planner adapter checks; competition entry uses local smoothing."""
 import contextlib
 from dataclasses import replace
 import io
@@ -16,7 +16,7 @@ from control.chassis import Chassis, LATERAL_DISTANCE_SCALE
 from control.trajectory import BodyVelocity, Waypoint
 from Strategy.flows.curves import RouteGeometry, CURVE_ROUTES
 from Strategy.navigation import Pose, NavigationError
-from Strategy.navigation.competition import CompetitionNavigationConfig, measured_pose
+from Strategy.navigation.competition import CompetitionNavigationConfig, CompetitionRoutes, measured_pose
 from Strategy.navigation.robot_adapter import NavigationCalibration, RobotNavigation
 from Strategy.plans import PLANS
 from Strategy.optimizations.motion_planning import MotionPlanning
@@ -50,7 +50,9 @@ def environment():
     env, control, events, result = fixture('ground_tag_offset', 'ground-1',
         config_overrides={'post_tag_lateral_right_mm': 80., 'post_tag_lateral_direction': 'right'})
     env.transition_config = replace(env.transition_config, curves={}, navigation=synthetic_config())
-    env.motion_planning = MotionPlanning()
+    backend = CompetitionRoutes()
+    env.motion_planning = SimpleNamespace(run=lambda owner, name, selected, **kw:
+        backend.prepare(owner,name,selected).execute())
     env.robot.field_pose = field_pose()
     env.robot.diagnostics = SimpleNamespace(write=Mock())
     env.robot.actions._action_lock = threading.Lock()
@@ -69,7 +71,9 @@ class CompetitionPlanningTests(unittest.TestCase):
             with self.subTest(route=route, profile=profile):
                 env, _, _, _ = fixture(route, profile)
                 env.transition_config = replace(env.transition_config, curves={}, navigation=config)
-                env.motion_planning = MotionPlanning()
+                backend = CompetitionRoutes()
+                env.motion_planning = SimpleNamespace(run=lambda owner, name, selected, **kw:
+                    backend.prepare(owner,name,selected).execute())
                 env.robot.field_pose = field_pose()
                 env.robot.diagnostics = SimpleNamespace(write=Mock())
                 planned = SimpleNamespace(nominal_length_mm=100., candidate_count=1)
@@ -145,8 +149,7 @@ class CompetitionPlanningTests(unittest.TestCase):
         env.transitions.inspections['synthetic'] = object()
         with patch('Strategy.flows.routes.ROUTES', {'ground_tag_offset': Mock(return_value='overlap')}):
             self.assertEqual(env.run_route('ground_tag_offset', 'ground-1'), 'overlap')
-        env.robot.diagnostics.write.assert_any_call('motion_backend_selected', route='ground_tag_offset',
-            profile='ground-1', backend='classic:mechanism_overlap')
+        env.robot.chassis.follow_trajectory.assert_not_called()
 
     def test_hardware_entry_requires_idle_mechanism_and_stationary_chassis(self):
         for fault in ('moving', 'busy'):
@@ -210,26 +213,22 @@ class CompetitionLaunchTests(unittest.TestCase):
             robot.assert_not_called()
         return output.getvalue(), errors.getvalue()
 
-    def test_local_optimization_is_available_without_field_configuration(self):
-        from Strategy.cli import load_execution_config
+    def test_local_planning_previews_without_configuration_or_tag_before_robot_creation(self):
         for entry in (main, task2_main):
-            config = load_execution_config(entry.parse_args(['--enable-motion-planning']), PLANS['PlanA'])
-            self.assertTrue(config.motion_planning_enabled)
-            self.assertIsNone(config.navigation)
+            output, _ = self.launch(entry, ['--enable-motion-planning', '--show-plan'], 0)
+            self.assertIn('local route smoothing', output)
 
-    def test_example_previews_both_plans_but_cannot_be_used_as_field_calibration(self):
+    def test_local_preview_and_standalone_map_data_remain_distinct(self):
         for plan in ('PlanA', 'PlanB'):
-            flags = ['--strategy', plan, '--enable-motion-planning', '--navigation-config', str(EXAMPLE)]
+            flags = ['--strategy', plan, '--enable-motion-planning']
             output, _ = self.launch(main, [*flags, '--show-plan'], 0)
-            self.assertIn('UNVERIFIED; preview only', output)
+            self.assertIn('No global-map start', output)
             for step in PLANS[plan].steps:
                 if step.kind == 'navigate':
                     route = step.parameters['route']
-                    backend = 'field_navigation' if route in CURVE_ROUTES else 'classic:contact_or_visual_barrier'
-                    self.assertIn(f'{step.profile}/{route}: {backend}', output)
-            _, error = self.launch(main, flags, 2)
-            self.assertIn('calibration record required', error)
-        self.launch(task2_main, ['--navigation-config', str(EXAMPLE), '--enable-motion-planning', '--show-plan'], 0)
+                    self.assertIn(f'{step.profile}/{route}: local_route:existing_recipe', output)
+        with self.assertRaises(ValueError):
+            CompetitionNavigationConfig.load(EXAMPLE).calibration.validate()
 
 
 if __name__ == '__main__':

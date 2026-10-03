@@ -54,7 +54,7 @@ def consume(observer, t=10.02, **changes):
 
 def distance(p, observation, **changes):
     values = dict(position_mm=200., yaw_deg=0., now=10.1,
-                  link_epoch=1, stop_generation=0, expected_pose_epoch=4, legacy_distance_mm=80.)
+                  link_epoch=1, stop_generation=0, expected_pose_epoch=4, legacy_distance_mm=100.)
     values.update(changes)
     return expected_blind_distance(p, observation, **values)
 
@@ -75,15 +75,15 @@ class NeighborTests(unittest.TestCase):
         observe(observer, 10.02, 0.)
         sample = consume(observer)
         self.assertEqual(sample.source, 'unseen_next_search')
-        self.assertEqual(distance(profile(), sample), (400., 'unseen_next_search'))
-        self.assertGreater(distance(profile(), sample)[0], profile().observed_distance_limit_mm)
+        self.assertEqual(distance(profile(), sample), (200., 'unseen_next_search'))
+        self.assertEqual(distance(profile(), sample, position_mm=230.)[0], 170.)
 
-    def test_unresolved_or_cropped_scene_cannot_trigger_long_search(self):
+    def test_current_cube_without_complete_lookahead_uses_bounded_search(self):
         observer = NeighborObserver(profile())
         observe(observer, 10., 0., complete=False)
         observe(observer, 10.02, 0., complete=False)
-        self.assertIsNone(consume(observer))
-        self.assertEqual(distance(profile(), None)[0], 0.)
+        self.assertEqual(distance(profile(), consume(observer))[0], 200.)
+        self.assertEqual(distance(profile(), None), (200., 'no_confirmed_neighbor_search'))
 
     def test_evidence_source_change_requires_new_confirmation(self):
         observer = NeighborObserver(profile())
@@ -134,7 +134,7 @@ class NeighborTests(unittest.TestCase):
                 stopped=True, acceleration_mm_s2=200.)
         self.assertIsNone(consume(observer))
 
-    def test_incomplete_scene_invalidates_a_confirmed_neighbor(self):
+    def test_incomplete_scene_flag_does_not_discard_a_confirmed_visible_neighbor(self):
         observer = NeighborObserver(profile())
         observe(observer, 10., 100.)
         observe(observer, 10.02, 100.)
@@ -143,7 +143,7 @@ class NeighborTests(unittest.TestCase):
         observer.observe(result, block(0.), position_mm=200., speed_mm_s=0., target_x_mm=0.,
             yaw_deg=0., now=10.04, link_epoch=1, stop_generation=0, telemetry_id=10040,
             stopped=True, acceleration_mm_s2=200.)
-        self.assertIsNone(consume(observer, 10.04))
+        self.assertIsNotNone(consume(observer, 10.04))
 
     def test_target_switch_or_candidate_jump_restarts_confirmation(self):
         for target, next_x in ((100., 200.), (0., 200.)):
@@ -171,18 +171,18 @@ class NeighborTests(unittest.TestCase):
         observe(observer, 10., 100.)
         observe(observer, 10.02, 100.)
         sample = consume(observer)
-        for kw in ({'now':16.}, {'now':9.}, {'yaw_deg':5.}, {'position_mm':310.},
+        for kw in ({'now':23.}, {'now':9.}, {'yaw_deg':5.}, {'position_mm':310.},
                    {'link_epoch':2}, {'stop_generation':1}, {'expected_pose_epoch':5}):
             with self.subTest(kw=kw):
                 self.assertEqual(distance(profile(), sample, **kw)[0], 0.)
-        self.assertEqual(distance(profile(), None)[0], 0.)
+        self.assertEqual(distance(profile(), None)[0], 200.)
         self.assertEqual(distance(profile(fallback_distance_mm=40), None)[0], 40.)
 
     def test_invalid_profile_fails_before_observation(self):
         for kw in ({'min_gap_mm':600}, {'frame_timeout_s':.6}, {'confirm_frames':1},
                    {'fallback_distance_mm':-1}, {'camera_x_to_lateral_scale':float('nan')},
                    {'max_yaw_change_deg':11}, {'validated':1}, {'unseen_search_mm':100.},
-                   {'observed_distance_limit_mm':90.}):
+                   {'observed_distance_limit_mm':90.}, {'fallback_distance_mm':201.}):
             with self.subTest(kw=kw), self.assertRaises(ValueError):
                 profile(**kw)
 
@@ -263,13 +263,14 @@ class AdaptiveTransitionTests(unittest.TestCase):
 
     def test_distance_adapts_both_ways_and_accounts_for_intervening_motion(self):
         distances = []
-        for x in (90., 150.):
+        for x in (90., 150., 300.):
             f = self.fixture()
             seen = self.run_pair(f, x, change_position=10.)
             distances.append(seen[0].max_distance_mm-f.env.transition_config.pickup('ground-1', 'grap3').next_blind.braking_margin_mm)
-            self.assertAlmostEqual(distances[-1], min(100., x-10-20-5-(x-10)*math.sin(math.radians(2))))
+            self.assertAlmostEqual(distances[-1], min(200., x-10-20-5-(x-10)*math.sin(math.radians(2))))
         self.assertLess(distances[0], 80.)
         self.assertGreater(distances[1], 80.)
+        self.assertEqual(distances[2], 200.)
 
     def test_continuous_and_unseen_branches_reach_transition_with_distinct_distances(self):
         continuous = self.fixture()
@@ -277,7 +278,7 @@ class AdaptiveTransitionTests(unittest.TestCase):
         # The synthetic calibration has 5 mm braking reserve. Travel and
         # stopping reserve must remain separate for both branches.
         self.assertEqual(self.run_pair(continuous, 0., continuous=True)[0].max_distance_mm, 105.)
-        self.assertEqual(self.run_pair(unseen, 0.)[0].max_distance_mm, 405.)
+        self.assertEqual(self.run_pair(unseen, 0.)[0].max_distance_mm, 205.)
 
     def test_original_hard_limit_and_phase_budget_are_preserved(self):
         f = self.fixture()
@@ -289,11 +290,16 @@ class AdaptiveTransitionTests(unittest.TestCase):
         f.control._search_position_mm = 980.
         self.assertEqual(self.run_pair(f, 200.)[0].max_distance_mm, 20.)
 
-    def test_missing_preview_skips_blind_and_uses_ordinary_acquisition(self):
+    def test_missing_preview_uses_bounded_search_before_ordinary_acquisition(self):
         f = self.fixture()
+        seen = []
+        def bounded(p, **kw):
+            seen.append(p.max_distance_mm)
+            kw['stop']()
+            return SimpleNamespace(status=BlindStatus.BOUND_REACHED)
         f.run([action('grab_cube', 'grab.1', method='grap3', index=1),
-               action('acquire_cube', 'find.2', index=2)])
-        self.assertNotIn(('blind',), f.events)
+               action('acquire_cube', 'find.2', index=2)], blind=bounded)
+        self.assertEqual(seen, [205.])
         f.warm.assert_not_called()
         f.control._find_cube.assert_called_once()
 
@@ -315,9 +321,12 @@ class ConfigurationTests(unittest.TestCase):
             if p.next_blind is not None:
                 self.assertFalse(p.next_adaptive.validated)
                 self.assertTrue(p.next_adaptive.trial_enabled)
-                self.assertEqual(p.next_blind.max_distance_mm, 420.)
+                self.assertEqual(p.next_blind.max_distance_mm, 220.)
                 self.assertEqual(p.next_adaptive.continuous_pitch_mm, 100.)
-                self.assertEqual(p.next_adaptive.unseen_search_mm, 400.)
+                self.assertEqual(p.next_adaptive.observed_distance_limit_mm, 200.)
+                self.assertEqual(p.next_adaptive.unseen_search_mm, 200.)
+                self.assertEqual(p.next_adaptive.fallback_distance_mm, 200.)
+                self.assertEqual(p.next_blind.cruise_speed_mm_s, 160.)
 
     def test_validated_config_requires_fast_alignment_and_valid_adaptive_profile(self):
         helper = test_transition_config.TransitionConfigTests()

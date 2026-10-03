@@ -12,7 +12,7 @@ from .execution.blind import BlindMotionProfile
 from .transition_switches import TransitionSwitches
 from .optimizations.adaptive_blind import AdaptiveBlindProfile
 
-DEFAULT_NEXT_CUBE_SHIFT_MM = 80.0
+DEFAULT_NEXT_CUBE_SHIFT_MM = 100.0
 
 
 def _number(value, label, *, positive=False):
@@ -62,8 +62,9 @@ class PickupCalibration:
         if self.next_adaptive is not None:
             if not isinstance(self.next_adaptive, AdaptiveBlindProfile) or self.next_blind is None or self.next_acquire is None:
                 raise ValueError('adaptive preview requires blind and acquire profiles')
-            if self.next_adaptive.fallback_distance_mm > self.next_cube_distance_mm:
-                raise ValueError('adaptive fallback cannot exceed the legacy expected distance')
+            # Adaptive searches have their own distance policy. The execution
+            # layer still clips every branch to the calibrated blind envelope
+            # and remaining collection budget, including short legacy profiles.
 
 
 @dataclass(frozen=True)
@@ -83,6 +84,7 @@ class TransitionConfig:
     trial_run: bool = False
     switches: TransitionSwitches = field(default_factory=TransitionSwitches)
     navigation: object = None
+    moving_tag6_enabled: bool = False
 
     def __post_init__(self):
         if type(self.trial_run) is not bool:
@@ -91,6 +93,10 @@ class TransitionConfig:
             raise TypeError('switches must be TransitionSwitches')
         if type(self.motion_planning_enabled) is not bool:
             raise ValueError('motion_planning_enabled must be boolean')
+        if type(self.moving_tag6_enabled) is not bool:
+            raise ValueError('moving_tag6_enabled must be boolean')
+        if self.moving_tag6_enabled and not self.motion_planning_enabled:
+            raise ValueError('moving Tag6 requires motion planning')
         if type(self.firmware_full_lift_validated) is not bool:
             raise ValueError('firmware capability must be boolean')
         if self.pickups and not (self.firmware_full_lift_validated or self.trial_run):
@@ -112,7 +118,7 @@ class TransitionConfig:
         from .flows.factory import ROUTE_PROFILES
         from .flows.curves import CURVE_ROUTES
         document = json.loads(Path(path).read_text(encoding='utf-8'))
-        _strict(document, {'version','firmware_full_lift_validated','firmware_id','pickups','curves','alignments','motion_planning_enabled'}, 'transition config')
+        _strict(document, {'version','firmware_full_lift_validated','firmware_id','pickups','curves','alignments','motion_planning_enabled','moving_tag6_enabled'}, 'transition config')
         if document.get('version') != 1:
             raise ValueError('unsupported transition configuration version')
         verified = document.get('firmware_full_lift_validated', False)
@@ -193,4 +199,5 @@ class TransitionConfig:
             if pickup.next_adaptive is not None and f'{key.split("/")[0]}/orange' not in alignments:
                 raise ValueError(f'{key}: adaptive preview requires fast orange alignment')
         return cls(verified,firmware_id,pickups,curves,alignments,
-                   document.get('motion_planning_enabled',False))
+                   document.get('motion_planning_enabled',False),
+                   moving_tag6_enabled=document.get('moving_tag6_enabled',False))

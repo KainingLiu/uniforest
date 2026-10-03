@@ -5,7 +5,7 @@ capture, retaining classic navigation. Legacy limits supply the initial values;
 new clearance/uncertainty assumptions remain visible in the diagnostic snapshot.
 """
 from ..settings import PROFILES
-from ..transition_config import TransitionConfig,PickupCalibration
+from ..transition_config import DEFAULT_NEXT_CUBE_SHIFT_MM,TransitionConfig,PickupCalibration
 from ..execution.blind import BlindMotionProfile
 from ..execution.pickup_motion import PickupMotionProfile
 from .fast_alignment import FastAlignmentProfile
@@ -21,10 +21,11 @@ def trial_configuration(*, adaptive_blind=False):
                     braking_margin_mm=20.,telemetry_timeout_s=.2,frame_timeout_s=.3,
                     tick_s=.02,max_command_delay_s=.05,validated=False,trial_enabled=True)
         blind=BlindMotionProfile(direction=1,cruise_speed_mm_s=2*cfg.align_start_speed_mm_s,
-                                 # Longer no-next-target search plus the
-                                 # existing braking reserve, only in this trial.
+                                 # Requested travel plus a separate stopping
+                                 # reserve; existing calibrated JSON is untouched.
                                  max_distance_mm=(adaptive.unseen_search_mm+shared['braking_margin_mm']
-                                                  if adaptive is not None else 100.),
+                                                  if adaptive is not None else
+                                                  DEFAULT_NEXT_CUBE_SHIFT_MM+shared['braking_margin_mm']),
                                  max_duration_s=(8. if adaptive is not None else 4.),**shared)
         acquire=PickupMotionProfile(max_distance_mm=cfg.search_max_distance_mm,
                     max_duration_s=cfg.align_timeout_s,settled_speed_mm_s=20.,**shared)

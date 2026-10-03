@@ -37,7 +37,7 @@ class OrangeLookaheadTests(unittest.TestCase):
     def test_pixels_to_motion_policy_distinguishes_continuous_row_and_empty_next_slot(self):
         for profile in ('default', 'task2_orange'):
             for right, expected, source in ((15., 100., 'continuous_row_pitch'),
-                                            (5., 400., 'unseen_next_search')):
+                                            (5., 200., 'unseen_next_search')):
                 with self.subTest(profile=profile, right=right):
                     image, _ = scene(profile, seam=False, right=right)
                     state = dict(fx=660., fy=410., cx=640., cy=360.)

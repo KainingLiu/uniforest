@@ -89,6 +89,60 @@ class InspectionReplay:
 
 
 class InspectionSessionTests(unittest.TestCase):
+    def test_retreat_collects_frames_while_moving_before_result_and_restoration(self):
+        replay = InspectionReplay(count=0)
+        monitors = []
+        moving = False
+        original_snapshot = replay.inspection_link_snapshot
+
+        def snapshot():
+            telem, *rest = original_snapshot()
+            telem.motors = [SimpleNamespace(speed_rpm=100 if moving else 0)] * 4
+            return telem, *rest
+
+        @contextlib.contextmanager
+        def monitor(check):
+            monitors.append(check)
+            try:
+                check()
+                yield
+                check()
+            finally:
+                monitors.pop()
+
+        replay.inspection_link_snapshot = snapshot
+        replay.chassis.monitor_action = monitor
+        def retreat():
+            nonlocal moving
+            moving = True
+            replay.events.append('retreat_start')
+            for _ in range(60):
+                replay.sleep(.02)
+                for check in monitors:
+                    check()
+            replay.events.append('retreat_done')
+            moving = False
+
+        with replay.patched():
+            session = begin_carried_inspection(replay)
+            self.assertEqual(session.inspect(chassis_followup=retreat), 0)
+            self.assertEqual(len(session.observations), 8)
+            sampling = next(c.kwargs for c in replay.diagnostics.write.call_args_list
+                            if c.args[0] == 'inspection_sampling')
+            self.assertEqual(sampling['moving_frames'], 8)
+            self.assertTrue(sampling['overlapping_retreat'])
+            lower = next(i for i, e in enumerate(replay.events)
+                         if isinstance(e, tuple) and e[:3] == ('servo', 1, 120))
+            restore = next(i for i, e in enumerate(replay.events)
+                           if isinstance(e, tuple) and e[:3] == ('servo', 1, 90))
+            self.assertLess(replay.events.index('retreat_start'), lower)
+            self.assertLess(lower, replay.events.index('retreat_done'))
+            self.assertLess(replay.events.index('retreat_done'), restore)
+            session.finish_restore()
+            session.close()
+        self.assertFalse(replay.actions._action_lock.locked())
+        replay.transport.emergency_stop.assert_not_called()
+
     def test_count_returns_before_restore_and_route_holds_mechanism_lock(self):
         replay = InspectionReplay()
         with replay.patched():

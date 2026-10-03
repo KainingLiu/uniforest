@@ -59,7 +59,7 @@ def main():
     results['strategy'] = run('Strategy composition', [
         sys.executable, '-m', 'unittest', 'tests.test_strategy_composition',
         'tests.test_plan_b', 'tests.test_functional_operations',
-        'tests.test_route_speed_profiles', 'tests.test_task5', '-q'])
+        'tests.test_route_speed_profiles', 'tests.test_terrain_speeds', 'tests.test_task5', '-q'])
     results['execution'] = run('Execution and camera contracts', [
         sys.executable, '-m', 'unittest', 'tests.test_execution',
         'tests.test_action_sessions', 'tests.test_camera_pose_gate',
@@ -85,9 +85,10 @@ def main():
         sys.executable, '-m', 'unittest', 'tests.test_visual_fallback', '-q'])
     results['navigation'] = run('Field navigation and moving visual localization', [
         sys.executable, '-m', 'unittest', 'tests.test_field_navigation',
-        'tests.test_navigation_motion','tests.test_motion_planning_plugin','tests.test_position_tracking',
-        'tests.test_competition_navigation','tests.test_recipe_navigation',
-        'tests.test_local_routes','tests.test_enabled_route_regression', '-q'])
+        'tests.test_navigation_motion','tests.test_local_planning_entry','tests.test_moving_tag_approach',
+        'tests.test_moving_tag6_switch','tests.test_position_tracking',
+        'tests.test_competition_navigation',
+        'tests.test_local_routes','tests.test_route_chain','tests.test_enabled_route_regression', '-q'])
     firmware = (ROOT.parent.parent / 'Uniforest_A' / 'game'
                 if ROOT.name == 'game' else ROOT.parent / 'Uniforest_A')
     if args.firmware:

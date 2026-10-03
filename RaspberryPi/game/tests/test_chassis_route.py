@@ -40,18 +40,30 @@ class RouteReplay:
             self.sample(*item)
         self.after_sample()
 
-    def run(self, *, route_mode=True, distance=100.0):
+    def run(self, *, route_mode=True, distance=100.0, speed=400.0):
         with patch('control.chassis.time.monotonic', side_effect=lambda: self.now):
             self.sample(0, [0] * 4)
             return self.chassis._move_linear(
                 int(distance * self.scale * COUNTS_PER_CM / 10.0),
-                list(self.signs), self.chassis._mm_s_to_rpm(400), self,
+                list(self.signs), self.chassis._mm_s_to_rpm(speed), self,
                 lambda: self.chassis.telem, distance, sleep_fn=self.sleep,
                 cancel_event=self.cancel, distance_scale=self.scale,
                 hold_ms=0, accel_ms=300, route_mode=route_mode)
 
 
 class ChassisRouteTests(unittest.TestCase):
+    def test_route_speed_ceiling_includes_position_feedback(self):
+        for speed in (1000.,2000.):
+            with self.subTest(speed=speed):
+                replay=RouteReplay([(0,[0]*4)]*90+[(6000,[0]*4)])
+                result=replay.run(distance=6000,speed=speed)
+                ceiling=replay.chassis._mm_s_to_rpm(speed)
+                peaks=[abs(sum(v*sign for v,sign in zip(rpm,replay.signs))/4)
+                       for _,rpm in replay.commands]
+                self.assertFalse(result.timed_out)
+                self.assertGreater(max(peaks),ceiling*.9)
+                self.assertLessEqual(max(peaks),ceiling+.5)
+
     def test_arrival_brakes_all_wheels_but_waits_for_slow_wheel_feedback(self):
         replay = RouteReplay([(94, [40, 40, 40, 70], 1.0)] * 5
                              + [(94, [0] * 4, 1.0)])

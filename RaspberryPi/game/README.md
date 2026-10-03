@@ -2,6 +2,12 @@
 
 本文件只说明 game 实现的启动、优化开关、日志和验证要求。
 
+2026-10-03：此处 game 指主分支内嵌模块。默认固定盲移期望 100 mm；自适应连续块排 100 mm，
+已定位下一块最多 200 mm，未见或未建立下一块预观测时搜索 200 mm。内置试跑速度保持 160 mm/s，
+固定/自适应包络分别 120/220 mm，均含 20 mm 制动余量。现场文件显式参数与硬上限保持。
+这些距离为待实机确认的期望或上限；提前视觉接管可缩短实走距离。后退检查及返回限制见
+[动作衔接](Strategy/TRANSITIONS.md#后退检查与少块返回当前源码核对)。
+
 ## 选择 game
 
 在树莓派的上层 `RaspberryPi/` 目录，通过参数显式启动 game：
@@ -41,6 +47,11 @@ python main.py --strategy PlanA --show-plan
 
 策略可换 `PlanB`；`--list-flows` 列出流程。
 
+2026-10-03路线巡航目标：平地最高2000 mm/s（加速1600 ms），上下坡1000 mm/s（加速1000 ms）。
+适用于原路线和局部规划；坡道按既有Task2两段整段限速，未使用姿态自动判断坡度。
+短退/末端接近400、搜索/贴墙300、抓取压墙150、盲移160 mm/s保持。
+这些是软件目标上限，短段和转弯会降速，新速度尚待实机验证；`--show-plan`会显示当前值。
+
 ### 优化模块
 
 **七项优化全部默认关闭，各自独立控制。** 加载标定文件或 `--trial-optimizations` 只提供参数，不会自动开启。
@@ -57,8 +68,8 @@ python main.py --strategy PlanA --show-plan
 
 只添加所需模块的开启参数即可；其余保持关闭。同一模块的开/关参数互斥。
 `--enable-transitions` / `--disable-transitions` 是前五项的批量开关，后两项始终独立。
-运动规划使用原路线计算的起终点，交给完整 `FieldPlanner` 搜索曲线，再执行其速度规划与位置 PID；
-PlanA/PlanB 复用现有场地图和编码器/IMU，**无需额外 JSON 或 Tag 标定**。
+运动规划统一使用原路线局部平滑：单段移动继续复用原控制器，连续移动转向按局部坐标等价合并。
+不需要全场地图或Tag起点；前往Tag6的末段可边识别边修正，并融合原横移偏置。最终建筑位置仍由建筑视觉确认。
 抓取衔接和快速对准缺少必需参数时同样在连接机器人前报错。
 
 ### 常用组合
@@ -77,15 +88,13 @@ python main.py --strategy PlanA --trial-optimizations \
   --show-plan
 ```
 
-此命令无需额外 JSON。路线使用完整曲线规划；抓取和快速对准的内置试跑参数仍标记为未验证。
-完整规划器目前要求每段入口底盘静止、机构空闲；与提前移动衔接混用时会检查该条件，失败会停止，
-不会静默改用旧路线。首次验证建议仅开启运动规划。
-预览确认后，去掉 `--show-plan` 才执行。
+此命令不需要额外地图JSON，试跑抓取参数及新平滑/Tag接管限制仍待现场验证。
+去掉--show-plan才执行动作。机构监督、净空退离和停止条件保持，原单段动作不因缺Tag被拒绝。
 前五个开启参数也可简写为 `--enable-transitions`，运动规划和快速对准的开启参数仍需保留。
 
 **当前树莓派没有 `Strategy/field-transitions.json`，请使用上面的内置试跑命令。**
 后续完成现场标定后，可用 `--transition-config 实际文件路径` 替换 `--trial-optimizations`；
-标定需包含所选轮次的抓取参数，以及要启用的曲线、快速对准参数，详见[标定配置](Strategy/TRANSITIONS.md)。
+抓取文件需包含所选轮次的抓取和快速对准参数，详见[标定配置](Strategy/TRANSITIONS.md)。
 空配置无法开启抓取衔接；标定文件与内置试跑参数互斥。
 
 仅开启搭建返程（无需抓取标定）：
@@ -105,23 +114,23 @@ python main.py --strategy PlanA --enable-transition build-return --show-plan
 
 ### 比赛路线规划
 
-开启后从原 `ROUTES` 读取终点、终点朝向和实际取块位移补偿；原中间横移/转向点不再作为必经点。
-19 类具名路线使用之前的位置间规划器：位姿搜索、五次曲线候选比较、`CompetitionMotion` 速度规划、
-`PositionTracker` 位置 PID 和加加速度限制。靠墙、视觉校正、航向重标及原净空退离保持独立边界。
-控制目标沿用原代码，不改任务顺序、目的区域或抓取/投放动作。最快指候选曲线的预计耗时比较，未证明全局最优。
+开启后使用唯一的LocalRoutes：读取原动作 → 保留局部终点、朝向和关键经过点 → 平滑移动/转向 → 编码器/IMU反馈。
+前进1200 mm等单动作直接走原定距控制，净空后退/靠墙/Tag3校正保留边界。
+PlanB完整首程将出发、逻辑航向重标和紫矿转场合并为一次运输，省去中途180°掉头与倒车。
+运输内部在坡口停稳，整段2500 mm上坡保持直线和固定航向，段尾停稳后再左转90°接近紫矿。
+独立第二轮上坡2350 mm同样保护；保持原终点与最终朝向。--show-plan会列出Fused transport。
+Tag6持续修正为独立模块，默认关闭；关闭时平滑到原目标，再执行原Tag对准与横移。
+仅额外指定--enable-moving-tag6才融合相邻Tag对准与偏置动作；--disable-moving-tag6显式关闭且保留局部平滑。
+开启后未确认时保留原步骤，已接管后长时间丢目标则停车；移动观测精度仍待验证。
+搭建接近成功后仍由建筑视觉完成末端对准，失败时阻止Build。地图不会作为普通移动的可行性门禁。
 
-仅开启路线优化：
+在上层RaspberryPi目录只读预览：
 
 ```bash
-python main.py --strategy PlanA --enable-motion-planning --show-plan
+python main.py --runtime game --strategy PlanA --enable-motion-planning --show-plan
 ```
 
-去掉 `--show-plan` 即执行。无需 `--trial-optimizations`、`--transition-config` 或 `--navigation-config`。
-PlanB 将上面命令中的 PlanA 换成 PlanB。运行期用连续编码器/IMU 更新起点，搜索、靠墙和视觉对准期间也累计位置。
-起步地图坐标复用现有 `start_blue` 约定，场地与车体几何沿用现有 CAD 模型，均保留其未实测来源标记。
-若原终点与模型发生碰撞，规划器会明确拒绝，既不修改目标，也不回放旧路线。
-当前模型检查发现 PlanA 起步原终点与旧车体外包冲突，详情见 [CHANGELOG](CHANGELOG.md)；尚未完成实机验证。
-`--navigation-config` 保留显式选择已标定视觉导航的入口，其 Tag 标定条件只适用于该入口。
+在game目录运行时省略--runtime game。PlanB替换策略名即可。--navigation-config已从比赛入口移除。
 详见[路线优化说明](Strategy/optimizations/MOTION_PLANNING.md)。
 
 ## 自动运行日志

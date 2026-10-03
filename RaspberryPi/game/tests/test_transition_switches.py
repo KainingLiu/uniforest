@@ -25,6 +25,7 @@ from tests.test_registered_inspection_transitions import RegisteredInspectionRep
 from tests.test_strategy_composition import FakeActionSession, robot_fixture
 
 
+
 class TransitionCliTests(unittest.TestCase):
     def configure(self, flags, plan='PlanA', document=None):
         with tempfile.TemporaryDirectory() as directory:
@@ -102,8 +103,9 @@ class TransitionCliTests(unittest.TestCase):
     def test_both_entry_points_preview_all_seven(self):
         for entry in (main, task2_main):
             output, _ = self.preview(entry, ['--trial-optimizations', '--enable-transitions',
-                                            '--enable-motion-planning', '--enable-fast-alignment', '--show-plan'])
-            self.assertIn('Motion planning: field curve planner', output)
+                                            '--enable-motion-planning',
+                                            '--enable-fast-alignment', '--show-plan'])
+            self.assertIn('Motion planning: local route smoothing', output)
             self.assertIn('Fast pickup alignment: ground-1/orange', output)
             self.assertNotIn(': disabled', output.split('Action transitions (enabled still requires runtime conditions):')[1])
 

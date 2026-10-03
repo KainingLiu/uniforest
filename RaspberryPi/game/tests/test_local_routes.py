@@ -1,4 +1,4 @@
-"""Local route replacement uses real recipes and the actual wheel-loop follower."""
+"""Offline local-controller comparisons, excluded from competition dispatch."""
 from dataclasses import replace
 import math
 from types import SimpleNamespace
@@ -13,6 +13,31 @@ from Strategy.optimizations.local_routes import RouteRecorder, LocalRoutes
 from tests.test_curve_routes import fixture
 from simulation.catalog import RouteHarness, _assumptions
 from simulation.core import MecanumPlant
+from control.chassis import Chassis, COUNTS_PER_CM, LATERAL_DISTANCE_SCALE
+from protocol.commands import TelemBatch, MotorFeedback
+
+
+def classic_move(plant, direction, distance, speed, **kwargs):
+    """Replay the actual original straight controller on the same wheel plant."""
+    link=SimpleNamespace(connected=True,emergency_stop_generation=0)
+    link.set_chassis_speed=lambda rpms:setattr(plant,'targets',list(rpms)) or True
+    link.emergency_stop=plant.emergency_stop
+    chassis=Chassis(link)
+    def feedback():
+        chassis.update_telem(TelemBatch(motors=[MotorFeedback(cumulative_pos=round(c),speed_rpm=round(r))
+            for c,r in zip(plant.counts,plant.rpms)],yaw_deg=-plant.yaw,uptime_ms=round(plant.now*1000)))
+        return chassis.telem
+    def advance(dt):
+        plant.sleep(dt)
+        feedback()
+    signs={'forward':(-1,1,1,-1),'backward':(1,-1,-1,1),'right':(1,1,-1,-1),'left':(-1,-1,1,1)}[direction]
+    scale=LATERAL_DISTANCE_SCALE if direction in ('left','right') else 1.
+    with patch('control.chassis.time.monotonic',side_effect=lambda:plant.now):
+        feedback()
+        return chassis._move_linear(int(distance*scale*COUNTS_PER_CM/10),list(signs),
+            chassis._mm_s_to_rpm(speed*scale),link,feedback,distance,sleep_fn=advance,
+            hold_ms=kwargs.get('hold_ms',0),accel_ms=kwargs.get('accel_ms') or 300,
+            route_mode=True,distance_scale=scale)
 
 
 def environment(route, profile, *, heading=None, lateral=None, reverse=None):
@@ -23,7 +48,7 @@ def environment(route, profile, *, heading=None, lateral=None, reverse=None):
     env,c,events,_ = fixture(route,profile,heading_cw=values['heading_cw_deg'],lateral=values['search_lateral_mm'])
     env.transition_config=replace(env.transition_config,curves={},navigation=None)
     from Strategy.optimizations.motion_planning import MotionPlanning
-    env.motion_planning=MotionPlanning(optimizers=[LocalRoutes()])
+    env.motion_planning=MotionPlanning()
     env.robot.chassis.measured_body_velocity=Mock(return_value=BodyVelocity())
     env.robot.field_pose=None  # No camera/world pose is required.
     if values['reverse_already_done']:
@@ -49,14 +74,14 @@ class LocalRouteTests(unittest.TestCase):
                     c._checked_move.assert_not_called()
                     c._drive_until_wall.assert_not_called()
 
-    def test_every_registered_route_selects_local_follower_without_json_or_tag(self):
+    def test_routes_keep_straights_and_smooth_compound_turns_without_map_or_tag(self):
         for route in sorted(CURVE_ROUTES):
             profile=sorted(ROUTE_PROFILES[route])[0]
             env,_,_,_=environment(route,profile)
-            with self.subTest(route=route), patch('Strategy.flows.factory.ROUTES',{route:Mock()}) as classic:
+            with self.subTest(route=route):
                 env.run_route(route,profile)
-                classic[route].assert_not_called()
-                self.assertGreater(env.robot.chassis.follow_trajectory.call_count,0)
+                self.assertGreater(env.robot.chassis.follow_trajectory.call_count+
+                    env.control(profile)._checked_move.call_count+env.robot.move_chassis.call_count,0)
                 for call in env.robot.chassis.follow_trajectory.call_args_list:
                     points,settings=call.args
                     self.assertEqual(points[0],Waypoint(0,0,0))
@@ -71,10 +96,10 @@ class LocalRouteTests(unittest.TestCase):
             events.append(('planned',))
         env.robot.chassis.follow_trajectory.side_effect=follow
         env.run_route('build_return','building-1')
-        self.assertEqual(len(seen),2)
-        self.assertEqual(seen[0][-1],Waypoint(-c.config.post_build_reverse_mm,0,0))
+        self.assertEqual(len(seen),1)
+        self.assertEqual(events[0][:3],('move','backward',c.config.post_build_reverse_mm))
         self.assertEqual(events[-1],('wall','left'))
-        self.assertAlmostEqual(seen[1][-1].yaw_deg,c.config.post_build_turn_cw_deg)
+        self.assertAlmostEqual(seen[0][-1].yaw_deg,c.config.post_build_turn_cw_deg)
 
     def test_dynamic_measurement_and_completed_reverse_are_not_repeated(self):
         env,c,_,_=environment('ground_to_delivery','ground-1',heading=30,lateral=340,reverse=True)
@@ -100,13 +125,15 @@ class LocalRouteTests(unittest.TestCase):
     def test_departure_and_multileg_route_reach_endpoints_in_four_wheel_model(self):
         for route,profile in ((route,profile) for route in sorted(CURVE_ROUTES)
                               for profile in sorted(ROUTE_PROFILES[route])):
-            env,_,_,values=environment(route,profile)
+            env,c,_,values=environment(route,profile)
             baseline=RouteHarness({'profile':profile,'start_assumptions':values})
             ROUTES[route](baseline,profile)
             # Local compilation now also follows post-wall move spans. The
             # fake wall does not move the plant, so compare the full recipe end.
             goal=dict(x_mm=baseline.pose.x_mm,y_mm=baseline.pose.y_mm,yaw_deg=baseline.pose.yaw_deg)
             plant=MecanumPlant()
+            c._checked_move=lambda *args,**kwargs:classic_move(plant,*args,**kwargs)
+            env.robot.move_chassis=lambda *args,**kwargs:classic_move(plant,*args,**kwargs)
             env.robot.chassis.measured_body_velocity=plant.measured_velocity
             env.robot.chassis.follow_trajectory=lambda points,settings,**kwargs: plant.follow_local(
                 points,profile=settings,initial_velocity=kwargs['initial_velocity'])

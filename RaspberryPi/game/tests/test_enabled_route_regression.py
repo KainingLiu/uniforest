@@ -1,6 +1,6 @@
-"""Regression coverage for the explicitly injected legacy local backend.
+"""Production entry regression for original-route local smoothing.
 
-Default PlanA/PlanB full-planner dispatch is covered by test_recipe_navigation.
+Moving Tag6 capture and action consumption are covered separately.
 """
 from dataclasses import replace
 import math
@@ -60,25 +60,29 @@ class EnabledRouteRegression(unittest.TestCase):
         self.assertGreater(env.robot.chassis.follow_trajectory.call_count,0)
         plant=MecanumPlant()
         moving_turn=False
-        for call in env.robot.chassis.follow_trajectory.call_args_list:
+        for index,call in enumerate(env.robot.chassis.follow_trajectory.call_args_list):
             points,profile=call.args
             planned=CubicRoute(points,profile)
             for i in range(101):
                 p,v=planned.sample(planned.duration_s*i/100)
                 if abs(v.yaw_deg_s)>5 and math.hypot(v.vx_mm_s,v.vy_mm_s)>30:moving_turn=True
-                if p.x_mm>-c.config.initial_distance_mm+c.config.wall_premove_mm:
+                if index==0:
                     self.assertAlmostEqual(p.yaw_deg,0,places=5)
                     self.assertAlmostEqual(v.yaw_deg_s,0,places=5)
+                    self.assertAlmostEqual(p.y_mm,0,places=5)
             plant.follow_local(points,profile=profile)
         self.assertTrue(moving_turn)
         self.assertEqual(plant.emergency_stops,0)
-        self.assertEqual(plant.controller_runs,1)
-        self.assertTrue(all(math.hypot(p['vx'],p['vy'])>20 for p in plant.trace if abs(p['wz'])>5))
+        self.assertEqual(plant.controller_runs,2)
+        turning=[p for p in plant.trace if abs(p['wz'])>5]
+        self.assertTrue(any(math.hypot(p['vx'],p['vy'])>30 for p in turning))
+        self.assertTrue(all(p['x']<=-c.config.initial_distance_mm+12 for p in turning))
         self.assertLess(math.hypot(plant.x+c.config.initial_distance_mm,plant.y-c.config.wall_premove_mm),12)
         self.assertLess(abs(plant.yaw-90),2)
-        settings=env.robot.chassis.follow_trajectory.call_args.args[1]
+        settings=env.robot.chassis.follow_trajectory.call_args_list[0].args[1]
         self.assertEqual(settings.max_speed_mm_s,c.config.initial_speed_mm_s)
-        self.assertEqual(settings.segment_speeds_mm_s[-1],c.config.wall_premove_speed_mm_s)
+        settings=env.robot.chassis.follow_trajectory.call_args_list[-1].args[1]
+        self.assertLessEqual(settings.segment_speeds_mm_s[-1],c.config.wall_premove_speed_mm_s)
 
     def test_failed_tag_never_executes_post_tag_trajectory(self):
         env,c,_=self.fixture()

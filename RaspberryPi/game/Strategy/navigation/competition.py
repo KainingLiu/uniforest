@@ -78,16 +78,33 @@ class CompetitionRoutes:
     def __init__(self):
         self._config = self._planner = None
 
+    @staticmethod
+    def _configuration(env):
+        config = env.transition_config.navigation
+        if config is None:
+            raise ValueError('Tag route planning requires --navigation-config with measured calibration')
+        config.calibration.validate()
+        return config
+
+    def start(self, env, plan):
+        config = self._configuration(env)
+        env.context.check_active()
+        start = measured_pose(env.robot, config.calibration)
+        env.robot.diagnostics.write('route_planner_started', backend='field_navigation:competition_recipe',
+            start=vars(start), source='calibrated_tag_pose', planner='FieldPlanner',
+            timing='CompetitionMotion.route_timing', tracking='PositionTracker')
+
+    def close(self):
+        self._config = self._planner = None
+
     def prepare(self, env, route, profile):
         from ..flows.curves import CURVE_ROUTES, prepare_route_geometry
         from ..flows.routes import ROUTES
         from ..optimizations.motion_planning import PreparedMotion
-        config = env.transition_config.navigation
-        if config is None:
-            return None
+        config = self._configuration(env)
+        env.context.check_active()
         if route not in CURVE_ROUTES:
             return PreparedMotion('classic:contact_or_visual_barrier', lambda: ROUTES[route](env, profile))
-        config.calibration.validate()
         # These owners intentionally move before their mechanism completes.
         # Keep their measured overlap route; the stationary planner may not
         # take control of a chassis already owned by an action session.

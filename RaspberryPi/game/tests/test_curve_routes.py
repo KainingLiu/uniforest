@@ -3,6 +3,7 @@ from dataclasses import replace
 import math
 import unittest
 from unittest.mock import Mock, patch
+from types import SimpleNamespace
 
 from control.trajectory import BodyVelocity, Waypoint
 from Strategy.flows import ActionSpec
@@ -34,7 +35,7 @@ def fixture(route, profile, *, heading_cw=0, lateral=0, config_overrides=None):
     events = []
     robot.chassis.measured_body_velocity = Mock(return_value=BodyVelocity(0, 35, 0))
     result = object()
-    def curve(points, settings, *, check, initial_velocity):
+    def curve(points, settings, *, check, initial_velocity, guidance=None):
         check()
         events.append(('curve', points))
         return result
@@ -45,9 +46,12 @@ def fixture(route, profile, *, heading_cw=0, lateral=0, config_overrides=None):
     control._recalibrate_heading_zero = Mock(side_effect=lambda: events.append(('rebase',)))
     env = ActionEnvironment(robot, context, transition_config=TransitionConfig(
         curves={f'{profile}/{route}': calibration()}, motion_planning_enabled=True))
-    # These tests cover the explicit legacy curve backend, not default dispatch.
-    from Strategy.optimizations.motion_planning import MotionPlanning, CalibratedCurves
-    env.motion_planning = MotionPlanning(optimizers=[CalibratedCurves()])
+    # Exercise the low-level curve helper in isolation. Competition dispatch
+    # has one Tag planner and no selectable curve backend.
+    from Strategy.flows.curves import run_curve
+    env.motion_planning = SimpleNamespace(run=lambda owner, name, selected, **kw:
+        run_curve(owner, name, selected, owner.transition_config.curves[f'{selected}/{name}']),
+        consume_completed=lambda name:False,start=lambda owner,plan:None)
     env._controllers[profile] = control
     env.record_transition = Mock()
     env.data.update(ground_origin=object(), purple_origin=object(), orange_origin=object())

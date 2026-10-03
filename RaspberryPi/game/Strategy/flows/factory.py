@@ -109,17 +109,16 @@ def validate_spec(spec):
 class ActionEnvironment:
     """One action flow's hardware bindings and transient collection measurements."""
 
-    def __init__(self, robot, context, *, transition_config=None, motion_planning=None):
+    def __init__(self, robot, context, *, transition_config=None):
         self.robot, self.context = robot, context
         self.data = {}
         self._controllers = {}
         self._mechanisms = {}
         self.transition_config = transition_config or TransitionConfig()
         from ..optimizations.motion_planning import MotionPlanning
-        self.motion_planning = motion_planning or MotionPlanning(enabled=self.transition_config.motion_planning_enabled)
-        # Configuration is the master switch, including injected optimizers.
-        if not self.transition_config.motion_planning_enabled:
-            self.motion_planning = MotionPlanning(enabled=False)
+        self.motion_planning = MotionPlanning(
+            enabled=self.transition_config.motion_planning_enabled,
+            moving_tag6_enabled=self.transition_config.moving_tag6_enabled)
         self.transitions = ActionTransitions(self)
         for key in self.transition_config.curves:
             profile, route = key.split('/')
@@ -188,6 +187,8 @@ class ActionEnvironment:
         return result
 
     def _align_tag(self, spec):
+        if self.transition_config.motion_planning_enabled and self.motion_planning.consume_completed(spec.name):
+            return True
         c = self.control(spec.profile)
         cfg = c.config
         self.phase(c, 'TAG_ALIGN')
@@ -222,7 +223,13 @@ class ActionEnvironment:
         elif spec.kind == 'align_building':
             self.phase(c, 'BUILDING_ALIGN')
             self.robot.reset_vision_filter()
-            result = c._align_building_or_continue()
+            if self.transition_config.motion_planning_enabled:
+                # A smoothed Tag approach proves its own target, not the actual
+                # building position. Missing terminal vision must block Build.
+                c._align_building()
+                result = True
+            else:
+                result = c._align_building_or_continue()
         else:
             raise ValueError(f'no functional operation for {spec.kind}')
         return self._complete(spec, result)
@@ -271,6 +278,9 @@ class ActionEnvironment:
         if spec.kind == 'navigate':
             def enter():
                 self._enter(spec)
+                if (self.transition_config.motion_planning_enabled
+                        and self.motion_planning.consume_completed(spec.name)):
+                    return
                 self.run_route(spec.parameters['route'], spec.profile)
             return Action('navigate', spec.name, enter=enter,
                           body=lambda: self._complete(spec), context=metadata)
@@ -280,6 +290,8 @@ class ActionEnvironment:
     def compile(self, plan):
         from ..transition_switches import transition_enabled, validate_transition_selection
         validate_transition_selection(self.transition_config, plan)
+        if self.transition_config.motion_planning_enabled:
+            self.motion_planning.start(self, plan)
         specs = {spec.name: spec for spec in plan.steps}
 
         def overlap(previous, following, context):
@@ -299,4 +311,21 @@ class ActionEnvironment:
         registry = TransitionRegistry((*self.transitions.registry(plan.steps),Transition(
             'build_release_to_route', 'build', 'navigate', overlap,
             matches=matches),))
-        return compile_flow(ActionFlow(plan.name, tuple(self.bind(s) for s in plan.steps)), registry)
+        actions=[]
+        for spec in plan.steps:
+            validate_spec(spec)
+        groups=(self.motion_planning.group_steps(plan.steps) if self.transition_config.motion_planning_enabled
+                else ((spec,) for spec in plan.steps))
+        for group in groups:
+            if len(group)==1:
+                actions.append(self.bind(group[0]))
+                continue
+            def enter_chain(group=group):
+                self._enter(group[0])
+                self.context.current_action=group[-1].name
+                self.motion_planning.run_chain(self,group)
+            actions.append(Action('navigate',group[-1].name,enter=enter_chain,
+                body=lambda last=group[-1]:self._complete(last),
+                context={'profile':group[-1].profile,'route':'plan_b_first',
+                         'source_actions':[s.name for s in group]}))
+        return compile_flow(ActionFlow(plan.name, tuple(actions)), registry)
