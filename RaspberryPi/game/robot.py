@@ -1,0 +1,828 @@
+#!/usr/bin/env python3
+"""
+Uniforest robot facade and subsystem lifecycle.
+
+Architecture:
+    Pi (上位机) ←→ STM32 A-board (下位机) via UART7 (115200 bps)
+
+    Pi handles all decision logic:
+    - Path planning & navigation
+    - Action sequences (Build, Grap, etc.)
+    - Vision processing
+    - PID parameter tuning
+
+    STM32 executes low-level commands:
+    - CAN bus motor control (speed PID @ 1 kHz)
+    - Servo PWM
+    - Stepper pulse generation (non-blocking, TIM7 @ 100 kHz)
+    - IMU / RC data acquisition & telemetry
+
+The official competition entry is main.py. Run this module directly for
+hardware preflight, individual actions, and the manual diagnostic console.
+"""
+
+if __name__ == '__main__':
+    from utils.run_logs import run_entry
+    raise SystemExit(run_entry('robot', 'debug_main'))
+
+import sys
+import time
+import threading
+import argparse
+import glob
+import os
+from dataclasses import dataclass, asdict
+from typing import Optional
+
+from protocol import Transport, TelemBatch
+from control import (
+    Chassis, Servo, Stepper, Actions,
+    DEFAULT_MOVE_SPEED_MM_S, LinearMoveResult,
+)
+from utils.diagnostics import JsonlDiagnostics
+
+
+@dataclass(frozen=True)
+class HardwarePreflightReport:
+    """Read-only startup health snapshot; no actuator commands are issued."""
+    connected: bool
+    telemetry_received: bool
+    telemetry_age_s: Optional[float]
+    telemetry_uptime_ms: Optional[int]
+    rx_frames: int
+    tx_frames: int
+    rx_crc_errors: int
+    vision_active: bool
+    localization_active: bool
+    protocol_valid: bool
+
+    @property
+    def ok(self) -> bool:
+        return (self.connected and self.telemetry_received
+                and self.protocol_valid)
+
+# Vision is optional — only imported if enabled
+try:
+    from vision import (
+        CubeDetector, VisionResult, FieldLocalizer, FieldPose,
+        default_camera_selector,
+    )
+    HAS_VISION = True
+except ImportError:
+    HAS_VISION = False
+    CubeDetector = None
+    VisionResult = None
+    FieldLocalizer = None
+    FieldPose = None
+
+
+def default_serial_port() -> str:
+    """Return the stable A-board serial path for the current platform."""
+    if sys.platform == 'win32':
+        return 'COM5'
+
+    daplink_ports = sorted(glob.glob(
+        '/dev/serial/by-id/*CMSIS-DAP*-if02'))
+    if daplink_ports:
+        return daplink_ports[0]
+    if os.path.exists('/dev/ttyACM0'):
+        return '/dev/ttyACM0'
+    return '/dev/serial0'
+
+
+class Robot:
+    """
+    Main robot controller — owns all subsystems.
+    """
+
+    SERIAL_PORT = default_serial_port()
+    SERIAL_BAUD = 115200
+
+    def __init__(self, port: str = None, baud: int = None,
+                 enable_vision: bool = False, camera_id=None,
+                 vision_gui: bool = False,
+                 vision_exposure: float = None,
+                 vision_gain: float = None,
+                 enable_localization: bool = False,
+                 localization_camera='tag',
+                 localization_gui: bool = False,
+                 debug: bool = False,
+                 diagnostics_path: Optional[str] = None,
+                 quiet_heartbeat: bool = False,
+                 collect_data: Optional[bool] = None,
+                 dataset_dir: Optional[str] = None,
+                 pickup_full_lift_validated: bool = False,
+                 pickup_trial_enabled: bool = False,
+                 execution_extensions: bool = False):
+        if port is None:
+            port = self.SERIAL_PORT
+        if baud is None:
+            baud = self.SERIAL_BAUD
+
+        # Transport layer
+        self.transport = Transport(port, baud, debug=debug)
+        self._execution_extensions = execution_extensions or pickup_full_lift_validated or pickup_trial_enabled
+        self.diagnostics = JsonlDiagnostics(diagnostics_path)
+        self._quiet_heartbeat = quiet_heartbeat
+
+        # Control subsystems
+        self.chassis = Chassis(self.transport)
+        self.servo = Servo(self.transport)
+        self.stepper = Stepper(self.transport)
+        self.actions = Actions(self.servo, self.stepper,
+                               transport=self.transport,
+                               pickup_full_lift_validated=pickup_full_lift_validated,
+                               pickup_trial_enabled=pickup_trial_enabled)
+
+        # Vision subsystem (optional)
+        self._vision: Optional['CubeDetector'] = None
+        self._data_collector = None
+        if enable_vision and HAS_VISION:
+            self._vision = CubeDetector(
+                camera_id=camera_id,
+                show_gui=vision_gui,
+                exposure=vision_exposure,
+                gain=vision_gain,
+            )
+            from vision.yolo.collector import create_collector
+            self._data_collector = create_collector(
+                enabled=collect_data, data_dir=dataset_dir)
+            if self._data_collector is not None:
+                self._vision.set_frame_sink(self._data_collector.offer_frame)
+        elif enable_vision and not HAS_VISION:
+            print("[Robot] 视觉模块不可用（opencv-python 未安装）")
+
+        # Latest telemetry
+        self._telem: Optional[TelemBatch] = None
+        self._telem_received_at: Optional[float] = None
+        self._telem_lock = threading.Lock()
+        self._inspection_link_generation = 0
+        self._pong_received_at = 0.0
+        self._pong_event = threading.Event()
+        # The A-board's 200 ms watchdog needs traffic even while an action is
+        # waiting for a motor/servo operation to finish.
+        self._heartbeat_stop = threading.Event()
+        self._heartbeat_thread: Optional[threading.Thread] = None
+
+        # Dedicated AprilTag camera and full-field localization subsystem.
+        self._localizer: Optional['FieldLocalizer'] = None
+        if enable_localization and HAS_VISION:
+            self._localizer = FieldLocalizer(
+                camera=localization_camera,
+                show_gui=localization_gui,
+            )
+        elif enable_localization and not HAS_VISION:
+            print("[Robot] Field localization unavailable (OpenCV missing)")
+
+        # State
+        self._running = False
+        self.strategy_lock = threading.Lock()
+
+    # ==================== Lifecycle ==========================================
+
+    def connect(self) -> bool:
+        """Connect to STM32 and start telemetry."""
+        if not self.transport.connect():
+            print("[Robot] Failed to connect to STM32")
+            return False
+        self.diagnostics.write('connect_start', port=self.transport._port,
+                               baud=self.transport._baudrate)
+
+        # Register telemetry callback
+        self.transport.on_telemetry(self._on_telem)
+        self.transport.on_ack(self._on_ack)
+        self.transport.on_pong(self._on_pong)
+
+        # Opening a stale DAPLink COM handle can succeed after target power loss,
+        # even though writes time out.  Require a real STM32 PONG before claiming
+        # that the robot is connected; retry while the MCU finishes booting.
+        for _ in range(5):
+            self._pong_event.clear()
+            if self.transport.ping() and self._pong_event.wait(0.7):
+                if self._execution_extensions:
+                    try:
+                        self.transport.open_execution_session()
+                    except BaseException:
+                        self.transport.disconnect()
+                        raise
+                print(f"[Robot] Connected to STM32 on {self.transport._port} "
+                      f"@ {self.transport._baudrate}")
+                self.diagnostics.write('connect_ok')
+                return True
+            time.sleep(0.2)
+
+        print("[Robot] COM port opened but STM32 did not answer PING. "
+              "Replug DAPLink USB after restoring robot power.")
+        self.transport.disconnect()
+        self.diagnostics.write('connect_failed', reason='pong_timeout')
+        return False
+
+    def start(self, telem_rate: int = 50):
+        """Start telemetry streaming and vision (if enabled)."""
+        self._running = True
+        if not self._execution_extensions:
+            time.sleep(0.1)  # preserve legacy connection settling
+        self.transport.set_telemetry_rate(telem_rate)
+        print(f"[Robot] Telemetry streaming at {telem_rate} Hz")
+
+        self._heartbeat_stop.clear()
+        self._heartbeat_thread = threading.Thread(
+            target=self._heartbeat_loop,
+            name='stm32-heartbeat',
+            daemon=True,
+        )
+        self._heartbeat_thread.start()
+
+        # Start vision if configured
+        if self._vision is not None:
+            if self._data_collector is not None:
+                self._data_collector.start()
+            if self._vision.start():
+                print("[Robot] Vision subsystem active")
+            else:
+                print("[Robot] Vision failed to start")
+                if self._data_collector is not None:
+                    self._data_collector.stop()
+        if self._localizer is not None:
+            if self._localizer.start():
+                print("[Robot] Field localization active")
+            else:
+                print("[Robot] Field localization failed to start")
+
+    def stop(self):
+        """Emergency stop and disconnect."""
+        self._running = False
+        self._heartbeat_stop.set()
+        if self._heartbeat_thread and self._heartbeat_thread.is_alive():
+            self._heartbeat_thread.join(timeout=0.5)
+        # Stop vision first
+        if self._vision is not None:
+            self._vision.stop()
+        if self._localizer is not None:
+            self._localizer.stop()
+        self.transport.emergency_stop()
+        time.sleep(0.1)
+        self.transport.disconnect()
+        # Disk flushing happens only after the existing hardware stop/disconnect.
+        if self._data_collector is not None:
+            self._data_collector.stop()
+        print("[Robot] Disconnected")
+
+    def set_collection_context(self, **fields):
+        """Attach task/phase hints to future images; performs no I/O."""
+        if self._data_collector is not None:
+            self._data_collector.set_context(**fields)
+
+    def _heartbeat_loop(self):
+        """Keep the A-board watchdog alive during blocking action waits."""
+        period_s = 0.05
+        started = time.monotonic()
+        warned = False
+        while not self._heartbeat_stop.wait(period_s):
+            try:
+                sent = self.transport.ping()
+            except (RuntimeError, ValueError) as exc:
+                self._running = False
+                self.transport.emergency_stop()
+                print(f'[Robot] Execution session ended: {exc}', flush=True)
+                return
+            now = time.monotonic()
+            with self._telem_lock:
+                pong_at = self._pong_received_at
+            # Allow the streaming heartbeat to take over from connect's PONG.
+            # This controls logging only; existing watchdogs remain unchanged.
+            missing = now - started >= .3 and now - pong_at > .2
+            lost = not sent or missing
+            if lost and not warned:
+                reason = '心跳发送失败' if not sent else '超过 200 ms 未收到心跳响应'
+                print(f'[Robot] 通信异常：{reason}，请检查 A 板连接。', flush=True)
+            warned = lost
+
+    # ==================== Telemetry Callbacks ================================
+
+    def _on_telem(self, telem: TelemBatch):
+        with self._telem_lock:
+            now = time.monotonic()
+            if self._telem is not None and (
+                    (self._telem_received_at is not None
+                     and now - self._telem_received_at > .15)
+                    or ((telem.uptime_ms - self._telem.uptime_ms) & 0xffffffff) > 0x7fffffff):
+                self._inspection_link_generation += 1
+            self._telem = telem
+            self._telem_received_at = now
+            # Forward to chassis for position tracking
+            self.chassis.update_telem(telem)
+
+    def _on_ack(self, ack):
+        if ack.status != 0:
+            print(f"[Robot] ACK error: cmd=0x{ack.echoed_cmd:02X} status={ack.status}")
+
+    def _on_pong(self, uptime_ms: int):
+        self._pong_event.set()
+        with self._telem_lock:
+            now = time.monotonic()
+            if self._pong_received_at and now - self._pong_received_at > .15:
+                self._inspection_link_generation += 1
+            self._pong_received_at = now
+
+    @property
+    def telem(self) -> Optional[TelemBatch]:
+        with self._telem_lock:
+            return self._telem
+
+    def inspection_link_snapshot(self):
+        with self._telem_lock:
+            return (self._telem, self._telem_received_at, self._pong_received_at,
+                      self._inspection_link_generation)
+
+    @property
+    def cube_raw_frame(self):
+        return self._vision.raw_frame if self.has_vision else None
+
+    def begin_carried_cube_inspection(self, *, allow_visual_failure=False, allow_idle=False):
+        """Start phased cargo inspection; caller must finish/close its session."""
+        from control.carried_cube_inspection import begin_carried_inspection
+        return begin_carried_inspection(self, allow_visual_failure=allow_visual_failure, allow_idle=allow_idle)
+
+    def check_carried_cube_count(self, *, chassis_followup=None,
+                                allow_visual_failure=False, allow_idle=False):
+        from control.carried_cube_inspection import inspect_carried_cubes
+        return inspect_carried_cubes(self, chassis_followup=chassis_followup,
+                                    allow_visual_failure=allow_visual_failure, allow_idle=allow_idle)
+
+    def hardware_preflight(self, timeout_s: float = 2.0,
+                           max_telem_age_s: float = 0.3
+                           ) -> HardwarePreflightReport:
+        """Check communication and started sensor subsystems without motion."""
+        deadline = time.monotonic() + max(0.0, timeout_s)
+        received_at = None
+        telem = None
+        while time.monotonic() < deadline:
+            with self._telem_lock:
+                received_at = self._telem_received_at
+                telem = self._telem
+            if telem is not None and received_at is not None:
+                break
+            time.sleep(0.01)
+
+        # Capture one final snapshot when timeout_s is zero or the last loop
+        # iteration ended just before the telemetry callback ran.
+        with self._telem_lock:
+            received_at = self._telem_received_at
+            telem = self._telem
+
+        now = time.monotonic()
+        age = (None if received_at is None else max(0.0, now - received_at))
+        protocol_valid = False
+        try:
+            from protocol.schema import validate_python_constants
+            validate_python_constants()
+            protocol_valid = True
+        except Exception as exc:
+            print(f'[Preflight] protocol schema invalid: {exc}')
+
+        report = HardwarePreflightReport(
+            connected=self.transport.connected,
+            telemetry_received=telem is not None,
+            telemetry_age_s=age,
+            telemetry_uptime_ms=(None if telem is None else telem.uptime_ms),
+            rx_frames=self.transport.rx_frames,
+            tx_frames=self.transport.tx_frames,
+            rx_crc_errors=self.transport.rx_crc_errors,
+            vision_active=self.has_vision,
+            localization_active=self.has_field_localization,
+            protocol_valid=protocol_valid,
+        )
+        if report.telemetry_received and age is not None and age > max_telem_age_s:
+            print(f'[Preflight] telemetry stale: {age:.3f}s > '
+                  f'{max_telem_age_s:.3f}s')
+            report = HardwarePreflightReport(**{
+                **asdict(report), 'telemetry_received': False})
+        print('[Preflight] ' + ('PASS' if report.ok else 'FAIL') + ' ' +
+              f'telem={report.telemetry_received} age='
+              f'{("n/a" if age is None else f"{age:.3f}s")} '
+              f'frames={report.rx_frames}/{report.tx_frames} '
+              f'crc_errors={report.rx_crc_errors} '
+              f'cube={report.vision_active} tag={report.localization_active}')
+        return report
+
+    @property
+    def vision_result(self) -> Optional['VisionResult']:
+        """Get latest vision detection result (thread-safe)."""
+        if self._vision is not None:
+            return self._vision.result
+        return None
+
+    def reset_vision_filter(self, *, after_inspection=False):
+        """Clear stale temporal tracking before a new vision task."""
+        if self._vision is not None:
+            if after_inspection:
+                self._vision.reset_after_inspection()
+            else:
+                self._vision.reset_filter()
+
+    def begin_cube_camera_pose_change(self, reason: str = 'arm_motion'):
+        """Invalidate cube geometry before changing the arm camera pose."""
+        if self._vision is not None:
+            return self._vision.begin_pose_change(reason)
+        return None
+
+    def end_cube_camera_pose_change(self, token, *, settle_s: float = 0.0):
+        """Caller confirms whole-arm restoration; wait for a fresh camera frame.
+
+        The caller supplies the validated profile settling time. This call does
+        not infer arm restoration from a PWM command or a generic action DONE.
+        """
+        if self._vision is not None:
+            return self._vision.end_pose_change(token, settle_s=settle_s)
+        return None
+
+    @property
+    def cube_camera_pose_ready(self) -> bool:
+        return self._vision is not None and self._vision.camera_pose_ready
+
+    def set_cube_detection_profile(self, profile_name: str):
+        """Select task-specific cube HSV parameters at runtime."""
+        if self._vision is None:
+            raise RuntimeError('cube vision subsystem unavailable')
+        self._vision.set_detection_profile(profile_name)
+
+    @property
+    def has_vision(self) -> bool:
+        return self._vision is not None and self._vision.is_running
+
+    @property
+    def field_pose(self) -> Optional['FieldPose']:
+        """Latest pure-vision field pose from the dedicated tag camera."""
+        if self._localizer is not None:
+            return self._localizer.result
+        return None
+
+    @property
+    def has_field_localization(self) -> bool:
+        return self._localizer is not None and self._localizer.is_running
+
+    def reset_field_localization_filter(self):
+        if self._localizer is not None:
+            self._localizer.reset_filter()
+
+    # ==================== Telemetry Display ==================================
+
+    def print_telem(self):
+        """Print one telemetry snapshot."""
+        t = self.telem
+        if t is None:
+            print("No telemetry yet...")
+            return
+
+        print(f"\n{'='*60}")
+        print(f"Uptime: {t.uptime_ms/1000:.1f}s  Yaw: {t.yaw_deg:.1f}°  YawRate: {t.yaw_rate_ds:.1f}°/s")
+        print(f"{'='*60}")
+        print(f"{'Motor':>8} {'Angle':>6} {'RPM':>8} {'Torque':>8} {'Temp':>5}")
+        print(f"{'-'*40}")
+        names = ["TR", "TL", "BL", "BR"]
+        for i, m in enumerate(t.motors):
+            print(f"{names[i]:>8} {m.angle:>6} {m.speed_rpm:>8} {m.torque_current:>8} {m.temperature:>4}°C")
+        print(f"{'-'*40}")
+        print(f"RC: CH1={t.rc_channels[0]:>5} CH2={t.rc_channels[1]:>5} "
+              f"CH3={t.rc_channels[2]:>5} CH4={t.rc_channels[3]:>5}")
+        print(f"Stepper: H={'BUSY' if t.stepper_busy & 1 else 'idle'} "
+              f"V={'BUSY' if t.stepper_busy & 2 else 'idle'} "
+              f"Pos=({t.stepper_pos[0]}, {t.stepper_pos[1]})")
+
+        # Vision status
+        if self.has_vision:
+            vr = self.vision_result
+            if vr and vr.is_valid:
+                print(f"Vision: [{vr.color_name}] X={vr.x:+.0f} Y={vr.y:+.0f} "
+                      f"Z={vr.z:+.0f}mm Dist={vr.distance:.0f}mm "
+                      f"Conf={vr.confidence:.0f}% FPS={vr.fps:.1f}")
+            elif vr:
+                print(f"Vision: SEARCHING ({len(vr.all_blocks)} blocks) FPS={vr.fps:.1f}")
+            else:
+                print(f"Vision: initializing...")
+        if self.has_field_localization:
+            pose = self.field_pose
+            if pose and pose.valid:
+                quality = "cal" if pose.calibrated else "FOV"
+                print(f"Field: X={pose.x_m:+.3f} Y={pose.y_m:+.3f} m "
+                      f"Yaw={pose.yaw_deg:+.1f} deg Tags={pose.tag_ids} "
+                      f"Err={pose.reprojection_error_px:.2f}px {quality}")
+            elif pose:
+                print(f"Field: SEARCHING visible={pose.tag_ids} FPS={pose.fps:.1f}")
+
+    def telemetry_monitor(self, duration_s: float = 0):
+        """Display telemetry continuously for duration_s (0 = forever)."""
+        t0 = time.time()
+        try:
+            while self._running:
+                self.print_telem()
+                time.sleep(0.5)
+                if duration_s > 0 and (time.time() - t0) > duration_s:
+                    break
+        except KeyboardInterrupt:
+            pass
+
+    # ==================== Vision-Guided Navigation =========================
+
+    def move_chassis(self, direction: str, distance_mm: float,
+                     speed_mm_s: float = DEFAULT_MOVE_SPEED_MM_S,
+                     hold_ms: Optional[int] = None,
+                     accel_ms: Optional[int] = None,
+                     route_mode: bool = False,
+                     ) -> LinearMoveResult:
+        """Run a blocking calibrated position-loop chassis move."""
+        direction = direction.lower()
+        if distance_mm <= 0.0:
+            raise ValueError('distance must be positive')
+        if speed_mm_s <= 0.0:
+            raise ValueError('speed must be positive')
+
+        move_kwargs = {}
+        if hold_ms is not None:
+            move_kwargs['hold_ms'] = hold_ms
+        if accel_ms is not None:
+            move_kwargs['accel_ms'] = accel_ms
+        if route_mode:
+            move_kwargs['route_mode'] = True
+        moves = {
+            'forward': lambda: self.chassis.move_forward(
+                distance_mm, speed_mm_s, **move_kwargs),
+            'backward': lambda: self.chassis.move_forward(
+                -distance_mm, speed_mm_s, **move_kwargs),
+            'left': lambda: self.chassis.move_right(
+                -distance_mm, speed_mm_s, **move_kwargs),
+            'right': lambda: self.chassis.move_right(
+                distance_mm, speed_mm_s, **move_kwargs),
+        }
+        if direction not in moves:
+            raise ValueError(
+                'direction must be forward, backward, left, or right')
+
+        result = moves[direction]()
+        state = ('cancelled' if result.cancelled else
+                 'timeout' if result.timed_out else 'complete')
+        print(f'[Chassis] {state}: {direction} {distance_mm:.1f} mm, '
+              f'wheel={result.encoder_distance_mm:.1f} mm, '
+              f'chassis_est={result.estimated_chassis_distance_mm:.1f} mm, '
+              f'time={result.elapsed_ms:.0f} ms')
+        self.diagnostics.write(
+            'motion', direction=direction, requested_mm=distance_mm,
+            speed_mm_s=speed_mm_s, state=state,
+            encoder_mm=result.encoder_distance_mm,
+            chassis_est_mm=result.estimated_chassis_distance_mm,
+            elapsed_ms=result.elapsed_ms,
+            completion_ratio=(abs(result.estimated_chassis_distance_mm)
+                              / max(abs(distance_mm), 1.0)),
+            cancelled=result.cancelled, timed_out=result.timed_out)
+        return result
+
+    def approach_cube(self, target_z: float = 200.0,
+                      speed_mm_s: float = 150.0,
+                      timeout_s: float = 30.0):
+        """
+        Navigate chassis toward detected cube using vision feedback.
+
+        Strategy:
+          1. Turn to center cube X in camera (reduce |X| below threshold)
+          2. Drive forward until Z ≈ target_z
+          3. Re-center as needed
+
+        Args:
+            target_z: stop when cube is this far away (mm)
+            speed_mm_s: approach speed
+            timeout_s: max duration before giving up
+        """
+        if not self.has_vision:
+            print("[Robot] Vision not available — cannot approach")
+            return
+
+        print(f"[Robot] Approaching cube (target Z={target_z:.0f}mm)...")
+        t0 = time.time()
+
+        X_THRESHOLD = 30.0   # mm — acceptable lateral error
+        Z_THRESHOLD = 40.0   # mm — acceptable depth error
+        TURN_K = 0.8         # °/s per mm of X error
+
+        while (time.time() - t0) < timeout_s:
+            vr = self.vision_result
+            if vr is None or not vr.is_valid:
+                print("  [Vision] Lost target — searching...")
+                self.chassis.stop()
+                time.sleep(0.1)
+                continue
+
+            x_err = vr.x    # lateral error in mm
+            z_err = vr.z - target_z  # depth error
+
+            # Check if we've arrived
+            if abs(z_err) < Z_THRESHOLD and abs(x_err) < X_THRESHOLD:
+                self.chassis.stop()
+                print(f"  [Arrived] X={vr.x:+.0f} Z={vr.z:.0f}mm "
+                      f"(errors: X={x_err:+.0f} Z={z_err:+.0f}mm)")
+                return
+
+            # Compute control
+            # 1. Turn to center (priority if X is large)
+            wz = -x_err * TURN_K   # negative: if cube is to the right (+X), turn right (+wz)
+            wz = max(-120.0, min(120.0, wz))  # clamp
+
+            # 2. Forward speed (proportional to Z error, limited)
+            vx = z_err * 0.3   # cm/s per mm
+            vx = max(-speed_mm_s / 10.0, min(speed_mm_s / 10.0, vx))
+
+            # Mecanum: vx forward + wz rotation
+            rpm = self.chassis.mecanum_rpm(vx, 0.0, wz)
+            self.chassis.set_speeds(rpm)
+
+            # Status
+            if int(time.time() * 4) % 4 == 0:  # print ~4 Hz
+                print(f"  [{vr.color_name}] X={x_err:+.0f}mm Z={z_err:+.0f}mm "
+                      f"→ vx={vx:.1f}cm/s wz={wz:.1f}°/s")
+
+            time.sleep(0.02)  # 50 Hz control
+
+        self.chassis.stop()
+        print(f"[Robot] Approach timeout ({timeout_s}s)")
+
+    # ==================== Action Runner ======================================
+
+    def run_action(self, name: str, test_mode: bool = False):
+        """Run a named action sequence."""
+        grap_kwargs = {'test_mode': True} if test_mode else {}
+        actions = {
+            'home': self.actions.servo_home,
+            'hatch_open': self.actions.hatch_open,
+            'hatch_close': self.actions.hatch_close,
+            'grap1': lambda: self.actions.grap1(**grap_kwargs),
+            'grap2': lambda: self.actions.grap2(**grap_kwargs),
+            'grap3': lambda: self.actions.grap3(**grap_kwargs),
+            'build': self.actions.build,
+            'approach': lambda: self.approach_cube(),
+        }
+        if name not in actions:
+            print(f"Unknown action: {name}")
+            print(f"Available: {list(actions.keys())}")
+            return
+
+        print(f"[Robot] Running action: {name}")
+        actions[name]()
+        print(f"[Robot] Action {name} complete")
+
+
+# ============================ CLI ============================================
+
+def debug_main():
+    parser = argparse.ArgumentParser(description='Uniforest Robot Controller')
+    parser.add_argument('--port', default=Robot.SERIAL_PORT,
+                       help=f'Serial port (default: {Robot.SERIAL_PORT})')
+    parser.add_argument('--baud', type=int, default=115200,
+                       help='Baud rate (default: 115200)')
+    parser.add_argument('--test-ping', action='store_true',
+                       help='Test communication with PING/PONG')
+    parser.add_argument('--preflight', action='store_true',
+                       help='Run read-only hardware and sensor preflight')
+    parser.add_argument('--action', type=str, default=None,
+                       help='Run action: home, hatch_open, hatch_close, '
+                            'grap1, grap2, grap3, build')
+    parser.add_argument('--telemetry-only', action='store_true',
+                       help='Display telemetry stream')
+    parser.add_argument('--telem-rate', type=int, default=50,
+                       help='Telemetry rate in Hz (default: 50)')
+    parser.add_argument('--duration', type=float, default=0,
+                       help='Duration in seconds (0=forever)')
+    parser.add_argument('--vision', action='store_true',
+                       help='Enable cube detection vision')
+    default_camera = default_camera_selector() if HAS_VISION else 1
+    parser.add_argument('--camera', default=default_camera,
+                       help='Camera role, stable path, or diagnostic index '
+                            f'(default: {default_camera})')
+    parser.add_argument('--vision-gui', action='store_true',
+                       help='Show vision debug window')
+    parser.add_argument('--vision-exposure', type=float, default=None,
+                       help='Manual camera exposure (backend-specific value)')
+    parser.add_argument('--vision-gain', type=float, default=None,
+                       help='Manual camera gain (backend-specific value)')
+    parser.add_argument('--localization', action='store_true',
+                       help='Enable AprilTag full-field localization')
+    parser.add_argument('--tag-camera', default='tag',
+                       help='Tag camera role or stable path (default: tag)')
+    parser.add_argument('--localization-gui', action='store_true',
+                       help='Show field-localization debug window')
+    parser.add_argument('--debug', action='store_true',
+                       help='Enable transport debug output')
+    parser.add_argument('--no-collect-data', action='store_true',
+                       help='Disable automatic cube-image collection')
+    parser.add_argument('--dataset-dir', default=None,
+                       help='Local cube image library directory')
+
+    args = parser.parse_args()
+
+    robot = Robot(port=args.port, baud=args.baud,
+                  enable_vision=args.vision,
+                  camera_id=args.camera,
+                  vision_gui=args.vision_gui,
+                  vision_exposure=args.vision_exposure,
+                  vision_gain=args.vision_gain,
+                  enable_localization=args.localization,
+                  localization_camera=args.tag_camera,
+                  localization_gui=args.localization_gui,
+                  debug=args.debug,
+                  collect_data=False if args.no_collect_data else None,
+                  dataset_dir=args.dataset_dir)
+
+    try:
+        if not robot.connect():
+            sys.exit(1)
+
+        robot.start(telem_rate=args.telem_rate)
+
+        if args.test_ping:
+            print("[Test] Sending PING...")
+            robot.transport.ping()
+            time.sleep(1.0)
+
+        elif args.preflight:
+            report = robot.hardware_preflight()
+            if not report.ok:
+                return_code = 2
+            else:
+                return_code = 0
+            # Keep the existing CLI cleanup path while returning a useful code.
+            if return_code:
+                sys.exit(return_code)
+
+        elif args.action:
+            time.sleep(0.5)  # wait for first telemetry
+            robot.run_action(args.action)
+
+        elif args.telemetry_only:
+            robot.telemetry_monitor(args.duration)
+
+        else:
+            # Interactive mode
+            print("\nUniforest Robot Controller")
+            print("===========================")
+            print("Commands:")
+            print("  home, hatch_open, hatch_close — Servo actions")
+            print("  grap1, grap2, grap3, build  — Full action sequences")
+            print("  approach                     — Vision-guided cube approach")
+            print("  move DIR MM [SPEED]          — Position move; speed defaults to 750 mm/s")
+            print("  telem                        — Print telemetry snapshot")
+            print("  vision                       — Print vision detection result")
+            print("  stop                         — EMERGENCY STOP")
+            print("  exit                         — Quit")
+            print()
+
+            while robot._running:
+                try:
+                    cmd = input("> ").strip().lower()
+                    if cmd == 'exit':
+                        break
+                    elif cmd == 'stop':
+                        robot.transport.emergency_stop()
+                        print("EMERGENCY STOP")
+                    elif cmd == 'telem':
+                        robot.print_telem()
+                    elif cmd == 'vision':
+                        vr = robot.vision_result
+                        if vr is None:
+                            print("Vision: not available (use --vision flag)")
+                        elif vr.is_valid:
+                            print(f"[{vr.color_name}] X={vr.x:+.1f} Y={vr.y:+.1f} "
+                                  f"Z={vr.z:+.1f}mm Dist={vr.distance:.1f}mm "
+                                  f"Conf={vr.confidence:.0f}% "
+                                  f"({len(vr.all_blocks)} blocks) FPS={vr.fps:.1f}")
+                        else:
+                            hint = f" ({len(vr.all_blocks)} seen)" if vr.all_blocks else ""
+                            print(f"[SEARCHING]{hint} FPS={vr.fps:.1f}")
+                    elif cmd.startswith('move '):
+                        parts = cmd.split()
+                        if len(parts) not in (3, 4):
+                            print('Usage: move forward|backward|left|right MM [MM/S]')
+                            continue
+                        try:
+                            distance = float(parts[2])
+                            speed = (float(parts[3]) if len(parts) == 4
+                                     else DEFAULT_MOVE_SPEED_MM_S)
+                            robot.move_chassis(parts[1], distance, speed)
+                        except ValueError as exc:
+                            print(f'Invalid move: {exc}')
+                    elif cmd in ('home', 'hatch_open', 'hatch_close',
+                                'grap1', 'grap2', 'grap3', 'build', 'approach'):
+                        robot.run_action(cmd)
+                    elif cmd == '':
+                        pass
+                    else:
+                        print(f"Unknown: {cmd}")
+                        print("Available: home, hatch_open/close, grap1/2/3, "
+                              "build, approach, move, telem, vision, stop, exit")
+                except KeyboardInterrupt:
+                    break
+                except EOFError:
+                    break
+
+    except KeyboardInterrupt:
+        print("\n[Robot] Interrupted")
+    finally:
+        robot.stop()

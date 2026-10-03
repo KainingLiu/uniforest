@@ -1,0 +1,178 @@
+<div id="refill-route-view">
+  <h3>橙矿补抓：下坡两端相切衔接</h3>
+  <div class="viz-controls">
+    <label class="form-label">换区方向
+      <select class="form-select" data-control="direction">
+        <option value="ground">我方 → 对侧</option>
+        <option value="highland" selected>对侧 → 我方</option>
+      </select>
+    </label>
+    <label class="form-label">轮次
+      <select class="form-select" data-control="round">
+        <option value="1">第一轮</option><option value="2">第二轮</option><option value="3">第三轮</option>
+      </select>
+    </label>
+    <label class="form-label">扫描横移量
+      <select class="form-select" data-control="offset">
+        <option value="0">0 mm</option><option value="450">450 mm</option><option value="900">900 mm</option>
+        <option value="1350">1350 mm</option><option value="1800" selected>1800 mm</option>
+      </select>
+    </label>
+  </div>
+  <div class="viz-row text-small" aria-label="图例">
+    <span><span class="key old"></span>原动作折线</span>
+    <span><span class="key smooth"></span>执行曲线</span>
+    <span><span class="key ramp"></span>保护坡段</span>
+    <span>□ 停稳交接</span><span>○ 目标撞墙定位</span><span>短线：朝向</span>
+  </div>
+  <div data-plot></div>
+  <div data-entry-plot></div>
+  <div data-arrival-plot></div>
+  <label class="form-label">沿路径查看朝向 <span data-progress class="tabular-nums">0%</span>
+    <input class="form-range" data-control="progress" type="range" min="0" max="100" value="0" aria-label="沿路径查看朝向">
+  </label>
+  <div data-detail class="text-small tabular-nums" aria-live="polite"></div>
+  <div class="text-small text-muted">下坡前750 / 后550 mm过渡区均为试设 · 矿区目标保留 · 停稳保护保留 · 实际坡道范围与净空待现场核对</div>
+  <script type="application/json" data-cases>__REFILL_DATA__</script>
+</div>
+<style>
+#refill-route-view [data-plot] {width:100%;}
+#refill-route-view [data-entry-plot] {width:100%;}
+#refill-route-view {font-family:system-ui,sans-serif;}
+#refill-route-view .key {display:inline-block;width:22px;height:0;vertical-align:middle;margin-right:5px;}
+#refill-route-view .key.old {border-top:2px dashed var(--muted-foreground);}
+#refill-route-view .key.smooth {border-top:3px solid var(--viz-series-1);}
+#refill-route-view .key.ramp {border-top:3px solid var(--viz-series-2);}
+#refill-route-view .route-map {display:block;width:100%;}
+#refill-route-view .route-map text {font-size:12px;fill:var(--foreground);}
+#refill-route-view [data-detail] {margin-top:6px;margin-bottom:8px;}
+</style>
+<script>
+(() => {
+  const root = document.getElementById('refill-route-view');
+  const cases = JSON.parse(root.querySelector('[data-cases]').textContent);
+  const controls = Object.fromEntries([...root.querySelectorAll('[data-control]')].map(e=>[e.dataset.control,e]));
+  const plot = root.querySelector('[data-plot]');
+  const ns = 'http://www.w3.org/2000/svg';
+  function element(name, attrs={}, text='') {
+    const n=document.createElementNS(ns,name);
+    for(const [k,v] of Object.entries(attrs)) n.setAttribute(k,v);
+    if(text)n.textContent=text;
+    return n;
+  }
+  function selected(){return cases.find(c=>c.source===controls.direction.value&&c.round===+controls.round.value&&c.offset===+controls.offset.value);}
+  function restore(state){
+    const x=state?.modelContent||{};
+    for(const key of ['direction','round','offset','progress']){
+      if(x[key]!==undefined&&[...controls[key].options||[]].some(o=>o.value===String(x[key]))) controls[key].value=x[key];
+    }
+    if(Number.isFinite(+x.progress)&&+x.progress>=0&&+x.progress<=100) controls.progress.value=x.progress;
+  }
+  function save(){
+    window.openai?.setWidgetState({modelContent:Object.fromEntries(Object.entries(controls).map(([k,v])=>[k,v.value]))}).catch(()=>{});
+  }
+  function drawEntry(c,width,arrival=false){
+    const points=(arrival?c.segments.at(-1):c.segments[0]).points;
+    const height=210,left=64,right=30,top=38,bottom=45;
+    const xs=points.map(p=>p[1]/1000),ys=points.map(p=>p[0]/1000);
+    const xmin=Math.min(...xs)-.12,xmax=Math.max(...xs)+.12;
+    const ymin=Math.min(...ys)-.12,ymax=Math.max(...ys)+.12;
+    const scale=Math.min((width-left-right)/(xmax-xmin),(height-top-bottom)/(ymax-ymin));
+    const ox=left+((width-left-right)-(xmax-xmin)*scale)/2;
+    const oy=top+((height-top-bottom)-(ymax-ymin)*scale)/2;
+    const X=x=>ox+(x-xmin)*scale,Y=y=>oy+(ymax-y)*scale;
+    const label=arrival?'坡后接近 · 执行曲线放大':'离墙与入坡 · 执行曲线放大';
+    const svg=element('svg',{class:'route-map',viewBox:`0 0 ${width} ${height}`,height,role:'img','aria-label':label+'，单位米'});
+    svg.append(element('text',{x:left,y:17},label));
+    svg.append(element('rect',{x:left,y:top,width:width-left-right,height:height-top-bottom,fill:'none',stroke:'var(--border)'}));
+    for(let i=0;i<3;i++){
+      const x=xmin+(xmax-xmin)*i/2,y=ymin+(ymax-ymin)*i/2;
+      svg.append(element('text',{x:X(x),y:height-bottom+17,'text-anchor':i===0?'start':i===2?'end':'middle'},x.toFixed(1)));
+      svg.append(element('text',{x:left-8,y:Y(y)+4,'text-anchor':'end'},y.toFixed(1)));
+    }
+    svg.append(element('text',{x:width/2,y:height-5,'text-anchor':'middle'},'右向 / m'));
+    svg.append(element('text',{x:16,y:height/2,transform:`rotate(-90 16 ${height/2})`,'text-anchor':'middle'},'前向 / m'));
+    svg.append(element('path',{d:points.map((p,i)=>`${i?'L':'M'}${X(p[1]/1000)},${Y(p[0]/1000)}`).join(' '),fill:'none',stroke:'var(--viz-series-1)','stroke-width':3}));
+    for(const [p,label] of [[points[0],arrival?'出坡':'起点'],[points.at(-1),arrival?'目标':'入坡']]){
+      const x=X(p[1]/1000),y=Y(p[0]/1000);
+      svg.append(element('circle',{cx:x,cy:y,r:3,fill:'var(--foreground)'}));
+      svg.append(element('text',{x:x+6,y:Math.max(top+12,y-9)},label));
+    }
+    root.querySelector(arrival?'[data-arrival-plot]':'[data-entry-plot]').replaceChildren(svg);
+  }
+  function draw(){
+    const c=selected(); if(!c)return;
+    const width=Math.max(280,plot.clientWidth),height=width<450?350:430;
+    const margin={l:64,r:30,t:30,b:56};
+    const all=[...c.classic,...c.segments.flatMap(s=>s.points)];
+    const xs=all.map(p=>p[1]/1000),ys=all.map(p=>p[0]/1000);
+    let xmin=Math.min(...xs),xmax=Math.max(...xs),ymin=Math.min(...ys),ymax=Math.max(...ys);
+    const pad=.32; xmin-=pad;xmax+=pad;ymin-=pad;ymax+=pad;
+    const w=width-margin.l-margin.r,h=height-margin.t-margin.b;
+    const scale=Math.min(w/(xmax-xmin),h/(ymax-ymin));
+    const ox=margin.l+(w-scale*(xmax-xmin))/2,oy=margin.t+(h-scale*(ymax-ymin))/2;
+    const X=x=>ox+(x-xmin)*scale,Y=y=>oy+(ymax-y)*scale;
+    const svg=element('svg',{class:'route-map',viewBox:`0 0 ${width} ${height}`,height,role:'img','aria-label':`${controls.direction.selectedOptions[0].textContent}，绕过Tag6的直达路线与原路线，保留名义终点及坡段`});
+    svg.append(element('rect',{x:margin.l,y:margin.t,width:w,height:h,fill:'none',stroke:'var(--border)'}));
+    const xticks=Math.max(2,Math.min(5,Math.floor(scale*(xmax-xmin)/68))),yticks=width<450?3:5;
+    for(let i=0;i<=xticks;i++){
+      const x=xmin+(xmax-xmin)*i/xticks;
+      svg.append(element('line',{x1:X(x),y1:margin.t,x2:X(x),y2:height-margin.b,stroke:'var(--border)','stroke-width':.5}));
+      svg.append(element('text',{x:X(x),y:height-margin.b+19,'text-anchor':i===0?'start':i===xticks?'end':'middle'},x.toFixed(1)));
+    }
+    for(let i=0;i<=yticks;i++){
+      const y=ymin+(ymax-ymin)*i/yticks;
+      svg.append(element('line',{x1:margin.l,y1:Y(y),x2:width-margin.r,y2:Y(y),stroke:'var(--border)','stroke-width':.5}));
+      svg.append(element('text',{x:margin.l-9,y:Y(y)+4,'text-anchor':'end'},y.toFixed(1)));
+    }
+    svg.append(element('text',{x:margin.l+w/2,y:height-9,'text-anchor':'middle'},'右向位移 / m'));
+    svg.append(element('text',{x:16,y:margin.t+h/2,transform:`rotate(-90 16 ${margin.t+h/2})`,'text-anchor':'middle'},'前向位移 / m'));
+    const path=points=>points.map((p,i)=>`${i?'L':'M'}${X(p[1]/1000).toFixed(2)},${Y(p[0]/1000).toFixed(2)}`).join(' ');
+    svg.append(element('path',{d:path(c.classic),fill:'none',stroke:'var(--muted-foreground)','stroke-width':1.7,'stroke-dasharray':'5 4',opacity:.8}));
+    if(c.old_tag){
+      const tx=X(c.old_tag[1]/1000),ty=Y(c.old_tag[0]/1000);
+      svg.append(element('line',{x1:tx-4,y1:ty-4,x2:tx+4,y2:ty+4,stroke:'var(--muted-foreground)'}));
+      svg.append(element('line',{x1:tx-4,y1:ty+4,x2:tx+4,y2:ty-4,stroke:'var(--muted-foreground)'}));
+      svg.append(element('text',{x:tx-8,y:ty+30,'text-anchor':'end'},'旧 Tag6（跳过）'));
+    }
+    for(const s of c.segments) svg.append(element('path',{d:path(s.points),fill:'none',stroke:s.kind==='ramp'?'var(--viz-series-2)':'var(--viz-series-1)','stroke-width':3,'stroke-linecap':'round','stroke-linejoin':'round'}));
+    for(const s of c.segments.filter(s=>s.kind==='ramp')) for(const p of [s.points[0],s.points.at(-1)]){
+      svg.append(element('rect',{x:X(p[1]/1000)-3,y:Y(p[0]/1000)-3,width:6,height:6,fill:'var(--background)',stroke:'var(--foreground)','data-tooltip':'软件保护段边界，停稳后换向；实际坡顶位置待现场核对'}));
+    }
+    for(const s of c.segments.filter(s=>s.kind==='curve')){
+      for(const fraction of [.3,.7]){
+        const p=s.points[Math.floor((s.points.length-1)*fraction)],a=p[2]*Math.PI/180;
+        const cx=X(p[1]/1000),cy=Y(p[0]/1000);
+        svg.append(element('line',{x1:cx,y1:cy,x2:cx+12*Math.sin(a),y2:cy-12*Math.cos(a),stroke:'var(--foreground)','stroke-width':1.2}));
+      }
+    }
+    const anchorKeys=new Set();
+    for(const a of c.anchors){
+      const key=a.pose.slice(0,2).join(',');if(anchorKeys.has(key))continue;anchorKeys.add(key);
+      svg.append(element('circle',{cx:X(a.pose[1]/1000),cy:Y(a.pose[0]/1000),r:4,fill:'var(--background)',stroke:'var(--foreground)','stroke-width':1.2,'data-tooltip':'目标矿区：侧向靠墙、前向靠墙、航向重标'}));
+    }
+    svg.append(element('text',{x:X(0)-10,y:Y(0)-14,'text-anchor':'end'},'扫描结束'));
+    svg.append(element('text',{x:X(c.end[1]/1000)+10,y:Y(c.end[0]/1000)-10},'目标矿区'));
+    svg.append(element('rect',{x:X(c.end[1]/1000)-4,y:Y(c.end[0]/1000)-4,width:8,height:8,fill:'var(--foreground)'}));
+    const points=c.segments.flatMap(s=>s.points),lengths=[0];
+    for(let i=1;i<points.length;i++)lengths.push(lengths[i-1]+Math.hypot(points[i][0]-points[i-1][0],points[i][1]-points[i-1][1]));
+    const target=lengths.at(-1)*(+controls.progress.value/100);
+    let i=lengths.findIndex(l=>l>=target);if(i<1)i=1;
+    const f=(target-lengths[i-1])/Math.max(1e-9,lengths[i]-lengths[i-1]);
+    const p=points[i].map((v,k)=>points[i-1][k]+(v-points[i-1][k])*f),angle=p[2]*Math.PI/180;
+    const cx=X(p[1]/1000),cy=Y(p[0]/1000);
+    svg.append(element('circle',{cx,cy,r:6,fill:'var(--foreground)'}));
+    svg.append(element('line',{x1:cx,y1:cy,x2:cx+20*Math.sin(angle),y2:cy-20*Math.cos(angle),stroke:'var(--foreground)','stroke-width':3}));
+    root.querySelector('[data-progress]').textContent=`${controls.progress.value}%`;
+    root.querySelector('[data-detail]').textContent=`参考路程 ${(lengths.at(-1)/1000).toFixed(2)} m · 名义终点沿用原目标 · 朝向 ${((p[2]%360)+360)%360|0}°`;
+    plot.replaceChildren(svg);
+    drawEntry(c,width);
+    drawEntry(c,width,true);
+  }
+  restore(window.openai?.widgetState);
+  for(const [name,node] of Object.entries(controls))node.addEventListener(name==='progress'?'input':'change',()=>{if(name!=='progress')controls.progress.value=0;draw();save();});
+  window.addEventListener('openai:set_globals',e=>{if(e.detail?.globals?.widgetState){restore(e.detail.globals.widgetState);draw();}});
+  new ResizeObserver(draw).observe(plot);
+  draw();
+})();
+</script>

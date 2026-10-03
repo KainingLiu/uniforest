@@ -1,0 +1,6 @@
+{
+  "linux": {
+    "cube": "/dev/v4l/by-id/usb-LRCP_USB3.0_LRCP_USB3.0_200901010001-video-index0",
+    "tag": "/dev/v4l/by-id/usb-icSpring_icspring_camera_240929142408-video-index0"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "reviewer": "Codex",
+  "review_date": "2026-09-29",
+  "source_archive_sha256": "b9b794acd38bf2607ea9bc51b151d3eba90e8a3d908a75870a384c7b61bfd0dc",
+  "label_semantics": "Six image-plane points: top back left/right, top front right/left, front bottom left/right. Missing cropped corners have visibility zero. No hidden edge or depth target.",
+  "review_evidence": "All 27 numbered 4x4 contact sheets inspected, followed by full-resolution previews for every non-crop quality flag.",
+  "source_exclusions": "Preserve 82 excluded source images and the 48-image near-duplicate embargo from collection_v1.",
+  "accepted_flags_after_review": [
+    "left_image_crop",
+    "right_image_crop",
+    "narrow_bottom",
+    "top_quad_fallback",
+    "top_fraction_outlier",
+    "manual_review_priority"
+  ],
+  "full_resolution_reviewed_ids": [
+    18, 107, 108, 131, 180, 181, 218, 225, 232, 233,
+    257, 309, 348, 365, 390, 412, 413
+  ],
+  "manual_point_overrides": {},
+  "rejected_object_keys": [],
+  "acceptance_rule": "Accept the visible-edge proposal for each source-approved instance after visual review. Excluded and approved-empty source frames keep their prior status."
+}
