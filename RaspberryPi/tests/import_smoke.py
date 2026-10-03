@@ -64,6 +64,9 @@ test('Strategy.task4', 'Strategy.task4')
 test('Strategy.tasks', 'Strategy.tasks')
 test('Strategy.plans', 'Strategy.plans')
 test('Strategy.runner', 'Strategy.runner')
+test('Strategy.refill', 'Strategy.refill')
+test('Strategy.refill_routes', 'Strategy.refill_routes')
+test('Strategy.refill_policy', 'Strategy.refill_policy')
 
 # Main syntax
 print('\n=== Main ===')

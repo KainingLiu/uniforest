@@ -878,22 +878,28 @@ class TaskControl(TaskStateReporting):
         """Keep one search budget/origin across initial collection and refill."""
         remaining = initial_target
         while True:
+            exhausted = False
             for index in range(1, remaining + 1):
                 print(f'[{self.TASK_LABEL}] Orange pickup {index}/{remaining}')
                 try:
                     grab_one()
                 except SearchRangeExhausted:
-                    print(f'[{self.TASK_LABEL}] Orange search range exhausted; '
-                          'skip count inspection and continue route')
-                    return
+                    exhausted = True
+                    break
             self.state = type(self.state).COUNT_CHECK
             count = self.robot.check_carried_cube_count(
-                chassis_followup=chassis_followup, allow_visual_failure=True)
-            if count is None or count == 3:
+                chassis_followup=None if exhausted else chassis_followup,
+                allow_visual_failure=False, allow_idle=True)
+            from .refill_policy import checked_count, should_change_region
+            count = checked_count(count)
+            self._check_active()
+            if count == 3:
                 print(f'[{self.TASK_LABEL}] Carried count={count}; continue route')
                 return
-            if count not in (0, 1, 2):
-                raise RuntimeError(f'invalid carried cube count: {count}')
+            if should_change_region(count, exhausted=exhausted):
+                from .refill import collect_other_region
+                collect_other_region(self, count)
+                return
             remaining = 3 - count
             print(f'[{self.TASK_LABEL}] Carried count={count}; refill {remaining}')
 
@@ -1339,7 +1345,7 @@ class CompetitionProgram(TaskControl):
             nonlocal reverse_done
             # Freeze the search measurement before any delivery movement.
             self._cube_lateral_displacement_mm = (
-                self._measure_lateral_displacement_mm(lateral_origin))
+                self._measure_lateral_displacement_mm(self._orange_recovery.origin))
             if cfg.delivery_forward_base_mm <= self._cube_lateral_displacement_mm:
                 raise RuntimeError('delivery forward distance must be positive')
             self._run_delivery_reverse()
@@ -1351,7 +1357,7 @@ class CompetitionProgram(TaskControl):
 
         if not reverse_done:
             self._cube_lateral_displacement_mm = (
-                self._measure_lateral_displacement_mm(lateral_origin))
+                self._measure_lateral_displacement_mm(self._orange_recovery.origin))
         print(f'[{self.TASK_LABEL}] Encoder-measured cube lateral displacement: '
               f'{self._cube_lateral_displacement_mm:+.0f} mm '
               '(right positive)')

@@ -34,7 +34,7 @@ def ground_delivery(prefix, profile):
              direction='forward', recalibrate=True),
         *orange_pickups(f'{prefix}.orange', profile, 'grap3'),
         step('inspect_cargo', f'{prefix}.inspect', profile, method='grap3',
-             exit_route='ground_delivery_reverse'),
+             exit_route='ground_delivery_reverse', cross_region_refill=True),
         navigate(f'{prefix}.delivery', profile, 'ground_to_delivery', ends='delivery_tag'),
         step('align_tag', f'{prefix}.tag', profile, purpose='delivery'),
         navigate(f'{prefix}.offset', profile, 'ground_tag_offset'),
@@ -58,7 +58,7 @@ def mixed_collection(prefix, profile):
         navigate(f'{prefix}.orange_route', profile, 'purple_to_orange', ends='upper_orange_area'),
         *orange_pickups(f'{prefix}.orange', profile, 'grap1', conditional=True),
         step('inspect_cargo', f'{prefix}.inspect', profile, method='grap1',
-             exit_route='orange_depart_reverse'),
+             exit_route='orange_depart_reverse', cross_region_refill=True),
         navigate(f'{prefix}.build_route', profile, 'orange_to_build', ends='build_approach'),
     )
 

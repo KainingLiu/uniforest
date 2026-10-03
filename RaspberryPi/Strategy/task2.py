@@ -399,7 +399,7 @@ class Task2Program(TaskControl):
         def start_orange_exit():
             nonlocal orange_lateral_mm, reverse_done
             orange_lateral_mm = self._measure_lateral_displacement_mm(
-                orange_lateral_origin)
+                self._orange_recovery.origin)
             self.state = Task2State.POST_ORANGE_REVERSE
             print(f'[{self.TASK_LABEL}] Reverse {cfg.post_orange_reverse_mm:.0f} mm')
             self._checked_move(

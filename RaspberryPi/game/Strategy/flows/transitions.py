@@ -382,6 +382,9 @@ class ActionTransitions:
                 if count is not None and (type(count) is not int or not 0 <= count <= 3):
                     raise RuntimeError(f'invalid carried cube count: {count}')
                 env.data['carried_count'] = count
+                if spec.parameters.get('cross_region_refill'):
+                    from ..refill_policy import checked_count
+                    checked_count(count)
                 if count is None or count == 3:
                     if count is None and env.data.get('purple_grabbed') is True:
                         raise RuntimeError('mixed cargo count unconfirmed; building is prohibited')
@@ -393,12 +396,16 @@ class ActionTransitions:
                     refill = replace(spec,kind='acquire_cube',name=f'{spec.name}.refill.{index}',
                                      parameters={'index':index,'method':spec.parameters['method']})
                     if not operations.acquire_cube(env,refill):
+                        if collection['exhausted']:
+                            from .refill import on_exhausted
+                            return on_exhausted(env, spec)
                         return None
                     refill = replace(refill,kind='grab_cube')
                     self.start_grab(refill)
                     self.wait_grab_clear(refill)
                     self.finish_grab(refill)
-            return None
+            from .refill import on_exhausted
+            return on_exhausted(env, spec)
         finally:
             c._set_cube_profile('default')
 

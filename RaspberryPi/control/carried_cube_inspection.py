@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import time
 
-from protocol.commands import ACTION_DONE
+from protocol.commands import ACTION_DONE, ACTION_IDLE
 from vision.carried_cube_count import observe, classify
 
 CONFIG_PATH = Path(__file__).resolve().parents[1] / 'tools/carried_cube_count_config.json'
@@ -14,13 +14,16 @@ class InspectionVisionUnavailable(RuntimeError):
     """No current images are available; link and mechanism failures differ."""
 
 
-def inspect_carried_cubes(robot, *, chassis_followup=None, allow_visual_failure=False):
+def inspect_carried_cubes(robot, *, chassis_followup=None, allow_visual_failure=False,
+                         allow_idle=False):
     """Return 0..3/None; optionally overlap the next chassis move with restore.
 
-    Only successful counts (3/None) run the chassis-only callback. Refill must
+    Only a confirmed full count (3) runs the chassis-only callback. Refill must
     wait for restore and fresh vision. Competition may treat camera failure as
     unknown after restoring the arm. Hardware/cancellation failures propagate.
     """
+    if type(allow_idle) is not bool:
+        raise ValueError('allow_idle must be an explicit boolean')
     config = json.loads(CONFIG_PATH.read_text(encoding='utf-8'))
     transport = robot.transport
     actions = robot.actions
@@ -59,7 +62,7 @@ def inspect_carried_cubes(robot, *, chassis_followup=None, allow_visual_failure=
             check()
             status = transport.get_action_status()
             if status is not None and status[1] >= probe_at:
-                if status[0].state != ACTION_DONE:
+                if status[0].state != ACTION_DONE and not (allow_idle and status[0].state == ACTION_IDLE):
                     raise RuntimeError(f'A-board action not complete before inspection: {status[0].state}')
                 break
             if time.monotonic() - probe_at > .15:
@@ -153,7 +156,7 @@ def inspect_carried_cubes(robot, *, chassis_followup=None, allow_visual_failure=
                 robot.reset_vision_filter(after_inspection=True)
                 restored = True
 
-        if chassis_followup is not None and count in (None, 3):
+        if chassis_followup is not None and count == 3:
             # Chassis loops supervise both the link and timed servo restore.
             # No detached worker can outlive cancellation or start a later grab.
             with robot.chassis.monitor_action(advance_restore):

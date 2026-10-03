@@ -204,7 +204,7 @@ class PlanBTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 run_plan(robot, resolve_selection('task4-1'), heading_zero_deg=value)
 
-    def test_full_plan_b_continues_without_vision_and_builds_twice_in_task5(self):
+    def test_full_plan_b_stops_when_exhaustion_count_is_unknown(self):
         robot = robot_fixture()
         robot.has_vision = robot.has_field_localization = False
         robot.move_chassis = Mock(return_value=SimpleNamespace(timed_out=False, cancelled=False))
@@ -228,17 +228,16 @@ class PlanBTests(unittest.TestCase):
              patch('Strategy.competition.TaskControl._chassis_followup', side_effect=lambda route: lambda check: route()), \
              patch('Strategy.task3.Task3Program._align_building', side_effect=VisualAlignmentUnavailable('no building')), \
              patch('Strategy.competition.TaskControl._find_cube', side_effect=SearchRangeExhausted()):
-            self.assertEqual(run_plan(robot, PLANS['PlanB']), 0)
-        self.assertEqual(zeros, [('task4-1', 37), ('task4-2', 37)])
-        self.assertEqual(robot.actions.hatch_open.call_args_list,
-                         [call(settle_ms=300)] * 4 + [call(settle_ms=200)] * 2)
-        self.assertEqual(robot.actions.hatch_close.call_args_list,
-                         [call(settle_ms=0)] * 4 + [call(settle_ms=400)] * 2)
+            with self.assertRaisesRegex(RuntimeError, 'fresh, known cargo count'):
+                run_plan(robot, PLANS['PlanB'])
+        self.assertEqual(zeros, [])
+        robot.actions.hatch_open.assert_not_called()
+        robot.actions.hatch_close.assert_not_called()
         completed = [c.kwargs['task'] for c in robot.diagnostics.write.call_args_list
                      if c.args == ('task_complete',)]
-        self.assertEqual(completed, [s.task_id for s in PLANS['PlanB'].steps])
-        self.assertEqual(robot.actions.build.call_count, 2)
-        robot.transport.emergency_stop.assert_not_called()
+        self.assertEqual(completed, ['task0-2'])
+        robot.actions.build.assert_not_called()
+        robot.transport.emergency_stop.assert_called()
 
     def test_new_cli_previews_and_bad_task4_entries_never_connect(self):
         import main

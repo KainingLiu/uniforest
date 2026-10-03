@@ -16,6 +16,23 @@ from utils.run_logs import run_entry
 
 ROOT = Path(__file__).resolve().parents[1]
 BASELINE = json.loads((Path(__file__).parent / 'runtime_baseline.json').read_text(encoding='utf-8'))
+# User-authorized main strategy update on 2026-10-03. Behaviour is covered by
+# test_cross_region_refill / test_visual_fallback; all other baseline files,
+# including calibration, protocol and firmware, retain their original check.
+REFILL_CHANGED_FILES = {
+    'RaspberryPi/Strategy/competition.py',
+    'RaspberryPi/Strategy/task2.py',
+    'RaspberryPi/control/carried_cube_inspection.py',
+}
+
+
+def without_refill_adapter(tree):
+    for node in tree.body:
+        if isinstance(node, ast.ClassDef) and node.name == 'Robot':
+            node.body = [item for item in node.body
+                         if not isinstance(item, ast.FunctionDef)
+                         or item.name != 'check_carried_cube_count']
+    return tree
 
 
 def without_log_lines(text):
@@ -24,8 +41,10 @@ def without_log_lines(text):
 
 
 class RuntimeSelectionTests(unittest.TestCase):
-    def test_main_existing_source_configuration_and_firmware_unchanged(self):
+    def test_unrelated_main_source_configuration_and_firmware_unchanged(self):
         for name, digest in BASELINE['protected'].items():
+            if name in REFILL_CHANGED_FILES:
+                continue
             with self.subTest(path=name):
                 path = ROOT.parent / name
                 if name.startswith('Uniforest_A/') and not (ROOT.parent / 'Uniforest_A').is_dir():
@@ -35,14 +54,17 @@ class RuntimeSelectionTests(unittest.TestCase):
     def test_entry_modules_equal_original_ast_after_removing_added_bootstrap(self):
         for entry, digest in BASELINE['entry_ast'].items():
             tree = ast.parse((ROOT / (entry + '.py')).read_text(encoding='utf-8'))
-            # Only the one new early script guard is allowed; all original
-            # imports, definitions, arguments and the old footer stay intact.
+            # Validate the script guard separately. Apart from the explicitly
+            # updated cargo adapter, original definitions/CLI/footer stay intact.
             self.assertIsInstance(tree.body[1], ast.If)
             self.assertEqual(tree.body[1].body[0].module, 'utils.runtime_launcher')
             del tree.body[1]
             # AST fields differ across Python 3.11/3.13. Parse the pinned source
             # with this interpreter so the comparison checks code, not version.
-            self.assertEqual(ast.dump(tree), ast.dump(ast.parse(BASELINE['entry_sources'][entry])), entry)
+            original = ast.parse(BASELINE['entry_sources'][entry])
+            if entry == 'robot':
+                tree, original = without_refill_adapter(tree), without_refill_adapter(original)
+            self.assertEqual(ast.dump(tree), ast.dump(original), entry)
 
     def test_every_legacy_selector_help_and_error_preserves_output_and_exit_code(self):
         with tempfile.TemporaryDirectory() as directory:

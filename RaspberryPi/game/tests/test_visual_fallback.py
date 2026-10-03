@@ -320,7 +320,7 @@ class VisualTests(unittest.TestCase):
         with self.assertRaises(SearchRangeExhausted): replay.run(limit=1800)
         self.assertLessEqual(replay.now-replay.start, 13.1)
 
-    def test_whole_classic_sequence_continues_without_cameras(self):
+    def test_plan_a_exhaustion_without_cargo_vision_stops_before_cross_region_refill(self):
         # Run actual PlanA functional actions; only physical control is replaced.
         robot = robot_fixture()
         robot.has_vision = robot.has_field_localization = False
@@ -343,14 +343,14 @@ class VisualTests(unittest.TestCase):
              patch('Strategy.controllers.RobotController._find_cube', side_effect=SearchRangeExhausted()), \
              patch('Strategy.controllers.RobotController._align_delivery_tag', side_effect=VisualAlignmentUnavailable('no tag')), \
              patch('Strategy.controllers.RobotController._chassis_followup', side_effect=lambda callback: lambda check: callback()), \
+             patch('Strategy.flows.refill.refill_routes.transfer') as transfer, \
              patch.object(RobotController, '_align_building', side_effect=VisualAlignmentUnavailable('no building')):
-            self.assertEqual(run_selection(robot, 'PlanA'), 0)
-        self.assertEqual(events.count('build'), 3)
-        self.assertTrue(any(isinstance(event, tuple) and event[1:] == ('left', 2200)
-                            for event in events))
-        self.assertTrue(any(isinstance(event, tuple) and event[1:] == ('left', 3000)
-                            for event in events))
-        robot.transport.emergency_stop.assert_not_called()
+            with self.assertRaisesRegex(RuntimeError, 'fresh, known cargo count'):
+                run_selection(robot, 'PlanA')
+            transfer.assert_not_called()
+        self.assertEqual(events.count('build'), 0)
+        robot.actions.hatch_open.assert_not_called()
+        robot.transport.emergency_stop.assert_called()
         robot.set_cube_detection_profile.assert_not_called()
 
 

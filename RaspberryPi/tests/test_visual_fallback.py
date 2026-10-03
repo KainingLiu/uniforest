@@ -257,12 +257,14 @@ class VisualTests(unittest.TestCase):
                 with self.assertRaises(RuntimeError) as error: replay.run(limit=900)
                 self.assertNotIsInstance(error.exception, SearchRangeExhausted)
 
-    def test_orange_budget_exhaustion_skips_count_and_returns_to_route(self):
+    def test_orange_budget_exhaustion_checks_count_before_changing_region(self):
         robot = robot_fixture()
-        robot.check_carried_cube_count = Mock()
+        robot.check_carried_cube_count = Mock(return_value=2)
         task = CompetitionProgram(robot)
-        task._collect_orange_with_count_check(3, Mock(side_effect=SearchRangeExhausted()))
-        robot.check_carried_cube_count.assert_not_called()
+        with patch('Strategy.refill.collect_other_region') as refill:
+            task._collect_orange_with_count_check(3, Mock(side_effect=SearchRangeExhausted()))
+            refill.assert_called_once_with(task, 2)
+        robot.check_carried_cube_count.assert_called_once()
 
     def test_tag_and_building_only_catch_typed_visual_failures(self):
         robot = robot_fixture()
@@ -304,7 +306,7 @@ class VisualTests(unittest.TestCase):
         with self.assertRaises(SearchRangeExhausted): replay.run(limit=1800)
         self.assertLessEqual(replay.now-replay.start, 13.1)
 
-    def test_whole_classic_sequence_continues_without_cameras(self):
+    def test_whole_classic_sequence_stops_when_exhaustion_count_is_unknown(self):
         # Run actual Task0/1/2/3 route methods; only physical control is replaced.
         robot = robot_fixture()
         robot.has_vision = robot.has_field_localization = False
@@ -328,11 +330,10 @@ class VisualTests(unittest.TestCase):
              patch('Strategy.competition.TaskControl._align_delivery_tag', side_effect=VisualAlignmentUnavailable('no tag')), \
              patch('Strategy.competition.TaskControl._chassis_followup', side_effect=lambda callback: lambda check: callback()), \
              patch.object(Task3Program, '_align_building', side_effect=VisualAlignmentUnavailable('no building')):
-            self.assertEqual(run_tasks(robot, 'classic'), 0)
-        self.assertEqual(events.count('build'), 3)
-        self.assertIn(('task3-2', 'left', 2200), events)
-        self.assertIn(('task3-3', 'left', 3000), events)
-        robot.transport.emergency_stop.assert_not_called()
+            with self.assertRaisesRegex(RuntimeError, 'fresh, known cargo count'):
+                run_tasks(robot, 'classic')
+        self.assertEqual(events.count('build'), 0)
+        robot.transport.emergency_stop.assert_called()
         robot.set_cube_detection_profile.assert_not_called()
 
 
@@ -372,21 +373,35 @@ class CountReplay:
             return None
         return np.zeros((4, 4, 3), np.uint8), self.now
 
-    def run(self, allow=True):
+    def run(self, allow=True, allow_idle=False):
         self.followup = Mock()
         with patch('control.carried_cube_inspection.time', self.clock), \
              patch('control.carried_cube_inspection.observe', return_value=({}, None)), \
              patch('control.carried_cube_inspection.classify', return_value={'count': 3}), \
              contextlib.redirect_stdout(io.StringIO()):
-            return inspect_carried_cubes(self, chassis_followup=self.followup, allow_visual_failure=allow)
+            return inspect_carried_cubes(self, chassis_followup=self.followup,
+                                        allow_visual_failure=allow, allow_idle=allow_idle)
 
 
 class CountFallbackTests(unittest.TestCase):
+    def test_idle_inspection_is_explicit_and_busy_state_is_never_accepted(self):
+        from protocol.commands import ACTION_IDLE, ACTION_RUNNING
+        for state, allowed in ((ACTION_IDLE, True), (ACTION_IDLE, False), (ACTION_RUNNING, True)):
+            replay = CountReplay('none')
+            replay.transport.get_action_status = lambda: (
+                SimpleNamespace(state=state, uptime_ms=0), replay.now)
+            if state == ACTION_IDLE and allowed:
+                self.assertIsNone(replay.run(allow_idle=True))
+                replay.followup.assert_not_called()
+            else:
+                with self.assertRaisesRegex(RuntimeError, 'not complete'):
+                    replay.run(allow_idle=allowed)
+
     def test_no_frame_returns_unknown_without_moving_arm(self):
         replay = CountReplay('none')
         self.assertIsNone(replay.run())
         self.assertEqual(replay.servos, [])
-        replay.followup.assert_called_once()
+        replay.followup.assert_not_called()
         replay.transport.emergency_stop.assert_not_called()
 
     def test_camera_loss_after_pose_restores_arm_before_return(self):
@@ -394,7 +409,7 @@ class CountFallbackTests(unittest.TestCase):
         self.assertIsNone(replay.run())
         self.assertEqual(replay.servos, [(0, 37.2), (1, 120), (1, 90), (0, 97.2)])
         replay.reset_vision_filter.assert_called_once_with(after_inspection=True)
-        replay.followup.assert_called_once()
+        replay.followup.assert_not_called()
         replay.transport.emergency_stop.assert_not_called()
 
     def test_strict_diagnostics_and_cancellation_still_fail(self):

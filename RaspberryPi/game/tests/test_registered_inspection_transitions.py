@@ -29,10 +29,22 @@ class InspectionAdapter:
             raise RuntimeError('mechanism already owned')
         owner.events.append(('inspect.begin', index))
 
-    def inspect(self):
-        self.owner.context.check_active()
-        self.owner.events.append(('inspect.count', self.index, self.count))
-        return self.count
+    def inspect(self, *, chassis_followup=None):
+        try:
+            self.owner.context.check_active()
+            if self.closed:
+                raise RuntimeError('inspection is closed')
+            if chassis_followup is not None:
+                with self.owner.robot.chassis.monitor_action(self.owner.context.check_active):
+                    chassis_followup()
+            self.owner.context.check_active()
+            if self.count is not None and (type(self.count) is not int or not 0 <= self.count <= 3):
+                raise RuntimeError(f'invalid carried cube count: {self.count}')
+            self.owner.events.append(('inspect.count', self.index, self.count))
+            return self.count
+        except BaseException:
+            self.abort()
+            raise
 
     def check_restore(self):
         try:
@@ -104,6 +116,9 @@ class RegisteredInspectionReplay:
         self.robot.actions._action_lock = threading.Lock()
         self.robot.actions.pickup_full_lift_validated = False
         self.events, self.sessions = [], []
+        self.forward = 0.0
+        self.robot.chassis.capture_motor_positions = lambda: (self.forward,) * 4
+        self.robot.chassis.forward_displacement_mm = lambda origin: self.forward - origin[0]
         self.context = ExecutionContext(self.robot, heading_zero_deg=37)
         self.env = ActionEnvironment(self.robot, self.context, transition_config=TransitionConfig(
             switches=TransitionSwitches(overrides={'inspect-departure': True})))
@@ -112,8 +127,7 @@ class RegisteredInspectionReplay:
         self.route_fault, self.refill_available = route_fault, refill_available
         self.counts = iter(counts)
         self.control._capture_lateral_origin = Mock(return_value=(0, 0, 0, 0))
-        self.control._checked_move = Mock(side_effect=lambda *a, **kw:
-                                         self.events.append(('move', a, kw)))
+        self.control._checked_move = Mock(side_effect=self.move)
         self.control._drive_until_wall = Mock(side_effect=lambda **kw:
                                             self.events.append(('wall', kw)))
         self.control._recalibrate_heading_zero = Mock(side_effect=lambda:
@@ -144,11 +158,24 @@ class RegisteredInspectionReplay:
         return session
 
     def run_route(self, route, profile):
+        flag = 'ground_reverse_done' if profile.startswith('ground') else 'orange_reverse_done'
+        if route == self.exit_route and self.env.data.get(flag, False):
+            return  # Real retreat routes consume this flag; do not move twice.
         self.events.append(('route', route, self.robot.actions._action_lock.locked()))
         if self.route_fault == 'exception':
             raise RuntimeError('route failed')
         if self.route_fault == 'stale':
             self.robot.telemetry_age = 1
+        self.context.check_active()
+        if route == self.exit_route:
+            self.forward -= 382.5 if profile.startswith('ground') else 91.75
+            self.env.data[flag] = True
+
+    def move(self, *args, **kwargs):
+        self.context.check_active()
+        self.events.append(('move', args, kwargs))
+        direction, distance, _ = args
+        self.forward += distance if direction == 'forward' else -distance if direction == 'backward' else 0
 
     def seed(self, env, spec):
         result = operations.begin_collection(env, spec)
@@ -161,6 +188,9 @@ class RegisteredInspectionReplay:
     def acquire(self, env, spec):
         if self.robot.actions._action_lock.locked():
             raise AssertionError('refill acquisition began before inspection close')
+        flag = 'ground_reverse_done' if spec.profile.startswith('ground') else 'orange_reverse_done'
+        if env.data.get(flag, False):
+            raise AssertionError('refill acquisition began before return to pickup wall')
         self.events.append('refill.acquire')
         env.data['collection']['acquired'] = self.refill_available
         env.data['collection']['exhausted'] = not self.refill_available
@@ -186,8 +216,12 @@ class RegisteredInspectionTransitionTests(unittest.TestCase):
                                     events.index(('inspect.finish', 0)))
                     self.assertLess(events.index(('inspect.close', 0)),
                                     events.index(('route', replay.route, False)))
-                    self.assertEqual(replay.env.run_route.call_args_list, [
-                        call(replay.exit_route, profile), call(replay.route, profile)])
+                    # Dispatch may revisit the guarded retreat; actual motion
+                    # happens once, then the transport starts after release.
+                    self.assertEqual([e for e in events if e[0] == 'route'], [
+                        ('route', replay.exit_route, True), ('route', replay.route, False)])
+                    self.assertLess(events.index(('route', replay.exit_route, True)),
+                                    events.index(('inspect.count', 0, count)))
                     self.assertEqual((replay.sessions[0].finish_calls,
                                       replay.sessions[0].close_calls), (1, 1))
                     self.assertEqual(replay.env.transitions.inspections, {})
@@ -210,9 +244,11 @@ class RegisteredInspectionTransitionTests(unittest.TestCase):
                                 events.index(('inspect.begin', 1)))
                 self.assertEqual(replay.env.data['collection']['pickups'], 3-count)
                 self.assertEqual([(s.finish_calls,s.close_calls) for s in replay.sessions], [(1,1),(1,1)])
-                self.assertEqual(replay.env.run_route.call_args_list, [
-                    call(replay.exit_route, replay.profile),
-                    call(replay.route, replay.profile)])
+                self.assertEqual([e for e in events if e[0] == 'route'], [
+                    ('route', replay.exit_route, True),
+                    ('route', replay.exit_route, True),
+                    ('route', replay.route, False)])
+                replay.control._checked_move.assert_called_once_with('forward', 382.5, 400)
                 self.assertLess(events.index(('inspect.close', 1)),
                                 events.index(('route', replay.route, False)))
 
@@ -232,7 +268,9 @@ class RegisteredInspectionTransitionTests(unittest.TestCase):
                                 events.index(('wall', {'context': 'Return for verified cargo refill'})))
                 self.assertLess(events.index('recalibrate'), events.index('refill.acquire'))
                 flag = 'ground_reverse_done' if profile.startswith('ground') else 'orange_reverse_done'
-                self.assertFalse(replay.env.data[flag])
+                # Cleared before refill (asserted by acquire), then consumed
+                # again by the second inspection's retreat.
+                self.assertTrue(replay.env.data[flag])
                 self.assertIsNone(replay.env.transitions.early_departure)
 
     def test_refill_search_exhaustion_releases_inspection_and_runs_route_serially(self):
@@ -268,13 +306,14 @@ class RegisteredInspectionTransitionTests(unittest.TestCase):
                         replay.events.index(('route', 'ground_tag_offset', False)))
         self.assertEqual(replay.sessions[0].finish_calls, 1)
 
-    def test_invalid_adapter_count_aborts_before_any_route_or_refill(self):
+    def test_invalid_count_after_sampling_retreat_aborts_before_transport_or_refill(self):
         for count in (True, 1.0, -1, 4):
             with self.subTest(count=count):
                 replay = RegisteredInspectionReplay([count])
                 with self.assertRaisesRegex(RuntimeError, 'invalid carried cube count'):
                     replay.run()
-                replay.env.run_route.assert_not_called()
+                replay.env.run_route.assert_called_once_with(replay.exit_route, replay.profile)
+                self.assertNotIn(('route', replay.route, False), replay.events)
                 self.assertNotIn('refill.acquire', replay.events)
                 self.assertFalse(replay.robot.actions._action_lock.locked())
                 self.assertEqual(replay.env.transitions.inspections, {})

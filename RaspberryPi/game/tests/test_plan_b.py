@@ -213,7 +213,7 @@ class PlanBTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             run_plan(robot, plan)
 
-    def test_full_plan_b_continues_without_vision_and_builds_twice_from_staged_materials(self):
+    def test_plan_b_exhaustion_without_cargo_vision_stops_before_cross_region_refill(self):
         robot = robot_fixture()
         robot.has_vision = robot.has_field_localization = False
         robot.move_chassis = Mock(return_value=SimpleNamespace(timed_out=False, cancelled=False))
@@ -234,15 +234,16 @@ class PlanBTests(unittest.TestCase):
              patch.object(RobotController, '_align_delivery_tag', side_effect=VisualAlignmentUnavailable('no tag')), \
              patch.object(RobotController, '_chassis_followup', side_effect=lambda route: lambda check: route()), \
              patch.object(RobotController, '_align_building', side_effect=VisualAlignmentUnavailable('no building')), \
+             patch('Strategy.flows.refill.refill_routes.transfer') as transfer, \
              patch.object(RobotController, '_find_cube', side_effect=SearchRangeExhausted()):
-            self.assertEqual(run_plan(robot, PLANS['PlanB']), 0)
-        self.assertEqual(unload_headings, [37.0] * 4)
-        self.assertEqual(robot.actions.hatch_open.call_args_list,
-                         [call(settle_ms=300)] * 4 + [call(settle_ms=200)] * 2)
-        self.assertEqual(robot.actions.hatch_close.call_args_list,
-                         [call(settle_ms=0)] * 4 + [call(settle_ms=400)] * 2)
-        self.assertEqual(robot.actions.begin.call_count, 2)
-        robot.transport.emergency_stop.assert_not_called()
+            with self.assertRaisesRegex(RuntimeError, 'fresh, known cargo count'):
+                run_plan(robot, PLANS['PlanB'])
+            transfer.assert_not_called()
+        self.assertEqual(unload_headings, [])
+        robot.actions.hatch_open.assert_not_called()
+        robot.actions.hatch_close.assert_not_called()
+        robot.actions.begin.assert_not_called()
+        robot.transport.emergency_stop.assert_called()
 
     def test_new_cli_previews_and_bad_unload_entries_never_connect(self):
         import main

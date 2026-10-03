@@ -307,7 +307,7 @@ class TransitionExecutionSwitchTests(unittest.TestCase):
                 self.select(replay.env, 'inspect-departure', enabled, disable_all=True)
                 self.assertEqual(replay.run(), 0)
                 self.assertIn(('route', replay.route, False), replay.events)
-                self.assertEqual(replay.env.run_route.call_count, 2 if enabled else 1)
+                self.assertEqual(len([e for e in replay.events if e[0] == 'route']), 2 if enabled else 1)
                 if enabled:
                     self.assertIn(('route', replay.exit_route, True), replay.events)
                 else:

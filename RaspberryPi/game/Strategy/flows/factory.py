@@ -22,7 +22,7 @@ PARAMETERS = {
     'begin_collection': {'color', 'detector_profile'},
     'acquire_cube': {'index', 'max_count', 'conditional_on_purple'},
     'grab_cube': {'index', 'max_count', 'conditional_on_purple', 'method', 'followup_route'},
-    'inspect_cargo': {'method', 'exit_route'},
+    'inspect_cargo': {'method', 'exit_route', 'cross_region_refill'},
     'unload': set(), 'load_staged': set(),
     'align_tag': {'purpose'}, 'align_building': set(), 'build': set(),
 }
@@ -64,7 +64,7 @@ def validate_spec(spec):
     for key in ('route','exit_route','followup_route'):
         if key in params:
             _validate_route(spec, params[key])
-    for key in ('after_build','recalibrate','conditional_on_purple'):
+    for key in ('after_build','recalibrate','conditional_on_purple','cross_region_refill'):
         if key in params and type(params[key]) is not bool:
             raise ValueError(f'{spec.name}: {key} must be boolean')
     for key in ('reference_cw_deg','settle_s','timeout_s','speed_mm_s'):
@@ -93,6 +93,12 @@ def validate_spec(spec):
         raise ValueError(f'{spec.name}: route has no verified build overlap contract')
     if spec.kind in ('grab_cube', 'inspect_cargo') and params.get('method') not in ('grap1','grap2','grap3'):
         raise ValueError(f'{spec.name}: unknown mechanism')
+    if params.get('cross_region_refill'):
+        ground = spec.profile.startswith('ground-')
+        if ((not ground and not spec.profile.startswith('highland-'))
+                or params.get('method') != ('grap3' if ground else 'grap1')
+                or params.get('exit_route') != ('ground_delivery_reverse' if ground else 'orange_depart_reverse')):
+            raise ValueError(f'{spec.name}: cross-region refill requires an orange collection route')
     for key in ('index', 'max_count'):
         if key in params and (type(params[key]) is not int or not 1 <= params[key] <= 3):
             raise ValueError(f'{spec.name}: {key} must be an integer in 1..3')
@@ -236,10 +242,10 @@ class ActionEnvironment:
 
     def _start_build(self, spec):
         self._enter(spec)
-        if self.data.get('purple_grabbed') is False:
-            raise RuntimeError('required purple pickup missing; mixed-cube building is prohibited')
-        if self.data.get('purple_grabbed') is True and self.data.get('carried_count') != 3:
-            raise RuntimeError('mixed cargo count must be confirmed before building')
+        # Both highland recipes (two orange + purple, or three orange) need
+        # the existing cargo confirmation before starting the same Build.
+        if self.data.get('purple_grabbed') is not None and self.data.get('carried_count') != 3:
+            raise RuntimeError('highland cargo count must be confirmed before building')
         self.phase(self.control(spec.profile), 'BUILD')
         begin_pose = getattr(self.robot, 'begin_cube_camera_pose_change', None)
         pose = begin_pose('build') if begin_pose else None

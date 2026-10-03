@@ -28,9 +28,8 @@ def _selected_pickup(env, spec, controller):
     index = params.get('index', 1)
     if params.get('conditional_on_purple', False):
         cfg = controller.config
-        if not env.data.get('purple_grabbed', False):
-            raise RuntimeError('required purple pickup missing; orange substitution is prohibited')
-        limit = cfg.orange_target_count
+        limit = (cfg.orange_target_count if env.data.get('purple_grabbed', False)
+                 else cfg.orange_target_count_without_purple)
     else:
         limit = params.get('max_count', index)
     return index <= limit
@@ -128,7 +127,7 @@ def _acquire_purple(env, controller, alignment=None):
                 return True
             attempts += 1
             if attempts >= alignment.max_attempts:
-                raise RuntimeError('required purple alignment failed; stop before leaving purple area')
+                raise RuntimeError('purple alignment unresolved; absence not confirmed')
             continue
         if controller._align_cube(
                 block, color_name='purple', min_confidence=cfg.purple_min_confidence,
@@ -237,8 +236,9 @@ def inspect_cargo(env, spec):
 
     The count camera can return unknown. Only a full or unknown result permits
     the optional chassis route during camera restoration. Refills share the
-    initial search origin and consume the same remaining search budget; no new
-    retry count or search budget is introduced by this operation.
+    initial search origin and consume the same remaining search budget. Plans
+    opting into cross-region refill can make one separately bounded alternate
+    visit when this region is exhausted, then reanchor before continuing.
     """
     controller = env.control(spec.profile)
     collection = _collection(env, spec)
@@ -254,6 +254,9 @@ def inspect_cargo(env, spec):
                 chassis_followup=callback, allow_visual_failure=True,
                 allow_idle=collection.get('pickups') == 0)
             env.data['carried_count'] = count
+            if spec.parameters.get('cross_region_refill'):
+                from ..refill_policy import checked_count
+                checked_count(count)
             if count is None or count == 3:
                 return count
             if count not in (0, 1, 2):
@@ -265,10 +268,13 @@ def inspect_cargo(env, spec):
                 refill = replace(spec, kind='acquire_cube',
                                  name=f'{spec.name}.refill-{index}', parameters=params)
                 if not acquire_cube(env, refill):
+                    if collection['exhausted']:
+                        from .refill import on_exhausted
+                        return on_exhausted(env, spec)
                     return None
                 grab_cube(env, replace(refill, kind='grab_cube'))
-        # Search exhaustion intentionally skips the count pose/inspection.
-        return None
+        from .refill import on_exhausted
+        return on_exhausted(env, spec)
     finally:
         controller._set_cube_profile('default')
 

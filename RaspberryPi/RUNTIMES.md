@@ -11,8 +11,11 @@
 | game 同步 GitHub 新场地视觉标定 | game/vision/opencv 的相机设置、几何常量、偏置、标定记录 | 与 main 标定逐文件 / 数值比对；保留 game 视觉扩展 |
 | game 代码及扩展固件独立存放 | RaspberryPi/game/、Uniforest_A/game/ | 双套 Python 测试、双套 Debug 构建；旧命令差分及会话接手测试 |
 
-主分支 Strategy、control、protocol、vision、agent、桌面入口、依赖和默认下位机工程保持基线内容。
-原始 main.py、task2_main.py、robot.py 的函数及参数解析保持；只增加脚本启动分流与日志。
+2026-10-03 按用户明确要求，在 main 和 game 同步实现橙块跨区补抓，
+main 的 competition/task2、数量检查及 Robot 数量检查适配器允许这一项行为变化；
+详见 [主策略约定](Strategy/README.md)。
+其余受保护的源码、标定、协议、Agent、桌面入口、依赖和默认下位机工程继续保留基线校验。
+三个入口的 CLI 参数解析及分流语义保持，main 不依赖 game 的模块。
 协议未变：主分支命令编号、载荷长度、字节序、遥测布局、200 ms 失联处理均保留。
 game 原有扩展协议继续只在其独立实现中启用。
 

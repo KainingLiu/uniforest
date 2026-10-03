@@ -68,21 +68,45 @@ class Mechanism:
 class Inspection:
     def __init__(self, fixture, count):
         self.fixture, self.count = fixture, count
+        self.closed = self.restored = False
 
-    def inspect(self):
-        self.fixture.events.append(('inspect', self.count))
-        return self.count
+    def inspect(self, *, chassis_followup=None):
+        try:
+            self.fixture.context.check_active()
+            if self.closed:
+                raise RuntimeError('inspection is closed')
+            if chassis_followup is not None:
+                with self.fixture.robot.chassis.monitor_action(self.fixture.context.check_active):
+                    chassis_followup()
+            self.fixture.context.check_active()
+            if self.count is not None and (type(self.count) is not int or not 0 <= self.count <= 3):
+                raise RuntimeError(f'invalid carried cube count: {self.count}')
+            self.fixture.events.append(('inspect', self.count))
+            return self.count
+        except BaseException:
+            self.abort()
+            raise
 
     def check_restore(self):
         self.fixture.context.check_active()
 
     def finish_restore(self):
+        self.fixture.context.check_active()
+        self.restored = True
         self.fixture.events.append(('restore_inspection', self.count))
 
     def close(self):
+        if self.closed:
+            return
+        if not self.restored:
+            raise AssertionError('inspection closed before restoration')
+        self.closed = True
         self.fixture.events.append(('close_inspection', self.count))
 
     def abort(self):
+        if self.closed:
+            return
+        self.closed = True
         self.fixture.events.append(('abort_inspection', self.count))
 
 
@@ -103,6 +127,7 @@ class Fixture:
             set_collection_context=Mock(), begin_cube_camera_pose_change=self.begin_pose,
             end_cube_camera_pose_change=self.end_pose,
             begin_carried_cube_inspection=self.inspect,
+            diagnostics=SimpleNamespace(write=Mock()),
         )
         self.robot.chassis = SimpleNamespace(
             capture_motor_positions=lambda: (self.forward,) * 4,
@@ -311,6 +336,8 @@ class RegisteredPickupTransitionTests(unittest.TestCase):
         f = Fixture(profile='highland-1', method='grap1',
                     policy=calibration(last_departure=True))
         f.env.data['purple_grabbed'] = True
+        f.env.transition_config = replace(f.env.transition_config, switches=TransitionSwitches(
+            overrides={'last-departure': True, 'inspect-departure': False}))
         steps = [action('grab_cube', 'orange.grab.2', f.profile, method='grap1',
                         index=2, conditional_on_purple=True),
                  action('acquire_cube', 'orange.find.3', f.profile, index=3,
@@ -329,7 +356,7 @@ class RegisteredPickupTransitionTests(unittest.TestCase):
         self.assertIn('transition:last_grab_skips_unused_slot', names)
         self.assertNotIn(('blind',), f.events)
 
-    def test_partial_cargo_returns_to_pickup_wall_then_refills_and_departs_again(self):
+    def test_inspection_priority_returns_partial_cargo_for_refill_then_departs_again(self):
         f = Fixture(policy=calibration(last_departure=True), counts=(2, 3))
         steps = [action('grab_cube', 'last.grab', method='grap3', index=3),
                  action('inspect_cargo', 'inspect', method='grap3',
@@ -350,17 +377,20 @@ class RegisteredPickupTransitionTests(unittest.TestCase):
         self.assertEqual(f.events.count(('close_inspection', 2)), 1)
         self.assertEqual(f.events.count(('close_inspection', 3)), 1)
         phases = [event.phase for event in f.runtime.trace]
-        self.assertIn('transition:last_grab_to_inspect', phases)
+        self.assertNotIn('transition:last_grab_to_inspect', phases)
         self.assertIn('transition:inspect_to_route', phases)
 
     def test_full_cargo_after_early_departure_does_not_repeat_reverse(self):
         f = Fixture(policy=calibration(last_departure=True))
+        f.env.transition_config = replace(f.env.transition_config, switches=TransitionSwitches(
+            overrides={'last-departure': True, 'inspect-departure': False}))
         f.run([action('grab_cube', 'last.grab', method='grap3', index=3),
                action('inspect_cargo', 'inspect', method='grap3', exit_route='ground_delivery_reverse'),
                action('navigate', 'delivery', route='ground_to_delivery')])
         reverse = [e for e in f.events if e[:2] == ('move', 'backward')]
         self.assertEqual(reverse, [('move', 'backward', 400.0)])
         self.assertEqual(len(f.sessions), 1)
+        self.assertIn('transition:last_grab_to_inspect', [e.phase for e in f.runtime.trace])
 
     def test_blind_exhaustion_consumes_travel_even_without_visual_handoff(self):
         f = Fixture()
