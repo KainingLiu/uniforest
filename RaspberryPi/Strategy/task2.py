@@ -571,17 +571,8 @@ class Task2_0Program(Task2Program):
             if set_profile is not None:
                 set_profile('default')
 
-        def finish_exit():
-            orange_lateral_mm = self._reverse_after_orange(self._orange_recovery.origin)
-            self._run_post_orange_route(orange_lateral_mm)
-
-        if self._plan_d_cargo_source() is not None:
-            # PlanD preserves the original Task1 round/site through this detour.
-            # Always inspect after the last pickup, including a zero/partial
-            # exhausted exit. Completed Grap1 operations do not establish cargo.
-            self._inspect_during_exit(finish_exit, request_refill=False)
-        else:
-            finish_exit()
+        orange_lateral_mm = self._reverse_after_orange(self._orange_recovery.origin)
+        self._run_post_orange_route(orange_lateral_mm)
 
 
 # Old import names remain aliases; canonical variant IDs use -0/-1/-2.

@@ -12,9 +12,9 @@
 | --- | --- |
 | `main.py` | 统一执行入口、策略包与单 Task 选择、只读流程预览 |
 | `robot.py` | 通信生命周期、设备聚合、预检与调试交互 |
-| `Strategy/` | Task0 至 Task5 共用任务库、PlanA/PlanB/PlanC/PlanD 策略包、统一执行器及视觉对准等共用过程 |
+| `Strategy/` | Task0 至 Task5 共用任务库、PlanA/PlanB/PlanC 策略包、统一执行器及视觉对准等共用过程 |
 | `control/` | 底盘位置外环、舵机/步进调试、A 板动作客户端 |
-| `protocol/` | 帧编解码、传输和 schema v6 契约（含动作 ID） |
+| `protocol/` | 帧编解码、传输和 schema v5 契约（含动作 ID） |
 | `vision/opencv/` | 当前 OpenCV 方块检测、AprilTag 定位、相机与标定；旧模块路径保留兼容入口 |
 | `vision/yolo/` | 自动原图采集；训练、分割推理和 hybrid 接入尚未实现 |
 | `agent/` | 自然语言控制、本地直控和 API 中转 |
@@ -39,15 +39,6 @@
 [携带数量检查与标定](tools/carried_cube_count_test.md)、
 开发电脑上的 `Uniforest_A/ACTIONS.md`（Grap/Build 动作流程）。角度、检查时序和机械参数在对应
 文档维护。正常心跳日志静默，50 ms 后台心跳及通信失联保护保留。
-
-### PlanD：按已投放层数继续搭建
-
-`python main.py --strategy PlanD --show-plan` 仅预览；`--strategy PlanD` 执行。
-PlanD 沿用 PlanB 路线，第 3/4 轮最终复检后分别记账，Task5 按底座 1/2/3 层选择
-4/4/4、4/4/5、4/5/6 层释放动作。0/未知或该层标定缺失时，在取回暂存矿前跳过该点。
-一、两层标定默认未填写，需用 `tools/calibrate_plan_d_building.py` 录入现场数据后启用。
-新增 ID 7/8 固件须通过 CLion 烧录；本轮未部署或实机动作验证。
-完整行为、跳过终点和标定步骤见 [PlanD 实现说明](Strategy/PLAND_DESIGN.md)。默认仍为 PlanA。
 
 ### 搭建动作入口
 

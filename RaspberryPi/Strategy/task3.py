@@ -3,7 +3,6 @@
 from collections import deque
 from dataclasses import dataclass
 from enum import Enum, auto
-import math
 from statistics import median
 import time
 
@@ -68,9 +67,6 @@ class Task3Config(FirstTaskConfig):
     # center as camera_calib.json for the cube camera.
     building_reference_fx_px: float = 331.93
     building_reference_cx_px: float = 320.0
-    # Height-specific PlanD scales must always consume a measured top edge.
-    # Existing Task3/PlanB callers retain the block.x/z fallback by default.
-    building_require_top_edge: bool = False
     # Forward/back creep: inside this remaining Z error the approach slows to
     # the creep band so the 100 mm/s static-friction floor cannot overshoot
     # the +/-6 mm acceptance window and set up a forward/back limit cycle.
@@ -200,7 +196,6 @@ class Task3Program(TaskControl):
             and cfg.building_min_height_width_ratio
             <= getattr(block, 'height_width_ratio', 0.0)
             <= cfg.building_max_height_width_ratio
-            and (not cfg.building_require_top_edge or self._valid_building_top_edge(block))
         ]
         if not candidates:
             return None
@@ -223,18 +218,6 @@ class Task3Program(TaskControl):
                     - cfg.building_target_x_mm) ** 2
                    + (self._building_top_reference(block)[1]
                       - cfg.building_target_z_mm) ** 2)
-
-    @staticmethod
-    def _valid_building_top_edge(block):
-        quad = getattr(block, 'quad', None)
-        if quad is None or len(quad) != 4:
-            return False
-        try:
-            top_u = (float(quad[0][0]) + float(quad[1][0])) * 0.5
-            top_v = (float(quad[0][1]) + float(quad[1][1])) * 0.5
-        except (TypeError, ValueError, IndexError):
-            return False
-        return math.isfinite(top_u) and math.isfinite(top_v) and 0 < top_v < 480
 
     def _building_top_reference(self, block):
         """Return X/Z measured from the visible upper edge of the contour."""
@@ -349,7 +332,7 @@ class Task3Program(TaskControl):
                     self.robot.chassis.set_speeds([0, 0, 0, 0])
                     if now - last_seen >= cfg.building_lost_timeout_s:
                         raise VisualAlignmentUnavailable(
-                            'orange building lost before Build')
+                            'three-layer orange building lost before Build')
                     time.sleep(cfg.building_control_period_s)
                     continue
 

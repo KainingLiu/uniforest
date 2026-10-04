@@ -55,8 +55,6 @@ ACTION_GRAP3 = 3
 ACTION_BUILD3 = 4
 ACTION_BUILD2 = 5
 ACTION_BUILD1 = 6
-ACTION_BUILD3_ON_BASE1 = 7
-ACTION_BUILD3_ON_BASE2 = 8
 ACTION_BUILD = ACTION_BUILD3  # legacy three-cube alias
 ACTION_IDLE = 0
 ACTION_RUNNING = 1
@@ -82,11 +80,9 @@ class ActionStatus:
 
 def encode_action_start(token: int, action_id: int, test_mode: bool = False) -> bytes:
     if not 1 <= token <= 0xFFFFFFFF or action_id not in (
-            ACTION_GRAP1, ACTION_GRAP2, ACTION_GRAP3, ACTION_BUILD3, ACTION_BUILD2, ACTION_BUILD1,
-            ACTION_BUILD3_ON_BASE1, ACTION_BUILD3_ON_BASE2):
+            ACTION_GRAP1, ACTION_GRAP2, ACTION_GRAP3, ACTION_BUILD3, ACTION_BUILD2, ACTION_BUILD1):
         raise ValueError('invalid action token or ID')
-    if action_id in (ACTION_BUILD3, ACTION_BUILD2, ACTION_BUILD1,
-                     ACTION_BUILD3_ON_BASE1, ACTION_BUILD3_ON_BASE2) and test_mode:
+    if action_id in (ACTION_BUILD3, ACTION_BUILD2, ACTION_BUILD1) and test_mode:
         raise ValueError('Build has no test-mode flag')
     return struct.pack('>IBB', token, action_id, int(bool(test_mode)))
 

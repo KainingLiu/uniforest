@@ -318,12 +318,11 @@ class Robot:
 
     def check_carried_cube_count(self, *, chassis_followup=None,
                                 allow_visual_failure=False,
-                                inspect_while_moving=False, allow_idle=False):
+                                inspect_while_moving=False):
         from control.carried_cube_inspection import inspect_carried_cubes
         return inspect_carried_cubes(self, chassis_followup=chassis_followup,
                                     allow_visual_failure=allow_visual_failure,
-                                    inspect_while_moving=inspect_while_moving,
-                                    allow_idle=allow_idle)
+                                    inspect_while_moving=inspect_while_moving)
 
     def hardware_preflight(self, timeout_s: float = 2.0,
                            max_telem_age_s: float = 0.3

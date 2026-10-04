@@ -101,52 +101,6 @@ static const ActionStep build1[] = {
     {HOME,{0}}, {END,{0}}
 };
 
-/* PlanD keeps the three original stock pickup endpoints, measured from the
- * action entry: (H,V) = (3.5,0), (0,-11), (0,-20.5) cm. Both low-base actions
- * release their first two cubes at the original layer-4 pose (22.5,-19),
- * forearm 4 degrees / flip 95.2 degrees. These are commanded coordinates,
- * not a homing measurement or a claim of verified clearance.
- *
- * After pickup 2, V rises from -11 to the original -9 cm transfer clearance,
- * then descends 10 cm to -19. H extends 22.5 cm, starting the descent with
- * 2 cm left. After release 2, V rises 10 cm back to -9; H retracts 22.5 cm,
- * starting the pickup descent and servo/pump commands with 5 cm left. The
- * 11.5 cm descent therefore reaches the original pickup-3 V = -20.5 cm.
- * The first pickup, first release and second pickup are unchanged. */
-#define BUILD3_LOW_BASE_PREFIX \
-    {HOME,{0}}, {HATCH,{0}}, {PUMP,{0}}, M(H,F,3.5), \
-    A(1,1000), A(0,1022), W(500), A(0,952), LIFT(40), \
-    D(H,19,F,V,19,R,3), {RELEASE,{0}}, \
-    D3(V,10,F,2,R,H,22.5,R,3,19.5), \
-    {PUMP,{0}}, A(1,950), A(0,1022), W(500), LIFT(40), A(0,952), \
-    D2(H,22.5,F,V,2,F,10,R,20.5), {RELEASE,{0}}, \
-    D3_OP(DUAL3_ASYNC,V,10,F,11.5,R,H,22.5,R,3,17.5), \
-    {WAIT_PROGRESS,{H,S(17.5),R}}, A(1,950), A(0,1022), {PUMP,{0}}, \
-    {JOIN,{0}}
-
-static const ActionStep build3_on_base1[] = {
-    BUILD3_LOW_BASE_PREFIX,
-    /* Pickup 3 at -20.5: full rise reaches V=0; the 19 cm descent gives
-     * the same layer-4 pose. Preserve the 15 cm H-start threshold and
-     * start descent with 1 cm left, as in the original third placement. */
-    D3_OP(DUAL3_ASYNC,V,20.5,F,19,R,H,22.5,F,15,21.5),
-    LIFT(40), A(0,952), {JOIN,{0}}, {RELEASE,{0}},
-    {CHASSIS_READY,{0}},
-    D(V,19,F,H,22.5,R,0), A(1,900),
-    {HOME,{0}}, {END,{0}}
-};
-
-static const ActionStep build3_on_base2[] = {
-    BUILD3_LOW_BASE_PREFIX,
-    /* The original layer-5 release pose is (23,-13.5), 0/97.2 degrees.
-     * Third-stock lift reaches V=0, so descend/return exactly 13.5 cm. */
-    D3_OP(DUAL3_ASYNC,V,20.5,F,13.5,R,H,23,F,15,22),
-    LIFT(0), A(0,972), {JOIN,{0}}, {RELEASE,{0}},
-    {CHASSIS_READY,{0}},
-    D(V,13.5,F,H,23,R,0), A(1,900),
-    {HOME,{0}}, {END,{0}}
-};
-
 static ActionStatus_t status;
 static const ActionStep *sequence;
 static uint8_t waiting_move, waiting_time, test_settle;
@@ -174,18 +128,15 @@ void Actions_Abort(uint8_t state)
 
 uint8_t Actions_Start(uint32_t token, uint8_t id, uint8_t flags)
 {
-    if (token == 0 || id < ACTION_GRAP1 || id > ACTION_BUILD3_ON_BASE2 || flags > 1 ||
-        (id >= ACTION_BUILD3 && flags))
+    if (token == 0 || id < ACTION_GRAP1 || id > ACTION_BUILD1 || flags > 1 ||
+        ((id == ACTION_BUILD3 || id == ACTION_BUILD2 || id == ACTION_BUILD1) && flags))
         return ACK_ERR_PARAM;
     /* A replay can report the previous outcome but cannot restart a motion. */
     if (token == status.token)
         return id == status.id ? ACK_OK : ACK_ERR_PARAM;
     if (Actions_IsBusy() || Stepper_IsBusy(H) || Stepper_IsBusy(V))
         return ACK_ERR_BUSY;
-    static const ActionStep *const sequences[] = {
-        grap1, grap2, grap3, build3, build2, build1,
-        build3_on_base1, build3_on_base2
-    };
+    static const ActionStep *const sequences[] = {grap1, grap2, grap3, build3, build2, build1};
     sequence = sequences[id - 1];
     status = (ActionStatus_t){token, id, ACTION_RUNNING, 0};
     waiting_move = waiting_time = move_parallel = 0;

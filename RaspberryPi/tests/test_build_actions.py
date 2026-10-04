@@ -17,32 +17,14 @@ from robot import Robot
 
 class BuildInterfacesTests(unittest.TestCase):
     def test_build_wire_ids_and_legacy_alias(self):
-        for name, ident in (('build', 4), ('build3', 4), ('build2', 5), ('build1', 6),
-                            ('build3_on_base1', 7), ('build3_on_base2', 8)):
+        for name, ident in (('build', 4), ('build3', 4), ('build2', 5), ('build1', 6)):
             action_id = getattr(commands, 'ACTION_' + name.upper())
             self.assertEqual(commands.encode_action_start(0x12345678, action_id),
                              bytes.fromhex('12345678') + bytes((ident, 0)))
             with self.assertRaises(ValueError):
                 commands.encode_action_start(1, action_id, True)
         with self.assertRaises(ValueError):
-            commands.encode_action_start(1, 9)
-
-    def test_build_on_base_selects_three_cube_action_and_forwards_monitor(self):
-        actions = Actions(Mock(), SimpleNamespace(_t=Mock()))
-        actions._run_action = Mock()
-        callback = Mock()
-        for base_height, ident in ((1, 7), (2, 8), (3, 4)):
-            with self.subTest(base_height=base_height):
-                actions.build_on_base(base_height, chassis_followup=callback)
-                actions._run_action.assert_called_with(ident, chassis_followup=callback)
-
-    def test_build_on_base_rejects_unknown_empty_and_non_integer_values_before_motion(self):
-        actions = Actions(Mock(), SimpleNamespace(_t=Mock()))
-        actions._run_action = Mock()
-        for invalid in (None, 0, -1, 4, True, False, 1.0, '1', [], {}):
-            with self.subTest(base_height=invalid), self.assertRaises(ValueError):
-                actions.build_on_base(invalid)
-        actions._run_action.assert_not_called()
+            commands.encode_action_start(1, 7)
 
     def test_client_and_robot_entry_select_the_expected_firmware_action(self):
         actions = Actions(Mock(), SimpleNamespace(_t=Mock()))
@@ -113,34 +95,17 @@ class FirmwareBuildTests(unittest.TestCase):
     def test_build3_still_releases_three_and_returns_home(self):
         self.replay(3, 'normal')
 
-    def test_low_base_builds_preserve_stock_order_release_poses_and_return_home(self):
-        for variant in (7, 8):
-            # Cover both arm/axes completion orders and a progress threshold
-            # crossed between polling ticks (17.5 cm is not divisible by 80).
-            for rate in (2, 4, 80):
-                with self.subTest(variant=variant, rate=rate):
-                    self.replay(variant, 'normal', rate)
-
-    def test_low_base_build_cancel_each_pickup_never_releases_later_cubes(self):
-        for variant in (7, 8):
-            for pickup in (1, 2, 3):
-                self.replay(variant, f'cancel_pickup{pickup}')
-
-    def test_low_base_final_transfer_stall_times_out_before_last_release(self):
-        for variant in (7, 8):
-            self.replay(variant, 'stall_final')
-
     def test_real_stepper_triggers_at_first_leg_endpoint(self):
         result = subprocess.run([str(self.stepper_executable)], capture_output=True,
                                 text=True, timeout=10)
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_cancellation_during_chassis_ready_tail_stops_both_axes(self):
-        for variant in (1, 2, 3, 7, 8):
+        for variant in (1, 2, 3):
             self.replay(variant, 'cancel')
 
     def test_stalled_motion_times_out_without_releasing(self):
-        for variant in (1, 2, 3, 7, 8):
+        for variant in (1, 2, 3):
             self.replay(variant, 'timeout')
 
     def test_build1_single_axis_rise_handles_stall_and_cancel_during_lift(self):

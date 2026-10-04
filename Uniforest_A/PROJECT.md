@@ -95,12 +95,6 @@ SYNC(0xAA) | CMD | LEN | SEQ | DATA(N) | CRC16
 2026-10-04：原 Build 改名 Build3，ID 仍为 4，旧 ACTION_BUILD / build 名称兼容；
 新增 Build2（两块）ID 5、Build1（一块）ID 6。Grap1/2/3 的 ID 仍为 1/2/3。
 schema v4 增加动作 ID 契约，v5 补充 Build1 ID 6；现有命令编号、载荷、遥测和失联保护保持。
-PlanD 将 schema 扩展至 v6，新增 BUILD3_ON_BASE1=7、BUILD3_ON_BASE2=8，
-均从满载三舱依次取料，分别使用第 4/4/4、4/4/5 层释放姿态；原 Build3 为 4/5/6。
-两组新增动作仍使用 6 B ACTION_START 与 11 B 动作状态，只有第三次释放后通知底盘。
-上位机入口为 `--strategy PlanD`，动作由 `Actions.build_on_base()` 选择；不接受测试标志。
-轨迹推导、本机 C 回放和现场未验证边界见 ACTIONS.md 的 PlanD 章节。
-2026-10-04 当前终端缺少 ARM GCC，完整 Debug 构建未验证，须通过 CLion 配套编译烧录。
 Build1 上升 20 cm 使用异步单轴动作，达到 15 cm 时开始抬臂至 4°；两者都完成后才水平伸出放置。
 该异步动作复用原步进驱动与等待/取消/超时机制，不改变其他动作的同步单轴调用。
 当前状态为 0 idle、1 running、2 done、3 cancelled、4 timeout、5 rejected、

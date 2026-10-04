@@ -5,35 +5,6 @@
 
 ## 2026-10-04
 
-### PlanD：最终数量记账与按底座层数加高
-
-基于远端 `519b606` 实现 PlanD，复用 PlanB 四轮采集及 Task5 路线。
-行为变化 → `competition/task2/runner/context/plan_d_state`：第 3/4 轮最终复检，
-投放完成后分别记录 A/B 数量；Task2-0 补抓保留原轮次，终值覆盖补抓前数量，未知仅额外
-观察一次，不递归补抓。静止复检新增显式 allow_idle，默认调用行为保留。
-
-行为变化 → `task5/actions` 与 A 板 `actions.c/h`：底座 1/2/3 层分别使用
-第 4/4/4、4/4/5、4/5/6 层释放姿态，新增 action_id 7/8，原 Build1/2/3 保留。
-新动作回收/转场位移按原取舱和释放坐标推导，参数、日期、适用底座、入口及未实机确认
-状态见 A 板 ACTIONS.md。仅末次释放通知底盘，机构和返程都结束后记完成。
-
-行为变化 → `building_profiles/task3/task5`：每层独立距离尺度，有效顶边要求及目标
-可达性检查；一、两层未提供现场标定，默认 unverified/null。`calibrate_plan_d_building.py`
-支持离线预览与显式保存测量数据。0/未知/缺标定在取回暂存矿前跳过；A 直接右移 300 mm
-接第二组，B 跳过在第二加载等待位结束。PlanD 对准失败终止，PlanB 保留原行为。
-PlanD 配置在第一项动作前预检，避免采集后才发现损坏配置。
-
-测试/文档 → 新增 `test_plan_d_cargo/building/entry/calibration_tool` 与固件轨迹回放；
-更新主 README、Strategy/README、PLAND_DESIGN、Agent 说明与桌面入口。默认仍为 PlanA。
-新固件 action_id 扩展使 schema v5→v6；报文结构、字段大端/CRC 小端、80 B 完整遥测、
-11 B 动作状态、200 ms 失联急停与重连后不续跑保持。记账/视觉配置本身协议未变。
-
-本地验证：121 个 Python 源文件语法、模块导入、231 项全量单测通过，无跳过，包含
-LLVM-MinGW 本机 C 动作回放；PlanD CLI/Agent 预览、桌面入口 dry-run、Bash 语法检查通过。
-已执行 `cmake --preset Debug` 和 `cmake --build build/Debug`，当前终端缺少
-`arm-none-eabi-gcc/g++`，配置失败，完整 ARM 构建未验证；便携工具链下载超时，未安装。
-未同步树莓派、烧录或运行实机动作，低层标定、落点、稳定性与机械净空仍待现场验证。
-
 ### GitHub 上传前核对当前源码
 
 按当前工作区保留 `SERVO_ARM_FRONT_OFFSET_TENTH=123`（+12.3°），动作说明同步修正为逻辑 90°对应输出 102.3°；

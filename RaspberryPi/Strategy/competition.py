@@ -903,11 +903,7 @@ class TaskControl(TaskStateReporting):
             self.state = type(self.state).COUNT_CHECK
             count = self.robot.check_carried_cube_count(
                 chassis_followup=chassis_followup, allow_visual_failure=True)
-            self._check_active()
-            if count is not None and (type(count) is not int or count not in range(4)):
-                raise RuntimeError(f'invalid carried cube count: {count}')
             if count is None or count == 3:
-                self._record_plan_d_cargo(count)
                 print(f'[{self.TASK_LABEL}] Carried count={count}; continue route')
                 return
             if count not in (0, 1, 2):
@@ -925,67 +921,10 @@ class TaskControl(TaskStateReporting):
         self._check_active()
         if count is not None and (type(count) is not int or count not in range(4)):
             raise RuntimeError(f'invalid carried cube count: {count}')
-        self._record_plan_d_cargo(count)
         self.refill_missing_count = (1 if count is None else 3 - count) if request_refill else 0
         print(f'[{self.TASK_LABEL}] Exit count={count}; '
               f'one-shot refill request={self.refill_missing_count}')
         return count
-
-    def _plan_d_cargo_source(self):
-        state = getattr(getattr(self, 'context', None), 'plan_d', None)
-        if state is None:
-            return None
-        if self.TASK_LABEL in ('task1-1', 'task1-2'):
-            return self.TASK_LABEL
-        if self.TASK_LABEL == 'task2-0':
-            return state.refill_source_task
-        return None
-
-    def _record_plan_d_cargo(self, count):
-        source_task = self._plan_d_cargo_source()
-        if source_task is None:
-            return
-        self._check_active()
-        state = self.context.plan_d
-        site = state.pending_site(source_task)
-        refill_used = (self.TASK_LABEL == 'task2-0'
-                       or (site.cargo is not None and site.cargo.refill_used))
-        cargo = state.record_cargo(source_task, count, refill_used=refill_used)
-        diagnostics = getattr(self.robot, 'diagnostics', None)
-        if diagnostics is not None:
-            diagnostics.write('plan_d_cargo', task=self.TASK_LABEL,
-                              source_task=source_task, round_id=cargo.round_id,
-                              site_id=cargo.site_id, count=cargo.count,
-                              source=cargo.source, refill_used=cargo.refill_used)
-
-    def _prepare_plan_d_unload(self):
-        """Unknown cargo gets one observation-only retry, with no new pickups."""
-        source_task = self._plan_d_cargo_source()
-        if source_task is None:
-            return
-        state = self.context.plan_d
-        if state.take_unknown_recheck(source_task):
-            self._check_active()
-            self.state = type(self.state).COUNT_CHECK
-            count = self.robot.check_carried_cube_count(
-                allow_visual_failure=True, allow_idle=True)
-            self._check_active()
-            self._record_plan_d_cargo(count)
-
-    def _commit_plan_d_unload(self):
-        source_task = self._plan_d_cargo_source()
-        if source_task is None:
-            return
-        self._check_active()
-        site = self.context.plan_d.commit_unload(source_task)
-        diagnostics = getattr(self.robot, 'diagnostics', None)
-        if diagnostics is not None:
-            diagnostics.write('plan_d_unload', task=source_task,
-                              round_id=site.source_round,
-                              site_id=site.cargo.site_id,
-                              deposited_count=site.deposited_count,
-                              height_status=site.height_status,
-                              evidence=site.height_evidence)
 
 
     @staticmethod
@@ -1517,9 +1456,6 @@ class CompetitionProgram(TaskControl):
     def _run_delivery_finish(self):
         """Resume at Tag6, keeping this Task1 variant's unloading parameters."""
         cfg = self.config
-        # Check evidence and reserve the one optional retry before any unload
-        # motion. Repeated delivery callbacks fail before moving a second time.
-        self._prepare_plan_d_unload()
         self.state = CompetitionState.DELIVERY_TAG_ALIGN
         self.robot.reset_field_localization_filter()
         self._align_delivery_tag_or_continue(
@@ -1547,7 +1483,6 @@ class CompetitionProgram(TaskControl):
 
         self.state = CompetitionState.UNLOAD
         self._unload_cubes()
-        self._commit_plan_d_unload()
         if cfg.pre_final_turn_lateral_left_mm > 0.0:
             self.state = CompetitionState.PRE_FINAL_TURN_LATERAL
             print(f'[{self.TASK_LABEL}] Move {cfg.pre_final_turn_lateral_direction} '

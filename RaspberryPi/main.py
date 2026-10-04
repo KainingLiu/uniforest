@@ -63,16 +63,7 @@ def main() -> int:
     plan = resolve_selection(selection)
     if args.show_plan:
         print(f'{plan.name}: ' + ' -> '.join(step.task_id for step in plan.steps))
-        if plan.name == 'PlanD':
-            print('PlanD: keep the first two stored three-cube loads. Rounds 3/4 '
-                  'record final visual cargo counts at sites A/B after unloading. '
-                  'Each exhausted original task can insert one cross-region refill; '
-                  'Task2-0 rechecks cargo before resuming the original Task1 delivery. '
-                  'Task5 base heights 1/2/3 select release levels 4-4-4 / 4-4-5 / 4-5-6. '
-                  'Zero/unknown bases or missing low-base calibration skip topping '
-                  'before taking the stored load. Unknown cargo gets one recheck. '
-                  'Requires matching PlanD firmware and measured low-base profiles.')
-        elif any(s.task_id in ('task1-1', 'task1-2', 'task2-1', 'task2-2') for s in plan.steps):
+        if any(s.task_id in ('task1-1', 'task1-2', 'task2-1', 'task2-2') for s in plan.steps):
             print('On exhausted search: Task1-1/2 stops before Tag6 and may insert Task2-0; '
                   'Task2-1/2 may insert Task0-3 + Task1-0. '
                   'Unknown count defaults to one missing cube. Task1 resumes Tag6/unloading '
