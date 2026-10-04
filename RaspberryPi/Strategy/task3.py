@@ -144,6 +144,7 @@ class Task3Program(TaskControl):
     def __init__(self, robot, config: Task3Config = Task3Config(), *, context=None):
         super().__init__(robot, config, context=context)
         self.state = Task3State.STARTUP
+        self._carried_cube_count = None
 
     def _preflight(self):
         self._wait_ready()
@@ -151,9 +152,12 @@ class Task3Program(TaskControl):
             raise RuntimeError('Task3 requires a TaskContext with build-approach heading')
         handoff = self.context.take_build_approach()
         self._heading_zero_deg = handoff.heading_zero_deg
+        self._carried_cube_count = handoff.carried_cube_count
         self.state = Task3State.READY
         print(f'[{self.TASK_LABEL}] Heading zero inherited from {handoff.source_task}: '
               f'{self._heading_zero_deg:+.1f} deg')
+        if self._carried_cube_count is not None:
+            print(f'[{self.TASK_LABEL}] Refill-exit build count: {self._carried_cube_count}')
 
     def _run_build_phase(self):
         self._check_active()
@@ -464,20 +468,43 @@ class Task3Program(TaskControl):
                 cfg.post_tag6_lateral_direction, cfg.post_tag6_lateral_right_mm,
                 cfg.post_tag6_lateral_speed_mm_s)
 
+        self._check_active()
+        count = self._carried_cube_count
+        if count == 0:
+            print(f'[{self.TASK_LABEL}] Storage empty; skip building alignment and Build, '
+                  'continue the post-build route')
+            diagnostics = getattr(self.robot, 'diagnostics', None)
+            if diagnostics is not None:
+                diagnostics.write('build_skipped', task=self.TASK_LABEL, carried_count=0)
+            if chassis_followup is not None:
+                chassis_followup()
+            self._check_active()
+            return
+
         self.state = Task3State.BUILDING_ALIGN
         self.robot.reset_vision_filter()
         building_aligned = self._align_building_or_continue()
 
+        self._check_active()
         self.state = Task3State.BUILD
+        build_name = f'build{3 if count is None else count}'
         if building_aligned:
-            print(f'[{self.TASK_LABEL}] Building aligned; running Build')
+            print(f'[{self.TASK_LABEL}] Building aligned; running {build_name}')
         else:
             print(f'[{self.TASK_LABEL}] Building alignment skipped; '
-                  'running Build')
+                  f'running {build_name}')
         followup = (None if chassis_followup is None
                     else self._chassis_followup(chassis_followup))
-        self.robot.actions.build(chassis_followup=followup)
-        print(f'[{self.TASK_LABEL}] Build complete')
+        # Preserve the original Build3 alias when no refill measurement exists.
+        build = (self.robot.actions.build if count is None
+                 else getattr(self.robot.actions, build_name))
+        diagnostics = getattr(self.robot, 'diagnostics', None)
+        if diagnostics is not None:
+            diagnostics.write('build_selected', task=self.TASK_LABEL,
+                              action=build_name, carried_count=count)
+        build(chassis_followup=followup)
+        self._check_active()
+        print(f'[{self.TASK_LABEL}] {build_name} complete')
 
     def _run_post_build_route(self):
         cfg = self.config

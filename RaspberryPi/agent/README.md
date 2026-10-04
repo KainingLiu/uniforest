@@ -108,9 +108,16 @@ python -m agent.cli --context-image /path/to/your/reference.png
 ## 模块化策略入口（更新至 2026-09-28）
 
 `run_strategy` 与命令行共用 `Strategy/runner.py`，任务枚举由同一任务库和策略包生成。
+机械搭建入口支持 `--action build1`（一块，ID 6）、`--action build2`（两块，ID 5）及
+`--action build3`（三块，ID 4；`build` 为兼容名）。Build1/2 需要配套同步上位机、烧录新固件后测试，
+尚未实机验证；Task3 默认使用 Build3。Task1-0 补抓搜索耗尽时沿退场路线并行复检，后续 Task3
+按舱内复检总数选择 Build1/2/3；0 块跳过建筑对准与搭建、继续路线；未知默认缺 1 块，执行 Build2。
+此次复检不再触发补抓，Tag6/建筑视觉失效仍继续，通信、急停、遥测或机构故障仍中止；Task5 保持 Build3。
+
 `task2-1/2` 只执行采集和 2750 mm 转场；Tag6、建筑对准、Build 与返程属于 `task3-1/2`。
 `PlanA`（默认，旧 classic）在原 7 个任务后追加 task1-3 → task2-2 → task3-3，共 10 个任务；`set1/2` 执行 task0-1 和相应的一套任务；
 `PlanB` 执行 task0-2 → task2-1 → task4-1 → task2-2 → task4-2 → task0-3 → task1-1 → task0-3 → task1-2 → task5，复用已有 Task2、Task1，末尾 Task5 执行两次建筑对准与 Build。
+`PlanC` 执行 task0-1 → task1-1 → task0-3 → task1-2 → task2-1 → task3-1 → task2-2 → task3-2 → task1-3 → task2-2 → task3-3，沿用统一补抓规则；可指定 `run_strategy(selection="PlanC")`，默认仍为 PlanA。Task1-1 后先通过 Task0-3 转场，再执行 Task1-2；现场验证状态见 Strategy/README.md。
 原 task0 命名为 task0-1；task0-2 以 1000 mm/s 前进 900 mm、右移 2700 mm，再转到 180°。
 task0-3 从 180°进入，转到 0°，以 1000 mm/s 左移 2600 mm，再以 300 mm/s 向左顶墙；独立运行也需按 180°摆车。
 task5 从 Task1-2 结束位置以 180°进入，执行两次开舱顶墙、建筑对准和 Build。开舱各等 200 ms、关舱各等 400 ms、各后退 250 mm；每次第三块释放后先以 400 mm/s 后退 100 mm，再执行原左移路线，与机构收尾并行，机构与路线均结束才完成。

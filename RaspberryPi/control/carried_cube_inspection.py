@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import time
 
-from protocol.commands import ACTION_DONE
+from protocol.commands import ACTION_DONE, ACTION_IDLE
 from vision.carried_cube_count import observe, classify
 
 CONFIG_PATH = Path(__file__).resolve().parents[1] / 'tools/carried_cube_count_config.json'
@@ -14,13 +14,17 @@ class InspectionVisionUnavailable(RuntimeError):
     """No current images are available; link and mechanism failures differ."""
 
 
-def inspect_carried_cubes(robot, *, chassis_followup=None, allow_visual_failure=False):
-    """Return 0..3/None; optionally overlap the next chassis move with restore.
+def inspect_carried_cubes(robot, *, chassis_followup=None, allow_visual_failure=False,
+                         inspect_while_moving=False):
+    """Return 0..3/None and restore the arm before allowing another task.
 
-    Only successful counts (3/None) run the chassis-only callback. Refill must
-    wait for restore and fresh vision. Competition may treat camera failure as
-    unknown after restoring the arm. Hardware/cancellation failures propagate.
+    Default: stationary inspection, with optional chassis travel during restore
+    for a full/unknown count. Exhausted-search mode: supervise the entire pose,
+    capture and restore from the chassis control loop while its exit route runs,
+    regardless of count. No background thread can outlive a fault or task.
     """
+    if inspect_while_moving and chassis_followup is None:
+        raise ValueError('moving inspection needs a chassis-only exit route')
     config = json.loads(CONFIG_PATH.read_text(encoding='utf-8'))
     transport = robot.transport
     actions = robot.actions
@@ -59,7 +63,8 @@ def inspect_carried_cubes(robot, *, chassis_followup=None, allow_visual_failure=
             check()
             status = transport.get_action_status()
             if status is not None and status[1] >= probe_at:
-                if status[0].state != ACTION_DONE:
+                if status[0].state not in ((ACTION_IDLE, ACTION_DONE)
+                                         if inspect_while_moving else (ACTION_DONE,)):
                     raise RuntimeError(f'A-board action not complete before inspection: {status[0].state}')
                 break
             if time.monotonic() - probe_at > .15:
@@ -68,12 +73,12 @@ def inspect_carried_cubes(robot, *, chassis_followup=None, allow_visual_failure=
         # ACTION_DONE and full telemetry are separate messages. Do not reject
         # the last pre-completion telemetry packet as an active mechanism.
         stopped_at = time.monotonic()
-        if not robot.chassis.set_speeds([0, 0, 0, 0]):
+        if not inspect_while_moving and not robot.chassis.set_speeds([0, 0, 0, 0]):
             raise RuntimeError('inspection chassis zero-speed command failed')
         last_uptime = None
         confirmed = 0
         initial = check()
-        print('[Count] Waiting for stationary telemetry: '
+        print('[Count] Waiting for mechanism readiness: '
               f'stepper_busy={initial.stepper_busy}, '
               f'rpm={[m.speed_rpm for m in initial.motors]}', flush=True)
         while True:
@@ -83,7 +88,8 @@ def inspect_carried_cubes(robot, *, chassis_followup=None, allow_visual_failure=
             after_action = ((telem.uptime_ms - status[0].uptime_ms) & 0xffffffff) < 0x80000000
             if received_at >= stopped_at and after_action and telem.uptime_ms != last_uptime:
                 last_uptime = telem.uptime_ms
-                quiet = not telem.stepper_busy and all(abs(speed) <= 10 for speed in rpm)
+                quiet = not telem.stepper_busy and (inspect_while_moving or
+                                                   all(abs(speed) <= 10 for speed in rpm))
                 confirmed = confirmed + 1 if quiet else 0
                 if confirmed >= 3:
                     break
@@ -97,76 +103,114 @@ def inspect_carried_cubes(robot, *, chassis_followup=None, allow_visual_failure=
                     f'stepper_busy={telem.stepper_busy}, rpm={rpm}, '
                     f'fresh_after_action={after_action}, confirmed={confirmed}/3')
             wait(.005)
-        print(f'[Count] Stationary confirmed in {time.monotonic() - stopped_at:.3f}s',
+        print(f'[Count] Readiness confirmed in {time.monotonic() - stopped_at:.3f}s',
               flush=True)
-        pose_started = False
-        observations = []
-        try:
-            # Validate configuration and a live frame before any pose command.
-            sample = robot.cube_raw_frame
-            if sample is None or not 0 <= time.monotonic() - sample[1] <= .5:
-                raise InspectionVisionUnavailable('inspection camera frame unavailable')
-            classify([observe(sample[0], config)[0]], config)
-            servo(0, 37.2)
-            pose_started = True
-            wait(.200)
-            servo(1, 120)
-            wait(.300)
-            first_after = time.monotonic()
-            last_timestamp = first_after
-            skipped = 0
-            while len(observations) < 8:
+        def pause(seconds):
+            deadline = time.monotonic() + seconds
+            while time.monotonic() < deadline:
                 check()
-                if time.monotonic() - first_after > 4:
-                    raise InspectionVisionUnavailable('inspection fresh camera frames timed out')
-                sample = robot.cube_raw_frame
-                if sample is not None and sample[1] > last_timestamp:
-                    frame, last_timestamp = sample
-                    if skipped < 3:
-                        skipped += 1
-                    else:
-                        observations.append(observe(frame, config)[0])
-                wait(.005)
-            result = classify(observations, config)
-        except InspectionVisionUnavailable as exc:
-            if not allow_visual_failure:
-                raise
+                yield
             check()
-            result = {'count': None, 'reason': str(exc), 'visual_fallback': True}
-            robot.diagnostics.write('visual_fallback', stage='carried count', reason=str(exc))
-            print(f'[Count] {exc}; count unknown, continue mission', flush=True)
-        check()
-        count = result['count']
-        if count not in (None, 0, 1, 2, 3):
-            raise RuntimeError(f'invalid carried cube count: {count}')
-        if pose_started:
-            servo(1, 90)
-        restore_at = time.monotonic() + .200
-        restored = not pose_started
 
-        def advance_restore():
-            nonlocal restored
+        def inspection_steps():
+            pose_started = False
+            observations = []
+            try:
+                # Validate configuration and a live frame before posing the arm.
+                sample = robot.cube_raw_frame
+                if sample is None or not 0 <= time.monotonic() - sample[1] <= .5:
+                    raise InspectionVisionUnavailable('inspection camera frame unavailable')
+                classify([observe(sample[0], config)[0]], config)
+                servo(0, 37.2)
+                pose_started = True
+                yield from pause(.200)
+                servo(1, 120)
+                yield from pause(.300)
+                first_after = time.monotonic()
+                last_timestamp = first_after
+                skipped = 0
+                while len(observations) < 8:
+                    check()
+                    if time.monotonic() - first_after > 4:
+                        raise InspectionVisionUnavailable('inspection fresh camera frames timed out')
+                    sample = robot.cube_raw_frame
+                    if sample is not None and sample[1] > last_timestamp:
+                        frame, last_timestamp = sample
+                        if skipped < 3:
+                            skipped += 1
+                        else:
+                            observations.append(observe(frame, config)[0])
+                    yield
+                result = classify(observations, config)
+            except InspectionVisionUnavailable as exc:
+                if not allow_visual_failure:
+                    raise
+                check()
+                result = {'count': None, 'reason': str(exc), 'visual_fallback': True}
+                robot.diagnostics.write('visual_fallback', stage='carried count', reason=str(exc))
+                print(f'[Count] {exc}; count unknown, continue mission', flush=True)
             check()
-            if not restored and time.monotonic() >= restore_at:
+            count = result['count']
+            if count is not None and (type(count) is not int or count not in range(4)):
+                raise RuntimeError(f'invalid carried cube count: {count}')
+            if pose_started:
+                servo(1, 90)
+            restore_at = time.monotonic() + .200
+            # Let the default mode start its next move only after the count.
+            yield (count,)
+            if pose_started:
+                yield from pause(max(0, restore_at - time.monotonic()))
                 servo(0, 97.2)
                 check()
                 robot.reset_vision_filter(after_inspection=True)
-                restored = True
+            check()
+            robot.diagnostics.write('carried_cube_count', result=result,
+                                    observations=observations, feature_version=config['feature_version'],
+                                    inspect_while_moving=inspect_while_moving)
+            print(f'[Count] {result}', flush=True)
+            return count
 
-        if chassis_followup is not None and count in (None, 3):
-            # Chassis loops supervise both the link and timed servo restore.
-            # No detached worker can outlive cancellation or start a later grab.
-            with robot.chassis.monitor_action(advance_restore):
-                chassis_followup()
-        while not restored:
-            advance_restore()
-            if not restored:
-                wait(.005)
-        check()
-        robot.diagnostics.write('carried_cube_count', result=result,
-                                observations=observations, feature_version=config['feature_version'])
-        print(f'[Count] {result}', flush=True)
-        return count
+        steps = inspection_steps()
+        done = counted = False
+        count = None
+
+        def advance():
+            nonlocal done, counted, count
+            check()
+            if done:
+                return
+            try:
+                value = next(steps)
+                if value is not None:
+                    count, = value
+                    counted = True
+            except StopIteration as result:
+                count = result.value
+                counted = done = True
+
+        try:
+            if inspect_while_moving:
+                # Only this caller owns the mechanical lock. Chassis loops
+                # advance pose/capture without sleeping through an arm wait.
+                with robot.chassis.monitor_action(advance):
+                    chassis_followup()
+            else:
+                while not counted:
+                    advance()
+                    if not counted:
+                        wait(.005)
+                if chassis_followup is not None and count in (None, 3):
+                    with robot.chassis.monitor_action(advance):
+                        chassis_followup()
+            # A short exit may finish first; restore must finish before return.
+            while not done:
+                advance()
+                if not done:
+                    wait(.005)
+            check()
+            return count
+        finally:
+            steps.close()
     except BaseException:
         # Do not turn a hardware/pose failure into the user's null-success path.
         # After cancellation/fault no further servo commands are sent.

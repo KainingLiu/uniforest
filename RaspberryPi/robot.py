@@ -317,10 +317,12 @@ class Robot:
         return self._vision.raw_frame if self.has_vision else None
 
     def check_carried_cube_count(self, *, chassis_followup=None,
-                                allow_visual_failure=False):
+                                allow_visual_failure=False,
+                                inspect_while_moving=False):
         from control.carried_cube_inspection import inspect_carried_cubes
         return inspect_carried_cubes(self, chassis_followup=chassis_followup,
-                                    allow_visual_failure=allow_visual_failure)
+                                    allow_visual_failure=allow_visual_failure,
+                                    inspect_while_moving=inspect_while_moving)
 
     def hardware_preflight(self, timeout_s: float = 2.0,
                            max_telem_age_s: float = 0.3
@@ -610,6 +612,9 @@ class Robot:
             'grap2': lambda: self.actions.grap2(**grap_kwargs),
             'grap3': lambda: self.actions.grap3(**grap_kwargs),
             'build': self.actions.build,
+            'build3': lambda: self.actions.build3(),
+            'build2': lambda: self.actions.build2(),
+            'build1': lambda: self.actions.build1(),
             'approach': lambda: self.approach_cube(),
         }
         if name not in actions:
@@ -636,7 +641,7 @@ def debug_main():
                        help='Run read-only hardware and sensor preflight')
     parser.add_argument('--action', type=str, default=None,
                        help='Run action: home, hatch_open, hatch_close, '
-                            'grap1, grap2, grap3, build')
+                            'grap1, grap2, grap3, build3, build2, build1 (build = build3)')
     parser.add_argument('--telemetry-only', action='store_true',
                        help='Display telemetry stream')
     parser.add_argument('--telem-rate', type=int, default=50,
@@ -717,7 +722,7 @@ def debug_main():
             print("===========================")
             print("Commands:")
             print("  home, hatch_open, hatch_close — Servo actions")
-            print("  grap1, grap2, grap3, build  — Full action sequences")
+            print("  grap1, grap2, grap3, build3, build2, build1 — Full action sequences (build = build3)")
             print("  approach                     — Vision-guided cube approach")
             print("  move DIR MM [SPEED]          — Position move; speed defaults to 750 mm/s")
             print("  telem                        — Print telemetry snapshot")
@@ -761,14 +766,14 @@ def debug_main():
                         except ValueError as exc:
                             print(f'Invalid move: {exc}')
                     elif cmd in ('home', 'hatch_open', 'hatch_close',
-                                'grap1', 'grap2', 'grap3', 'build', 'approach'):
+                                'grap1', 'grap2', 'grap3', 'build', 'build3', 'build2', 'build1', 'approach'):
                         robot.run_action(cmd)
                     elif cmd == '':
                         pass
                     else:
                         print(f"Unknown: {cmd}")
                         print("Available: home, hatch_open/close, grap1/2/3, "
-                              "build, approach, move, telem, vision, stop, exit")
+                              "build3/build2/build1 (build=build3), approach, move, telem, vision, stop, exit")
                 except KeyboardInterrupt:
                     break
                 except EOFError:

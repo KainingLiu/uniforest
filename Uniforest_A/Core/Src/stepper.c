@@ -305,7 +305,9 @@ void Stepper_Tick(void)
                 {
                     /* Wait for trigger */
                     ctx->phase     = SM_WAIT_LINK;
-                    ctx->step_idx  = 0;
+                    /* Keep the completed leg visible to a linked motor whose
+                     * trigger equals its endpoint. The next segment launch
+                     * resets step_idx, after that motor has started. */
                     ctx->pulse_high = 0;
                     ctx->tick_count = 0;
                 }

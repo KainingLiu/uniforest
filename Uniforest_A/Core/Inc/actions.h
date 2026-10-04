@@ -6,7 +6,11 @@
 #define ACTION_GRAP1 1u
 #define ACTION_GRAP2 2u
 #define ACTION_GRAP3 3u
-#define ACTION_BUILD 4u
+#define ACTION_BUILD3 4u
+#define ACTION_BUILD2 5u
+#define ACTION_BUILD1 6u
+/* Keep existing three-cube callers wire-compatible. */
+#define ACTION_BUILD ACTION_BUILD3
 
 #define ACTION_IDLE 0u
 #define ACTION_RUNNING 1u

@@ -13,8 +13,8 @@ from Strategy.competition import CompetitionProgram, FirstTaskConfig, SearchRang
 from Strategy.common import VisualAlignmentUnavailable
 from Strategy.orange_search import OrangeSearchRecovery
 from Strategy.task0 import Task0Program
-from Strategy.task1 import Task1_2Program, Task1_3Program
-from Strategy.task2 import Task2Program, Task2_2Program
+from Strategy.task1 import Task1_0Program, Task1_2Program, Task1_3Program
+from Strategy.task2 import Task2Program, Task2_2Program, Task2_0Program
 from Strategy.task3 import Task3Program, Task3Config
 from Strategy.context import TaskContext
 from Strategy.runner import run_tasks
@@ -166,8 +166,8 @@ class VisualTests(unittest.TestCase):
         self.assertIsNone(info['left_clipped_y_range'])
 
     def test_all_orange_tasks_use_same_search_and_stop_for_confirmation(self):
-        for program in (CompetitionProgram, Task1_2Program, Task1_3Program,
-                        Task2Program, Task2_2Program):
+        for program in (CompetitionProgram, Task1_0Program, Task1_2Program, Task1_3Program,
+                        Task2Program, Task2_2Program, Task2_0Program):
             with self.subTest(program=program.__name__):
                 replay = SearchReplay(lambda r: r.frame([block()]), program=program)
                 replay.run()
@@ -309,12 +309,16 @@ class VisualTests(unittest.TestCase):
         robot = robot_fixture()
         robot.has_vision = robot.has_field_localization = False
         robot.move_chassis = Mock(return_value=SimpleNamespace(timed_out=False, cancelled=False))
-        robot.check_carried_cube_count = Mock(return_value=None)
+        robot.check_carried_cube_count = Mock(
+            side_effect=lambda **kw: (kw['chassis_followup'](), None)[1])
         events = []
-        def build(**kwargs):
-            events.append('build')
+        def build(count, **kwargs):
+            events.append(('build', count))
             if kwargs.get('chassis_followup'): kwargs['chassis_followup'](lambda: None)
-        robot.actions.build = build
+        robot.actions.build = lambda **kw: build(3, **kw)
+        robot.actions.build1 = lambda **kw: build(1, **kw)
+        robot.actions.build2 = lambda **kw: build(2, **kw)
+        robot.actions.build3 = lambda **kw: build(3, **kw)
         robot.actions.hatch_open = Mock()
         robot.actions.hatch_close = Mock()
         def move(task, direction, distance, speed, **kwargs): events.append((task.TASK_LABEL, direction, distance))
@@ -329,7 +333,9 @@ class VisualTests(unittest.TestCase):
              patch('Strategy.competition.TaskControl._chassis_followup', side_effect=lambda callback: lambda check: callback()), \
              patch.object(Task3Program, '_align_building', side_effect=VisualAlignmentUnavailable('no building')):
             self.assertEqual(run_tasks(robot, 'classic'), 0)
-        self.assertEqual(events.count('build'), 3)
+        # Each exhausted Task2 gets one exhausted Task1-0 refill. With cameras
+        # unavailable, its count fallback is "one missing", selecting Build2.
+        self.assertEqual([e for e in events if e[0] == 'build'], [('build', 2)] * 3)
         self.assertIn(('task3-2', 'left', 2200), events)
         self.assertIn(('task3-3', 'left', 3000), events)
         robot.transport.emergency_stop.assert_not_called()

@@ -1,5 +1,13 @@
 {
-  "version": 3,
+  "version": 5,
+  "action_ids": {
+    "ACTION_GRAP1": 1,
+    "ACTION_GRAP2": 2,
+    "ACTION_GRAP3": 3,
+    "ACTION_BUILD3": 4,
+    "ACTION_BUILD2": 5,
+    "ACTION_BUILD1": 6
+  },
   "action_states": {
     "ACTION_IDLE": 0,
     "ACTION_RUNNING": 1,

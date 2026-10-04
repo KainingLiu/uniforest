@@ -1,11 +1,11 @@
-"""Mechanical action client; Grap1/2/3 and Build execute on the A-board."""
+"""Mechanical action client; Grap1/2/3 and Build1/2/3 execute on the A-board."""
 
 import secrets
 import threading
 import time
 
 from protocol.commands import (
-    ACTION_GRAP1, ACTION_GRAP2, ACTION_GRAP3, ACTION_BUILD,
+    ACTION_GRAP1, ACTION_GRAP2, ACTION_GRAP3, ACTION_BUILD3, ACTION_BUILD2, ACTION_BUILD1,
     ACTION_RUNNING, ACTION_DONE, ACTION_CANCELLED, ACTION_CHASSIS_READY,
 )
 from .servo import (
@@ -164,7 +164,17 @@ class Actions:
         self._run_action(ACTION_GRAP3, test_mode, parallel_step=parallel_step)
 
     def build(self, *, chassis_followup=None):
-        self._run_action(ACTION_BUILD, chassis_followup=chassis_followup)
+        """Compatibility entry for the original three-cube build."""
+        self.build3(chassis_followup=chassis_followup)
+
+    def build3(self, *, chassis_followup=None):
+        self._run_action(ACTION_BUILD3, chassis_followup=chassis_followup)
+
+    def build2(self, *, chassis_followup=None):
+        self._run_action(ACTION_BUILD2, chassis_followup=chassis_followup)
+
+    def build1(self, *, chassis_followup=None):
+        self._run_action(ACTION_BUILD1, chassis_followup=chassis_followup)
 
     def servo_home(self, settle_ms=300):
         self._check_cancelled()

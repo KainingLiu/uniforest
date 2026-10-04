@@ -63,7 +63,18 @@ def main() -> int:
     plan = resolve_selection(selection)
     if args.show_plan:
         print(f'{plan.name}: ' + ' -> '.join(step.task_id for step in plan.steps))
-        if plan.steps[0].task_id.startswith(('task3-', 'task4-')):
+        if any(s.task_id in ('task1-1', 'task1-2', 'task2-1', 'task2-2') for s in plan.steps):
+            print('On exhausted search: Task1-1/2 stops before Tag6 and may insert Task2-0; '
+                  'Task2-1/2 may insert Task0-3 + Task1-0. '
+                  'Unknown count defaults to one missing cube. Task1 resumes Tag6/unloading '
+                  'after refill, then continues this sequence; no recursive refill. '
+                  'If Task1-0 also exhausts, inspect during its exit: Task3 uses Build1/2/3 '
+                  'for the measured count, skips Build at zero, and uses Build2 if unknown.')
+        if plan.steps[0].task_id == 'task1-0':
+            print('Entry: Task1 approach, heading 0 degrees; collect the requested '
+                  'orange count, travel to heading 180 degrees and stop before Tag6 alignment. '
+                  'On exhaustion, count during exit and hand the result to the next Task3; no refill.')
+        elif plan.steps[0].task_id.startswith(('task3-', 'task4-')):
             print('Entry: Task2 exit, heading 180 degrees, loaded for Build (Task3) '
                   'or hatch unloading (Task4); --heading-zero-deg is required.')
         elif plan.steps[0].task_id.startswith('task2-'):

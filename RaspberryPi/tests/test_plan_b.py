@@ -10,7 +10,7 @@ from Strategy.competition import SearchRangeExhausted
 from Strategy.common import VisualAlignmentUnavailable
 from Strategy.context import BuildApproach, TaskContext
 from Strategy.plans import PLANS, StrategyPlan
-from Strategy.runner import resolve_selection, run_plan
+from Strategy.runner import refill_steps, resolve_selection, run_plan
 from Strategy.tasks import TASK_LIBRARY, TaskStep
 from Strategy.task0 import Task0_1Program, Task0_2Program, Task0_3Program
 from Strategy.task2 import Task2Program, Task2_2Program
@@ -208,7 +208,8 @@ class PlanBTests(unittest.TestCase):
         robot = robot_fixture()
         robot.has_vision = robot.has_field_localization = False
         robot.move_chassis = Mock(return_value=SimpleNamespace(timed_out=False, cancelled=False))
-        robot.check_carried_cube_count = Mock(return_value=None)
+        robot.check_carried_cube_count = Mock(
+            side_effect=lambda **kw: (kw['chassis_followup'](), None)[1])
         robot.actions.hatch_open, robot.actions.hatch_close = Mock(), Mock()
         robot.actions.build = Mock(side_effect=lambda **kw: kw['chassis_followup'](lambda: None))
         zeros = []
@@ -236,7 +237,11 @@ class PlanBTests(unittest.TestCase):
                          [call(settle_ms=0)] * 4 + [call(settle_ms=400)] * 2)
         completed = [c.kwargs['task'] for c in robot.diagnostics.write.call_args_list
                      if c.args == ('task_complete',)]
-        self.assertEqual(completed, [s.task_id for s in PLANS['PlanB'].steps])
+        expected = []
+        for step in PLANS['PlanB'].steps:
+            expected.append(step.task_id)
+            expected.extend(s.task_id for s in refill_steps(step.task_id, 1))
+        self.assertEqual(completed, expected)
         self.assertEqual(robot.actions.build.call_count, 2)
         robot.transport.emergency_stop.assert_not_called()
 
@@ -252,9 +257,10 @@ class PlanBTests(unittest.TestCase):
                  patch('main.Robot') as robot, contextlib.redirect_stderr(io.StringIO()):
                 self.assertEqual(main.main(), expected)
                 robot.assert_not_called()
-        from tools.install_desktop_entries import ENTRIES
+        from tools.install_desktop_entries import ENTRIES, LEGACY_ENTRIES
         self.assertEqual({selection for selection, _ in ENTRIES.values()},
-                         {"PlanA", "PlanB", "set1", "set2"})
+                         {"PlanA", "PlanB", "set1", "set2", "collect-build-1", "collect-build-2"})
+        self.assertFalse(set(ENTRIES).intersection(LEGACY_ENTRIES))
         self.assertEqual(ENTRIES['uniforest-all.desktop'][0], 'PlanA')
         self.assertNotIn('uniforest-task0.desktop', ENTRIES)
         self.assertIn('PlanB', [selection for selection, _ in ENTRIES.values()])

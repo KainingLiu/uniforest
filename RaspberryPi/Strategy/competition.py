@@ -227,6 +227,8 @@ class TaskControl(TaskStateReporting):
         self._last_alignment_frame_timestamp = None
         self._last_alignment_timed_out = False
         self._alignment_valid_frames = 0
+        self._orange_search_exhausted = False
+        self.refill_missing_count = 0
 
     def _check_active(self, *, require_telemetry=True):
         context = getattr(self, "context", None)
@@ -881,6 +883,7 @@ class TaskControl(TaskStateReporting):
     def _collect_orange_with_count_check(self, initial_target, grab_one,
                                        *, chassis_followup=None):
         """Keep one search budget/origin across initial collection and refill."""
+        self._orange_search_exhausted = False
         remaining = initial_target
         while True:
             for index in range(1, remaining + 1):
@@ -888,9 +891,15 @@ class TaskControl(TaskStateReporting):
                 try:
                     grab_one()
                 except SearchRangeExhausted:
+                    self._check_active()
+                    self._orange_search_exhausted = True
                     print(f'[{self.TASK_LABEL}] Orange search range exhausted; '
-                          'skip count inspection and continue route')
+                          'continue exit route')
                     return
+            if (self.TASK_LABEL in ('task2-1', 'task2-2')
+                    and self._purple_search_exhausted):
+                # A missed purple search also takes the one-shot exit check.
+                return
             self.state = type(self.state).COUNT_CHECK
             count = self.robot.check_carried_cube_count(
                 chassis_followup=chassis_followup, allow_visual_failure=True)
@@ -901,6 +910,21 @@ class TaskControl(TaskStateReporting):
                 raise RuntimeError(f'invalid carried cube count: {count}')
             remaining = 3 - count
             print(f'[{self.TASK_LABEL}] Carried count={count}; refill {remaining}')
+
+    def _inspect_during_exit(self, route, *, request_refill=True):
+        """Count along the exit; only original tasks may request another pickup."""
+        self._check_active()
+        self.state = type(self.state).COUNT_CHECK
+        count = self.robot.check_carried_cube_count(
+            chassis_followup=route, allow_visual_failure=True,
+            inspect_while_moving=True)
+        self._check_active()
+        if count is not None and (type(count) is not int or count not in range(4)):
+            raise RuntimeError(f'invalid carried cube count: {count}')
+        self.refill_missing_count = (1 if count is None else 3 - count) if request_refill else 0
+        print(f'[{self.TASK_LABEL}] Exit count={count}; '
+              f'one-shot refill request={self.refill_missing_count}')
+        return count
 
 
     @staticmethod
@@ -1354,9 +1378,7 @@ class CompetitionProgram(TaskControl):
             self._run_delivery_reverse()
             reverse_done = True
 
-        self._collect_orange_with_count_check(
-            cfg.target_cube_count, self._grab_task1_orange,
-            chassis_followup=start_delivery)
+        self._collect_task1_orange(chassis_followup=start_delivery)
 
         if not reverse_done:
             self._cube_lateral_displacement_mm = (
@@ -1365,6 +1387,11 @@ class CompetitionProgram(TaskControl):
               f'{self._cube_lateral_displacement_mm:+.0f} mm '
               '(right positive)')
         return reverse_done
+
+    def _collect_task1_orange(self, *, chassis_followup=None):
+        self._collect_orange_with_count_check(
+            self.config.target_cube_count, self._grab_task1_orange,
+            chassis_followup=chassis_followup)
 
     def _grab_task1_orange(self):
         cfg = self.config
@@ -1389,7 +1416,8 @@ class CompetitionProgram(TaskControl):
             'backward', cfg.delivery_reverse_mm,
             cfg.delivery_reverse_speed_mm_s)
 
-    def _run_delivery_route(self, *, reverse_done=False):
+    def _run_delivery_approach(self, *, reverse_done=False):
+        """Shared Task1 route ending at heading 180, before any Tag6 alignment."""
         cfg = self.config
         self.state = CompetitionState.DELIVERY_ROUTE
         if self._cube_lateral_displacement_mm is None:
@@ -1421,6 +1449,13 @@ class CompetitionProgram(TaskControl):
 
         self._turn_to_heading(cfg.delivery_turn_deg * 2.0)
 
+    def _run_delivery_route(self, *, reverse_done=False):
+        self._run_delivery_approach(reverse_done=reverse_done)
+        self._run_delivery_finish()
+
+    def _run_delivery_finish(self):
+        """Resume at Tag6, keeping this Task1 variant's unloading parameters."""
+        cfg = self.config
         self.state = CompetitionState.DELIVERY_TAG_ALIGN
         self.robot.reset_field_localization_filter()
         self._align_delivery_tag_or_continue(
@@ -1459,9 +1494,30 @@ class CompetitionProgram(TaskControl):
                 cfg.pre_final_turn_lateral_speed_mm_s)
         self._check_active()
 
+    def resume_delivery_after_refill(self):
+        """Use the refill exit's new yaw zero; do not repeat collection/travel."""
+        self._check_active()
+        if self.context is None:
+            raise RuntimeError('Task1 delivery resume requires the refill exit handoff')
+        handoff = self.context.take_build_approach()
+        self._heading_zero_deg = handoff.heading_zero_deg
+        try:
+            self._run_delivery_finish()
+            self.state = CompetitionState.FINISHED
+        except BaseException:
+            self.state = CompetitionState.FAULT
+            raise
+
     def _run_mission(self):
         reverse_done = self._run_first_task()
-        self._run_delivery_route(reverse_done=reverse_done)
+        if (self._orange_search_exhausted
+                and self.TASK_LABEL in ('task1-1', 'task1-2')):
+            self._inspect_during_exit(
+                lambda: self._run_delivery_approach(reverse_done=reverse_done))
+            if self.refill_missing_count == 0:
+                self._run_delivery_finish()
+        else:
+            self._run_delivery_route(reverse_done=reverse_done)
 
     def run(self) -> int:
         try:

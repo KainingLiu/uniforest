@@ -12,9 +12,9 @@
 | --- | --- |
 | `main.py` | 统一执行入口、策略包与单 Task 选择、只读流程预览 |
 | `robot.py` | 通信生命周期、设备聚合、预检与调试交互 |
-| `Strategy/` | Task0 至 Task5 共用任务库、PlanA/PlanB 策略包、统一执行器及视觉对准等共用过程 |
+| `Strategy/` | Task0 至 Task5 共用任务库、PlanA/PlanB/PlanC 策略包、统一执行器及视觉对准等共用过程 |
 | `control/` | 底盘位置外环、舵机/步进调试、A 板动作客户端 |
-| `protocol/` | 帧编解码、传输和 schema v3 契约 |
+| `protocol/` | 帧编解码、传输和 schema v5 契约（含动作 ID） |
 | `vision/opencv/` | 当前 OpenCV 方块检测、AprilTag 定位、相机与标定；旧模块路径保留兼容入口 |
 | `vision/yolo/` | 自动原图采集；训练、分割推理和 hybrid 接入尚未实现 |
 | `agent/` | 自然语言控制、本地直控和 API 中转 |
@@ -39,6 +39,33 @@
 [携带数量检查与标定](tools/carried_cube_count_test.md)、
 开发电脑上的 `Uniforest_A/ACTIONS.md`（Grap/Build 动作流程）。角度、检查时序和机械参数在对应
 文档维护。正常心跳日志静默，50 ms 后台心跳及通信失联保护保留。
+
+### 搭建动作入口
+
+`python robot.py --action build3` 执行原三块搭建；旧 `--action build` 及策略中的
+`actions.build()` 都兼容 Build3（动作 ID 4）。`python robot.py --action build2`
+执行新的两块搭建（动作 ID 5），也可调用 `actions.build2(chassis_followup=...)`，
+第二块释放后允许底盘后续路线与机构收尾并行，调用仍等待两者完成。
+`python robot.py --action build1` 执行一块搭建（动作 ID 6），也可调用
+`actions.build1(chassis_followup=...)`；释放后允许底盘路线与回收并行，仍等待两者全部结束。
+Task3 默认使用 Build3；Task1-0 补抓搜索耗尽后，按退场复检数量选择 Build1/2/3，
+确认 0 块则跳过建筑对准与搭建并继续原路线，复检未知按默认缺 1 块执行 Build2。Task5 保持 Build3。
+
+Build1 先全部舵机复位、开舱；前臂 100°、翻转 102.2°并吸气，同时水平伸出 3.5 cm、垂直下降 20 cm。
+两轴完成后垂直上升 20 cm，升到 15 cm 开始分段抬臂至 4°（500 ms）；上升与抬臂均完成后，
+水平伸出 19 cm、伸到 3 cm 时下降 19 cm，两轴完成后释放。随后上升 19 cm、升到 3 cm 时回收 22.5 cm，
+两轴完成后全部舵机复位。取块至放置翻转保持 102.2°，无额外取块等待；逻辑角度与完整触发说明见 ACTIONS.md。
+
+Build2 起步先开舱（A 130°、B 50°）、吸气，前臂 95°、翻转 102.2°，不等待，
+立即同时下降 11 cm、水平伸出 3.5 cm；两轴完成后保留原 500 ms 取块等待。
+第一次放置垂直上升 2 cm，升到 1 cm 时开始分段抬臂至 0°（500 ms），抬臂后翻转 97.2°；垂直上升满 2 cm 后才启动水平伸出 19.5 cm。
+本段水平伸到 17.5 cm 后下降 11 cm，两轴及抬臂/翻转流程都完成后释放。
+随后上升 11 cm、升到 7.5 cm 时启动水平回收 23 cm，
+上升完成且本段回收到 18 cm 后下降 11.5 cm。
+最后一次上升 11.5 cm、升到 5 cm 时伸出；释放后同时垂直上升 14 cm、
+水平回收 23 cm，使两轴回到本次动作起点，再全部舵机复位；起步多伸出的 3.5 cm 已在第一次回收中收回。
+2026-10-04 新增参数尚未实机验证；新动作需要更新树莓派程序并通过 CLion 烧录下位机。
+协议新增动作 ID，命令编号、载荷和遥测布局、字节序及失联急停行为保持。
 
 ### 仓库与树莓派部署状态
 
@@ -93,9 +120,10 @@ Agent 复用现有机器人接口；API 密钥通过私有配置或环境变量�
 
 ## 验证与启动顺序
 
-树莓派桌面提供 **PlanA、PlanB、set1、set2** 四个机器人测试入口。
-单 Task、set1/set2 和 collect-build-1/2 仍可通过终端命令运行。
-PlanA/set1/set2 包含 task0-1，PlanB 从 task0-2 开始；collect-build 只运行 task2 → task3。
+树莓派桌面提供 **PlanA、PlanB、set1、set2、collect-build-1、collect-build-2** 六个机器人测试入口。
+单 Task 和策略包也可通过终端命令运行。
+PlanA/set1/set2 包含 task0-1；PlanB 和 collect-build-1/2 从 task0-2 开始。
+collect-build-1/2 按 Task0-2 的起点摆车，依次运行 task0-2 → 对应 task2 → task3。
 打开策略图标即运行。终端使用 `desktop_task.sh task3-1` 等启动独立 task3/task4 时，
 脚本先要求填写已标定的航向零点；留空或无效值不会连接机器人。
 二者均从 Task2 结束位置、航向 180° 起步，分别准备好 Build 或舱内投放，不能把当前朝向当零点。
@@ -108,7 +136,7 @@ PlanA/set1/set2 包含 task0-1，PlanB 从 task0-2 开始；collect-build 只运
 
 1. 检查工作区状态、当前固件版本和机构起始位置。
 2. 运行 Python 语法、导入和无硬件测试。
-3. 在开发电脑的 `Uniforest_A/` 执行 `cmake --preset Debug`、`cmake --build build/Debug`；树莓派不部署该源码目录。全量单元测试在树莓派明确跳过两项需要下位机头文件的比对，其余检查照常执行。
+3. 在开发电脑的 `Uniforest_A/` 执行 `cmake --preset Debug`、`cmake --build build/Debug`；树莓派不部署该源码目录。树莓派测试明确跳过需要下位机源码的头文件比对及 C 动作回放，其余检查照常执行；本地 C 回放使用已有主机 GCC（可用 CLion 自带 MinGW）。
 4. 由用户通过 CLion 的 OpenOCD + DAPLink 配置烧录需要更新的固件。
 5. 检查串口、相机角色、标定文件和预检结果。
 6. 小范围动作测试通过后再进入完整任务；通信异常、遥测陈旧或急停后不自动续跑。
@@ -163,19 +191,30 @@ python robot.py --preflight --vision --localization
 ```bash
 python main.py --strategy PlanA
 python main.py --strategy PlanB
+python main.py --strategy PlanC
 python main.py --strategy set1
 python main.py --strategy set2
 python main.py --strategy collect-build-1
 python main.py --task task1-1
+python main.py --task task1-0
 python main.py --task task2-2
+python main.py --task task2-0
 ```
 
-任务 ID 为 `task0-1/2/3`、`task1-1/2/3`、`task2-1/2`、`task3-1/2/3`、`task4-1/2`、`task5`（斜杠分隔的编号代表独立 ID）。
+任务 ID 为 `task0-1/2/3`、`task1-0/1/2/3`、`task2-0/1/2`、`task3-1/2/3`、`task4-1/2`、`task5`（斜杠分隔的编号代表独立 ID）。
+Task1-0 按原 Task1 的 0°入口摆车，前顶墙、Grap3 抓取指定数量（默认 3），后退 400 mm，转到 90°，前进 `2800 mm - 橙块阶段净右移量`，转到 180°后结束，不执行 Tag6 对准及后续卸载。数量通过 `TaskStep('task1-0', {'target_cube_count': 2})` 选择 1/2/3 个；不自动补满；Task2-1/2 搜索耗尽时由统一执行器按缺失数动态插入。
+Task2-0 从 180° 起步：0.8 m/s 后退 2900 mm → 转到 0° → 0.4 m/s 左移 400 mm → 0.3 m/s 左顶墙 → 0.3 m/s 前顶墙 → Grap1 抓 3 个橙块 → 0.4 m/s 后退 100 mm → 按 `550 mm - 橙块阶段净右移量` 横移补偿 → 转到 180° → 0.8 m/s 前进 2750 mm，输出与 Task2-1 相同的 Task3/Task4 交接。可用 `TaskStep('task2-0', {'orange_target_count': 1})` 选择本次抓 1/2/3 个；不自动补满；Task2-1/2 搜索耗尽时由统一执行器按缺失数动态插入。接口、补偿速度和降级约定见 [Task2-0](Strategy/README.md#task2-0-橙块采集模块2026-10-04)。
 无参数运行等价于 `--strategy PlanA`。完整流程：
 
 `PlanA: task0-1 → task1-1 → task2-1 → task3-1 → task1-2 → task2-2 → task3-2 → task1-3 → task2-2 → task3-3`
 
 `PlanB: task0-2 → task2-1 → task4-1 → task2-2 → task4-2 → task0-3 → task1-1 → task0-3 → task1-2 → task5`
+
+`PlanC: task0-1 → task1-1 → task0-3 → task1-2 → task2-1 → task3-1 → task2-2 → task3-2 → task1-3 → task2-2 → task3-3`
+
+PlanC 按指定顺序复用原 Task，沿用一次性补抓和 Task3 按复检数量选择 Build1/2/3。
+Task1-1 后通过 Task0-3 回零转向、左移 2600 mm 并左顶墙，再接 Task1-2。
+Task3-1→Task2-2 仍直接衔接，实际位置和航向衔接待现场确认，见策略说明。
 
 Task0-1 以 1000 mm/s 前进 1150 mm，加速 800 ms。
 Task0-2 以 1000 mm/s 前进 900 mm、右移 2700 mm，两段均使用 800 ms 加速。
@@ -192,7 +231,7 @@ Task4 初始航向 180°：1000 mm/s 左移 700 mm、300 mm/s 左顶墙；Task4-
 Task2 两版均从 180° 起步，以 800 mm/s 后退 2500/2350 mm。详见 [策略说明](Strategy/README.md)，现场效果待验证。
 
 `set1`/`set2` 分别运行 task0-1 和对应编号的 task1、task2、task3。
-`collect-build-1`/`collect-build-2` 只运行对应 task2 → task3。
+`collect-build-1`/`collect-build-2` 先运行 task0-2，再运行对应 task2 → task3。
 单 Task 不自动执行 Task0 或补齐后续动作。新 Task2 在前进 2750 mm 后结束，
 Tag6 对准、建筑对准、Build 和返程属于 Task3。`task2_main.py --variant 1/2` 也只执行新 Task2。
 
@@ -202,6 +241,7 @@ Tag6 对准、建筑对准、Build 和返程属于 Task3。`task2_main.py --vari
 python main.py --list-tasks
 python main.py --strategy PlanA --show-plan
 python main.py --strategy PlanB --show-plan
+python main.py --strategy PlanC --show-plan
 python main.py --task task3-2 --show-plan
 ```
 
@@ -236,7 +276,7 @@ python main.py --strategy PlanA --diagnostics-log /tmp/uniforest-run.jsonl
 | --- | ---: | ---: |
 | Task1 三个变体普通定距、Task2 短退与顶墙前进 250 mm | 400 mm/s | 300 ms |
 | Task2 紫块后前进 / 橙块后横移：实际补偿距离 <500 mm | 400 mm/s | 300 ms |
-| Task2 紫块后前进 / 橙块后横移：实际补偿距离 ≥500 mm | 1000 mm/s | 800 ms |
+| Task2 紫块后前进 / 橙块后横移：实际补偿距离 ≥500 mm | 800 mm/s | 800 ms |
 | Task0、Task1 投放前进 | 1000 mm/s | 800 ms |
 | Task0-2 前进 900 mm、右移 2700 mm | 1000 mm/s | 800 ms |
 | Task4 起步左移 700 mm、末尾右移 800/500 mm | 1000 mm/s | 800 ms |
@@ -340,7 +380,7 @@ Task1 卸载横移后保持 180°结束，交给 Task2；原有起始顶墙、�
 
 1. 以 300 mm/s 向前顶墙并重新标定当前航向零点。
 2. 以 300 mm/s 连续向右搜索橙色，累计搜索上限 1800 mm；锁定目标后进行粗对准和末端微调。
-3. 对准后同时启动 Grap3 和 150 mm/s 短压墙，短压墙结束后重新校准航向；抓取后执行数量检查及补抓。3 或 null 继续，搜索距离耗尽则跳过检查。
+3. 对准后同时启动 Grap3 和 150 mm/s 短压墙，短压墙结束后重新校准航向；抓取后执行数量检查及补抓。3 或 null 继续；Task1-1/2 搜索耗尽时边走运输路线边检查，先到 Tag6 对准前，缺少 1～3 块时插入 Task2-0，计数未知按缺 1 块；补抓后从 Tag6 开始执行原变体的横移、卸载及后续动作。确认满载时直接继续投放。Task1-3 不启用跨区补抓。
 4. 以 400 mm/s 后退 400 mm，转到启动零点顺时针 90° 航向。
 5. 以 1000 mm/s 前进 `2800 mm - 抓取阶段编码器实测净右移量`，再转到 180° 航向。
 6. 对准 Tag6 至距离 425 mm、横向零点；前后/横向单轴进入 ±8 mm 即停止该轴平移，两帧超差后重启。航向独立向 180° 纠偏，0.5° 死区；前后、横向和航向 ±3° 均合格连续确认 4 个新帧后停车继续，不执行精对准。按变体定距横移后顶墙卸载。
@@ -365,12 +405,12 @@ Tag6 后左移 500 mm、投放后右移 500 mm，两段均为 400 mm/s、300 ms 
 3. 向左搜索紫色，搜索上限 750/650 mm；找到后执行 Grap2 和短压墙。找不到则跳过紫色，初始橙色数量从 2 个增至 3 个。
 4. Grap2 回升到 5 cm 且短压墙结束后，机构收尾与后退 100 mm、转回 0°、补偿前进并行，保持机构监视。Task2-1 前进 `350 mm - 紫色阶段实测净右移量`；Task2-2 前进 `500 mm - 紫色阶段实测净右移量`。
 5. 向左顶墙、向前顶墙，重新校准航向。
-6. 向右搜索橙色，累计上限 1800 mm，使用 Grap1；执行原数量检查及补抓流程，搜索耗尽则跳过数量检查。
+6. 向右搜索橙色，累计上限 1800 mm，使用 Grap1；未耗尽时保留原数量检查及补抓；搜索耗尽时边走退出路线边检查，缺少 1～3 块则插入 Task0-3 + Task1-0。
 7. 后退 100 mm（可与数量检查复位重叠），再按 `550 mm - 橙色阶段实测净右移量` 横移补偿。
 8. 转到 180°，以 800 mm/s、800 ms 加速前进 2750 mm，结束并输出航向交接数据。这里不执行 Tag6 或 Build。
 
 Task2 的单次执行返回时，此前 Grap2/Grap1 和数量检查均已完成，不留跨 Task 的后台机械动作。
-紫块后前进、橙块后横移按补偿计算后的实际距离选速：≥500 mm 为 1000 mm/s、800 ms 加速，
+紫块后前进、橙块后横移按补偿计算后的实际距离选速：≥500 mm 为 800 mm/s、800 ms 加速，
 不足 500 mm 为 400 mm/s、300 ms 加速；橙块后横移取补偿绝对值，方向沿用原计算，零距离跳过。
 `Task2Config.tag3_alignment_enabled=False` 保持；如显式启用，原 Tag3 目标和控制参数保留，
 task2-1 对准后右移 100 mm，task2-2 不执行这段横移。
@@ -446,14 +486,16 @@ Task1、Task3 各自三个变体使用下列参数。位置采用 **3 帧中值�
 
 ### 搜索距离与回找
 
-task1-1/2/3、task2-1/2 在橙色搜索累计达到 1800 mm 时，即使数量不足（包括零块），
+2026-10-04：Task1-1/2 搜索耗尽后，只走到 Tag6 对准前，同时检查装载数量，缺失 1/2/3 块时插入 Task2-0；Task2-1/2 耗尽后走完退出路线并行检查，插入 Task0-3 + Task1-0。搜索耗尽后的计数为 3 时不插入，未知或视觉检查失败时默认缺 1 块。Task1 在补抓后恢复原变体的 Tag6 对准及其后完整投放动作，再继续原队列；满载时直接恢复投放。补抓任务只按传入数量尝试抓取，不递归补抓，即使补抓到零块也继续。Task1-0 若也搜索耗尽，则沿退场路线并行复检，完成后用本次校准航向和最新舱内总数交接 Task3/Task4；后续 Task3 按 1/2/3 块选择 Build1/2/3，0 块跳过建筑对准和搭建、继续路线，未知按默认缺 1 块执行 Build2，不再补抓。全部视觉失效仍按降级规则继续，通信、遥测、急停、机构异常仍中止；协议未变。详细规则和数量参数见 [Strategy/README.md](Strategy/README.md)。
+
+task1-0/1/2/3、task2-0/1/2 在橙色搜索累计达到 1800 mm 时，即使数量不足（包括零块），
 也结束抓取并继续对应的投放或转场路线。搜索距离或累计搜索时间耗尽均降级继续；
 其他通信、取消或动作异常仍按原故障流程处理。橙色预算只累计正常向右搜索速度乘
 实际指令时间，不包括停车确认、左移回找和视觉对准，抓取单块后不重置；后续路线
 补偿仍使用编码器实测净横移。到极限时已出现候选，允许停车完成确认。
 紫色累计向左搜索上限为第一轮 750 mm、第二轮 650 mm。
 
-橙色左缘回找（09-27 接通统一链路，09-30 修复过滤及起点资格，适用 task1-1/2/3、task2-1/2）：没有有效橙色候选，且有效 ROI
+橙色左缘回找（09-27 接通统一链路，09-30 修复过滤及起点资格，适用 task1-0/1/2/3、task2-0/1/2）：没有有效橙色候选，且有效 ROI
 内面积足够的橙色簇连续 3 个新帧触及画面左边界时，先停 100 ms，再以 200 mm/s
 向左寻找真实左缘。候选出现后停车确认，再沿用对准、抓取流程。左半屏普通橙色
 像素、右侧裁剪和重复帧不触发回找；Task2 橙色仍沿用原 ROI。

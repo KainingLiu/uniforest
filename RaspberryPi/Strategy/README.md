@@ -5,7 +5,7 @@
 ## 2026-10-03 底盘速度回退
 
 按 `D:\Uniforest备份` 恢复提速前参数：普通转向 120°/s，长段 1000 mm/s、800 ms 加速，短段 400 mm/s、300 ms 加速。
-Task2 上下坡保持 800 mm/s、800 ms；紫块后前进和橙块后横移恢复实际距离 ≥500 mm 用 1000 mm/s、800 ms，否则 400 mm/s、300 ms。
+Task2 上下坡保持 800 mm/s、800 ms；紫块后前进和橙块后横移于 2026-10-04 调整为实际距离 ≥500 mm 用 800 mm/s、800 ms，否则 400 mm/s、300 ms。
 Task5 Build 后左移恢复 800 mm/s、800 ms。保留 Task3 三变体后退 200 mm、Task4 首段左移 700 mm，Task5 两次后退仍为 100 mm。
 保留距离不足提前减速和原路线顺序。协议未变；测试入口为 PlanA/PlanB 及各独立 Task，现场效果待确认。
 
@@ -14,10 +14,10 @@ Task5 Build 后左移恢复 800 mm/s、800 ms。保留 Task3 三变体后退 200
 | 位置 | 职责 |
 | --- | --- |
 | `tasks/__init__.py` | 共用任务注册表 `TASK_LIBRARY`、单次调用 `TaskStep`、任务定义 `TaskDefinition` |
-| `plans/plan_a.py`、`plans/plan_b.py` | 策略包中的任务组合，引用共用任务 ID，不复制任务代码；classic.py 保留旧导入 |
+| `plans/plan_a.py`、`plans/plan_b.py`、`plans/plan_c.py` | 策略包中的任务组合，引用共用任务 ID，不复制任务代码；classic.py 保留旧导入 |
 | `plans/__init__.py` | 策略类型、参数及交接依赖的预检查 |
 | `runner.py` | 唯一任务执行器、结果处理、互斥、取消及采集/诊断上下文 |
-| `context.py` | 一次运行的上下文、航向交接、通信与急停状态检查 |
+| `context.py` | 一次运行的上下文、航向及补抓后数量交接、通信与急停状态检查 |
 | `task0.py` 至 `task5.py` | 各任务及其参数；保留原模块路径方便既有调用方迁移 |
 | `competition.py` | 共用 `TaskControl` 控制过程和原 Task1 实现；Task0-3/Task2/Task3/Task4/Task5 继承控制过程，Task1/Task4 共用开舱、后退、关舱过程 |
 
@@ -31,9 +31,11 @@ Task5 Build 后左移恢复 800 mm/s、800 ms。保留 Task3 三变体后退 200
 | `task0-1` | 原 Task0：1000 mm/s 前进 1150 mm | 调用者摆好 PlanA 初始位置 |
 | `task0-2` | 1000 mm/s 前进 900 mm、右移 2700 mm，随后转到 180°；两段加速均 800 ms | 调用者摆好 PlanB 初始位置；以 180°结束接 Task2-1 |
 | `task0-3` | 转到 0°，1000 mm/s 左移 2600 mm，再以 300 mm/s 左顶墙 | 从 Task4/Task1 结束位置以 180°进入，0°结束接 Task1 |
+| `task1-0` | 抓取指定数量橙块（默认 3），后退、转向及前进至 Tag6 对准前；搜索耗尽时沿退场路线并行复检数量 | 0°入口，180°结束；不执行 Tag6 或卸载，输出航向及可选数量的 `BuildApproach` |
 | `task1-1` / `task1-2` | 采集、运输、投放；取消末尾转到 0° | Tag6 后右移/投放后左移分别 100/400 mm；以 180°结束 |
 | `task1-3` | 复用 Task1 采集、运输、投放 | Tag6 后 400 mm/s 左移 500 mm；投放后同速右移 500 mm，以 180°结束 |
 | `task2-1` / `task2-2` | 起步后退 2500/2350 mm，再采集、补抓、补偿、前进 2750 mm | 入口航向 180°；输出 `BuildApproach`，停在 Tag6 对准前 |
+| `task2-0` | 后退 2900 mm，转到 0°，左移 400 mm，左/前顶墙，抓取指定数量橙块（默认 3），再复用 Task2-1 的后退、补偿和前进 2750 mm | 入口/出口航向 180°；输出 `BuildApproach`，可接 Task3/Task4 |
 | `task3-1` / `task3-2` | 原步骤 15-17：Tag6、建筑对准、Build、返程 | 需要 Task2 的入口姿态和航向；返程左移 2500/2200 mm，均以左顶墙收尾 |
 | `task3-3` | 复用 Task3 对准、Build 与并行返程 | Tag6 后 400 mm/s 左移 500 mm；Build 后 1000 mm/s 左移 3000 mm，再左顶墙 |
 | `task4-1` / `task4-2` | 顶墙、开舱投放、退离、右移后结束 | 在 Task2 结束位置以 180°进入和结束；消费同一航向交接 |
@@ -51,10 +53,11 @@ Task 返回成功前需等本 Task 的机械动作和配套路段全部结束，
 | --- | --- |
 | `PlanA`（默认） | task0-1 → task1-1 → task2-1 → task3-1 → task1-2 → task2-2 → task3-2 → task1-3 → task2-2 → task3-3 |
 | `PlanB` | task0-2 → task2-1 → task4-1 → task2-2 → task4-2 → task0-3 → task1-1 → task0-3 → task1-2 → task5 |
+| `PlanC` | task0-1 → task1-1 → task0-3 → task1-2 → task2-1 → task3-1 → task2-2 → task3-2 → task1-3 → task2-2 → task3-3 |
 | `set1` | task0-1 → task1-1 → task2-1 → task3-1 |
 | `set2` | task0-1 → task1-2 → task2-2 → task3-2 |
-| `collect-build-1` | task2-1 → task3-1 |
-| `collect-build-2` | task2-2 → task3-2 |
+| `collect-build-1` | task0-2 → task2-1 → task3-1 |
+| `collect-build-2` | task0-2 → task2-2 → task3-2 |
 
 在 RaspberryPi 目录使用：
 
@@ -62,6 +65,7 @@ Task 返回成功前需等本 Task 的机械动作和配套路段全部结束，
 python main.py --list-tasks
 python main.py --strategy PlanA --show-plan
 python main.py --strategy PlanB --show-plan
+python main.py --strategy PlanC --show-plan
 python main.py --task task0-3 --show-plan
 python main.py --task task5 --show-plan
 python main.py --strategy collect-build-2 --show-plan
@@ -71,6 +75,13 @@ python main.py --task task2-1 --show-plan
 以上均只打印信息，不连接硬件。去掉 `--show-plan` 会运行实际动作。
 `--strategy` 和 `--task` 互斥。`task2_main.py --variant 1/2` 只运行新 Task2，不包含 Build。
 
+PlanC 于 2026-10-04 按用户指定顺序组合，Task1-1 与 Task1-2 之间加入 Task0-3 后共 11 个模块，支持 `PlanC` / `planc`，
+沿用统一执行器的一次性补抓、Tag6 恢复及 Task3 数量交接规则。默认策略仍是 PlanA。
+Task1-1 以其零点的 180°结束，随后 Task0-3 转到 0°、以 1000 mm/s 左移 2600 mm、以 300 mm/s 左顶墙，再执行 Task1-2。
+Task1-1 若触发补抓，先完成补抓及原 Tag6 投放尾段，再执行这里固定的 Task0-3。
+Task3-1→Task2-2 仍需现场确认：Task3-1 返回到其零点约 0°后左顶墙，而 Task2-2 会按当前朝向为 180°建立自己的零点并后退。
+无硬件顺序/交接检查不验证实际场地位置。
+
 ## Task0-3 转场（2026-09-28 用户指定，待现场验证）
 
 1. 以 180°进入，按 `零点 = 当前 yaw + 180°` 换算，以 120°/s 转到 0°，无额外保持等待。
@@ -78,7 +89,7 @@ python main.py --task task2-1 --show-plan
 3. 以 300 mm/s 向左顶墙，沿用共用堵转检测和 2.5 秒上限，达到上限按原规则继续。
 
 PlanB 在 Task4-2、Task1-1 后各复用一次 Task0-3，再分别执行原有 Task1-1、Task1-2。
-测试入口为 `--task task0-3` 或 `--strategy PlanB`，桌面继续只保留 PlanA、PlanB。
+测试入口为 `--task task0-3` 或 `--strategy PlanB`；桌面现有 PlanA、PlanB、set1、set2、collect-build-1、collect-build-2 六个策略入口。
 独立 Task0-3 同样要求从对应位置以 180°摆车。视觉缺失不阻断，通信异常、急停或遥测陈旧立即中止。
 协议未变；尚未执行实机动作，方向、顶墙和后续 Task1 衔接需现场确认。
 
@@ -101,7 +112,8 @@ PlanB 在 Task4-2、Task1-1 后各复用一次 Task0-3，再分别执行原有 T
 Task4 不重置当前 180° 为 0°，不新增视觉对准或 Build。PlanB 原样复用 Task2 两个变体。
 取消第 9 步转向，第 8 步右移完成后直接结束。PlanB 第一次由 Task0-2 末尾转到 180°衔接，
 第二次由 Task4-1 保持 180°衔接；PlanA 两次 Task1 也保持 180°交给 Task2。
-Task2 入口按 `零点 = 当前 yaw + 180°` 换算，再执行后退；独立 Task2 或 collect-build 也按 180°摆车。
+Task2 入口按 `零点 = 当前 yaw + 180°` 换算，再执行后退；独立 Task2 按 180°摆车。
+collect-build-1/2 按 Task0-2 的起点摆车，先前进 900 mm、右移 2700 mm、转到 180°，再接对应 Task2/Task3。
 Task0-2 新增转向使用启动零点计算目标 180°，速度 120°/s，无额外保持等待。
 测试入口为 `--strategy PlanB` 或独立 `--task task4-1/2`（后者填写实际 ID 并提供航向零点）。
 上述参数为软件设定，路线衔接、顶墙判定与投放效果尚未经过现场确认。
@@ -130,14 +142,76 @@ Task5 两次开舱后各等 200 ms，两次关舱后各等 400 ms，其他路线
 现有 ACTION_CHASSIS_READY 在第三块释放后通知底盘，协议未变，无需为 Task5 新增下位机动作。
 独立运行：`python main.py --task task5`，按上述入口摆车。桌面提供 PlanA / PlanB / set1 / set2。
 
-## Task2 补偿段速度（2026-09-28）
+## 搜索耗尽后的单次补抓（2026-10-04）
+
+| 触发任务 | 耗尽后继续的路线 | 数量检查后插入 |
+| --- | --- | --- |
+| task1-1、task1-2 | 后退、转 90°、按净横移补偿前进、转 180°；先停在 Tag6 对准前，补抓后续接原投放尾段 | task2-0，orange_target_count = 3 - 已识别数量；未知时为 1 |
+| task2-1、task2-2 | 完成橙块后的后退、横移补偿、转 180°、前进 2750 mm | task0-3 → task1-0，target_cube_count = 3 - 已识别数量；未知时为 1 |
+
+数量检查的观察姿态、采样、机构复位与上述底盘路线并行；完整退出路线不受计数结果限制。检查使用现有 cube 相机和装载分类器，计数 0/1/2 时分别补 3/2/1 块，3 时不插入；搜索耗尽后的计数无法识别或视觉检查失败（None）时默认缺 1 块。未耗尽情况下的原计数规则保持不变。Task1-1/2 补抓完成后，不论实际补到几块，都从原任务的 Tag6 对准继续：按变体右移 100/400 mm → 顶投放墙 → 开舱等待 300 ms → 后退 300 mm → 关舱不等待 → 按变体左移 100/400 mm，航向保持 180°。若计数已满 3 块，直接执行这段投放尾段。Task2 紫色搜索耗尽时，仍先按原规则尝试抓 3 个橙块，再在退出时检查；橙块搜索耗尽同样触发退出检查。距离上限与累计搜索时间上限共用耗尽处理。
+
+Task1 恢复投放尾段时使用 Task2-0 本次校准的航向，保留原 Task1 变体参数，不重复采集、后退 400 mm 或前往 Tag6 的运输段。Task1 投放完成、或 Task2 补抓完成后继续原队列，原后续任务不删改；同一个原始 Task 最多触发一次跨区补抓。task1-0 搜索耗尽时并行复检，但不递归补抓；task2-0 保持不检查、不递归补抓，即使一块未抓到也走完退出路线；task1-3 不启用本次跨区补抓。计数姿态与复位由同一底盘监控循环推进，无后台运动线程；若路线先完成，等待计数/机构复位结束再执行下一任务。尚未抓到方块时允许下位机 ACTION_IDLE，运行中、异常或中止状态仍拒绝。通信、遥测陈旧、急停、机构故障立即终止，不进入补抓或后续任务。
+
+入口：`python main.py --strategy PlanA` / `--strategy PlanB`，或 `--task task1-1/2`、`--task task2-1/2`（实际填写单个 ID）。独立运行这些原始 Task 也会执行其一次性补抓。无新增依赖，协议未变；并行计数在运动中的准确率及跨区路线衔接待现场验证。
+
+## Task1-0：采集并行驶至 Tag6 对准前（2026-10-04）
+
+Task2 搜索耗尽并插入 Task0-3 + Task1-0 后，若 Task1-0 也搜索耗尽，复用并行计数接口，
+一边后退、转向、前往 Tag6 对准前，一边完成观察姿态、采样和机构复位；退出路线只运行一次。
+路线和计数/复位均完成后，随本次航向交接 `carried_cube_count`：
+
+| Task1-0 复检结果 | 后续 Task3 动作 |
+| --- | --- |
+| 1 / 2 / 3 块 | 分别执行 Build1 / Build2 / Build3，最后一块释放后与原后续路线并行 |
+| 0 块 | 保留 Tag6 和原横移路线，跳过建筑对准与 Build，直接执行原后退、转向、左移及顶墙路线 |
+| 未知 / 视觉失败 | 沿用默认缺 1 块，传递降级值 2，执行 Build2；诊断记录原始未知结果 |
+
+此复检不产生新的补抓请求。仅按舱内复检总数选择搭建，不使用 `completed_grabs` 或原 Task2 计数替代复检结果。
+Task3 消费一次交接后清空；下一次采集/搭建不会继承旧数量。按请求抓取完成、未耗尽的 Task1-0 不增加检查，
+没有复检数量的正常 Task2→Task3 和独立 Task3 保持默认 Build3；Task4 仍卸载、Task5 仍执行两次 Build3。
+直接组合 Task1-0→Task3 时，同样按 Task1-0 是否耗尽应用此规则。
+
+按原 Task1 的 0°入口摆车，执行以下部分后结束：300 mm/s 前顶墙并重校航向 → 按指定数量搜索、对准并以 Grap3 抓取橙块 → 400 mm/s 后退 400 mm（加速 300 ms）→ 以 120°/s 转到 90° → 1000 mm/s 前进 `2800 mm - 橙块阶段编码器净右移量`（加速 800 ms）→ 转到 180°。不执行 Tag6 对准、其后横移、顶墙卸载及返程。
+搜索与单块动作复用 Task1；所有抓取共享本次 1800 mm 向右搜索预算及回找原点。搜索耗尽仍走完 Tag6 前的运输路线；通信、陈旧遥测、急停和机构故障仍中止。
+
+独立入口：`python main.py --task task1-0`。默认抓取 3 次，数量接口为 `Task1_0Config(target_cube_count=2)`，或在策略中使用：
+
+```python
+from Strategy.tasks import TaskStep
+
+TaskStep('task1-0', {'target_cube_count': 2})  # 本次抓 2 个；可选 1、2、3
+TaskStep('task2-0', {'orange_target_count': 1})  # Task2-0 保留原数量参数名
+```
+
+两个模块的数量参数均表示本次抓取动作次数，不会额外执行计数后自动补满；非法数量在策略开始前拒绝，无需抓取时由调用者省略该步骤。`completed_grabs` 和 `search_exhausted` 供后续调用方判断动作执行情况，不等于视觉确认的装载数量。Task1-0 结束于 Tag6 对准前、航向 180°，发布本次前顶墙重新校准的 `build_approach`（耗尽时附带复检数量），供补抓后的 Task3/Task4 继续；不沿用补抓前旧航向。
+原策略包的静态顺序不变；Task2-1/2 耗尽后的补抓会动态插入 Task1-0。协议未变，无新增依赖或下位机修改；路线待现场确认。
+
+## Task2-0 橙块采集模块（2026-10-04）
+
+按 Task2 的 180° 航向摆车。依次执行：800 mm/s 后退 2900 mm（加速 800 ms）→ 以现有 120°/s 转到 0° → 400 mm/s 左移 400 mm（加速 300 ms）→ 300 mm/s 左顶墙 → 300 mm/s 前顶墙并重校航向 → 抓取橙块。
+沿用 Task2 橙色视觉标定、300 mm/s 向右搜索、累计 1800 mm 搜索上限、左侧回找及 Grap1 + 短压墙；本模块默认执行 3 次单块抓取。视觉失效按既有预算搜索，耗尽后仍继续退出路线；通信、陈旧遥测、急停和机构故障仍中止。
+抓取阶段结束后与 Task2-1 共用同一退出过程：读取相对本次橙块搜索起点的编码器净右移量 → 400 mm/s 后退 100 mm（加速 300 ms）→ 按 `550 mm - 净右移量` 横移补偿（正值向右、负值向左，零值跳过；绝对距离 ≥500 mm 用 800 mm/s、800 ms，否则 400 mm/s、300 ms）→ 以 120°/s 转到 180° → 800 mm/s 前进 2750 mm（加速 800 ms）→ 发布 Task3/Task4 航向交接。
+
+独立入口：`python main.py --task task2-0`。数量接口为 `Task2_0Config(orange_target_count=1)`，或在策略中拼接：
+
+```python
+from Strategy.tasks import TaskStep
+
+TaskStep('task2-0', {'orange_target_count': 1})  # 本次抓 1 个；可选 1、2、3
+```
+
+参数在整套策略开始前校验，拒绝非整数及 1～3 之外的值；无需抓取时由调用者省略该步骤。数量表示本次新抓取的动作次数，不是总装载目标；不会自动补到 3 块。统一执行器根据耗尽后的实测计数选择缺失数量。`completed_grabs` 记录完成的 Grap1 次数，`search_exhausted` 表示搜索是否耗尽，两者均不替代视觉装载计数。
+未加入现有策略包的静态步骤；Task1-1/2 耗尽后由执行器动态插入。可用 `TaskStep('task2-0', ...)` 后接 `task3-*` 或 `task4-*`，由统一执行器传递 `build_approach`。本模块结束在 Task2 的 180°交接位置，Tag6 对准及 Build 仍由 Task3 执行。协议未变，无新增依赖或下位机修改；参数和路线待实机确认。
+
+## Task2 补偿段速度（2026-10-04 更新）
 
 紫块后前进基础量按变体分别设定：Task2-1 为 `350 - 紫色阶段净右移量`，Task2-2 为
-`500 - 紫色阶段净右移量`。两版橙块后横移距离均为
+`500 - 紫色阶段净右移量`。Task2-0/1/2 的橙块后横移距离均为
 `abs(550 - 橙色阶段净右移量)`，横移方向沿用原补偿计算。
-实际距离 ≥500 mm 时用 1000 mm/s、800 ms 加速；不足 500 mm 时用 400 mm/s、300 ms 加速，
+实际距离 ≥500 mm 时用 800 mm/s、800 ms 加速；不足 500 mm 时用 400 mm/s、300 ms 加速，
 零横移仍跳过。起步后退 2500/2350 mm、末段前进 2750 mm 保持 800 mm/s、800 ms 加速。
-上述提速复用提前减速，协议未变；软件参数和无硬件验证不代表现场已确认。
+上述补偿复用提前减速，协议未变；软件参数和无硬件验证不代表现场已确认。
 
 ## 共用顶墙判定（2026-09-28）
 
@@ -209,7 +283,7 @@ Tag/建筑对准到现有超时后继续既定路线和 Build。相机不可用�
 旧 `classic/all` 都映射到 `PlanA`，`round1/round2` 映射到 `set1/set2`，`task0` 映射到 `task0-1`。
 `plana/planb` 是大小写便利别名。原 Python `Task0Program` 保留，新任务库使用 `Task0_1Program`。
 旧 `task1/task1-r1/task1-r2` 映射到 `task1-1/task1-1/task1-2`。
-旧 `task2/task2-r1/task2-r2` 保留原完整任务范围，映射到 `collect-build-1/1/2`，
+旧 `task2/task2-r1/task2-r2` 映射到 `collect-build-1/1/2`，同样包含新增的 Task0-2 起步，
 不会静默缩短为只采集。所有兼容选择器打印展开后的任务列表；Task3-2 的新返程同样适用。
 旧 `Task1Round2*`、`Task2Round2*` Python 导入名仅保留为新变体类的别名；
 `Task2Program.run()` 本身已是新步骤 1-14，旧完整调用应迁移到统一执行器的组合策略。

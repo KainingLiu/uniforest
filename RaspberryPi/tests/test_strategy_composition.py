@@ -60,6 +60,13 @@ class CompositionTests(unittest.TestCase):
                     'task1-2', 'task2-2', 'task3-2',
                     'task1-3', 'task2-2', 'task3-3']
         self.assertEqual([s.task_id for s in PLANS['PlanA'].steps], expected)
+        plan_c = ['task0-1', 'task1-1', 'task0-3', 'task1-2',
+                  'task2-1', 'task3-1', 'task2-2', 'task3-2',
+                  'task1-3', 'task2-2', 'task3-3']
+        for selection in ('PlanC', 'planc'):
+            self.assertEqual([s.task_id for s in resolve_selection(selection).steps], plan_c)
+        from agent.tools import RobotToolExecutor
+        self.assertEqual(RobotToolExecutor(dry_run=True).run_strategy('PlanC').value['tasks'], plan_c)
         for plan in PLANS.values():
             validate_plan(plan)
         for selection in ('all', 'classic', 'PlanA', 'plana'):
@@ -67,7 +74,10 @@ class CompositionTests(unittest.TestCase):
         self.assertIs(resolve_selection(), PLANS['PlanA'])
         self.assertEqual(resolve_selection('task0').steps[0].task_id, 'task0-1')
         self.assertEqual([s.task_id for s in resolve_selection('task2-r2').steps],
-                         ['task2-2', 'task3-2'])
+                         ['task0-2', 'task2-2', 'task3-2'])
+        for variant in (1, 2):
+            self.assertEqual([s.task_id for s in PLANS[f'collect-build-{variant}'].steps],
+                             ['task0-2', f'task2-{variant}', f'task3-{variant}'])
         self.assertEqual([s.task_id for s in resolve_selection('task2-2').steps], ['task2-2'])
 
     def test_invalid_compositions_and_parameters_fail_before_execution(self):
@@ -305,6 +315,7 @@ class CompositionTests(unittest.TestCase):
         def build(task):
             received.append((task._heading_zero_deg, task.context.current_task))
         with patch.object(Task2Program, '_run_collection_route', collect), \
+             patch.object(TASK_LIBRARY['task0-2'].program_type, 'run', return_value=0), \
              patch.object(Task3Program, '_run_mission', build):
             self.assertEqual(run_plan(self.robot, PLANS['collect-build-1']), 0)
         self.assertEqual(received, [(37.0, 'task3-1')])
@@ -315,7 +326,8 @@ class CompositionTests(unittest.TestCase):
         schema = next(t for t in tool_definitions() if t['name'] == 'run_strategy')
         self.assertEqual(schema['parameters']['properties']['selection']['enum'], list(SELECTION_CHOICES))
         agent = RobotToolExecutor(dry_run=True)
-        self.assertEqual(agent.run_strategy('collect-build-2').value['tasks'], ['task2-2', 'task3-2'])
+        self.assertEqual(agent.run_strategy('collect-build-2').value['tasks'],
+                         ['task0-2', 'task2-2', 'task3-2'])
         self.assertEqual(agent.run_strategy('task2-1').value['tasks'], ['task2-1'])
         with self.assertRaises(ValueError):
             agent.run_strategy('task3-1')

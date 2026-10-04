@@ -65,7 +65,7 @@ extern "C" {
 /* Logical angles keep the original arm convention (home = 90 degrees).
  * Set to (replacement servo home degrees - 90) * 10 after calibration.
  * Applied once at PWM output, including actions and startup homing. */
-#define SERVO_ARM_FRONT_OFFSET_TENTH 145    /* 2026-10-02: logical 90 -> output 102 degrees */
+#define SERVO_ARM_FRONT_OFFSET_TENTH 123     /* 2026-10-02: logical 90 -> output 102 degrees */
 
 /* ======================== Angle Limits ==================================== */
 

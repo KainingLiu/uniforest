@@ -150,11 +150,11 @@ def tool_definitions() -> list[dict]:
         {
             "type": "function",
             "name": "execute_arm_action",
-            "description": "执行一套已经标定好的机械臂动作。动作名只能是 home、hatch_open、hatch_close、grap1、grap2、grap3、build。",
+            "description": "执行已有机械动作：home、hatch_open、hatch_close、grap1、grap2、grap3、build3（三块）、build2（两块）、build1（一块）。build2/build1 需配套新固件且待实机验证；build 兼容名等同 build3。",
             "parameters": {
                 "type": "object",
                 "properties": {
-                    "action": {"type": "string", "enum": ["home", "hatch_open", "hatch_close", "grap1", "grap2", "grap3", "build"]},
+                    "action": {"type": "string", "enum": ["home", "hatch_open", "hatch_close", "grap1", "grap2", "grap3", "build3", "build2", "build1", "build"]},
                 },
                 "required": ["action"], "additionalProperties": False,
             },

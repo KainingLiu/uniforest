@@ -12,10 +12,10 @@ from .competition import (
     FirstTaskConfig,
     SearchRangeExhausted,
     NORMAL_DISTANCE_MOVE_SPEED_MM_S,
-    LONG_DISTANCE_MOVE_SPEED_MM_S,
 )
 from .vision_targets import TASK2_ORANGE, TASK2_PURPLE
 from .orange_search import OrangeSearchRecovery
+from .common import report_visual_fallback
 
 if TYPE_CHECKING:
     from robot import Robot
@@ -89,7 +89,7 @@ class Task2Config(FirstTaskConfig):
     post_grab_forward_base_mm: float = 350.0
     post_grab_forward_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
     compensation_fast_distance_mm: float = 500.0
-    compensation_fast_speed_mm_s: float = LONG_DISTANCE_MOVE_SPEED_MM_S
+    compensation_fast_speed_mm_s: float = 800.0
     left_wall_approach_enabled: bool = True
     orange_target_count: int = 2
     orange_target_count_without_purple: int = 3
@@ -120,6 +120,20 @@ class Task2_2Config(Task2Config):
     purple_search_max_distance_mm: float = 650.0
     post_grab_forward_base_mm: float = 500.0
     post_tag_lateral_mm: float = 0.0
+
+
+@dataclass(frozen=True)
+class Task2_0Config(Task2Config):
+    initial_distance_mm: float = 2900.0
+    delivery_heading_target_cw_deg: float = 0.0
+    initial_lateral_left_mm: float = 400.0
+    initial_lateral_speed_mm_s: float = 400.0
+    # Number of new Grap1 operations, not a total carried-count target.
+    orange_target_count: int = 3
+
+    def __post_init__(self):
+        if type(self.orange_target_count) is not int or not 1 <= self.orange_target_count <= 3:
+            raise ValueError('task2-0 orange_target_count must be an integer from 1 to 3')
 
 
 @dataclass(frozen=True)
@@ -164,6 +178,7 @@ class Task2Program(TaskControl):
         self.config = config
         self.state = Task2State.STARTUP
         self._heading_zero_deg: Optional[float] = None
+        self._purple_search_exhausted = False
 
     def _preflight(self):
         self._wait_ready()
@@ -192,6 +207,8 @@ class Task2Program(TaskControl):
                         max_distance_mm=cfg.purple_search_max_distance_mm,
                     )
                 except SearchRangeExhausted:
+                    self._check_active()
+                    self._purple_search_exhausted = True
                     print(f'[{self.TASK_LABEL}] Purple cube not found within '
                           f'{cfg.purple_search_max_distance_mm:.0f} mm; '
                           'skipping Grap2')
@@ -398,13 +415,7 @@ class Task2Program(TaskControl):
 
         def start_orange_exit():
             nonlocal orange_lateral_mm, reverse_done
-            orange_lateral_mm = self._measure_lateral_displacement_mm(
-                orange_lateral_origin)
-            self.state = Task2State.POST_ORANGE_REVERSE
-            print(f'[{self.TASK_LABEL}] Reverse {cfg.post_orange_reverse_mm:.0f} mm')
-            self._checked_move(
-                'backward', cfg.post_orange_reverse_mm,
-                cfg.post_orange_reverse_speed_mm_s)
+            orange_lateral_mm = self._reverse_after_orange(orange_lateral_origin)
             reverse_done = True
 
         try:
@@ -422,8 +433,31 @@ class Task2Program(TaskControl):
             if set_profile is not None:
                 set_profile('default')
 
-        if not reverse_done:
-            start_orange_exit()
+        def finish_exit():
+            if not reverse_done:
+                start_orange_exit()
+            self._run_post_orange_route(orange_lateral_mm)
+
+        if ((self._orange_search_exhausted or self._purple_search_exhausted)
+                and self.TASK_LABEL in ('task2-1', 'task2-2')):
+            self._inspect_during_exit(finish_exit)
+        else:
+            finish_exit()
+
+    def _reverse_after_orange(self, orange_lateral_origin):
+        """Measure collection travel before reversing; also used by count callbacks."""
+        cfg = self.config
+        orange_lateral_mm = self._measure_lateral_displacement_mm(orange_lateral_origin)
+        self.state = Task2State.POST_ORANGE_REVERSE
+        print(f'[{self.TASK_LABEL}] Reverse {cfg.post_orange_reverse_mm:.0f} mm')
+        self._checked_move(
+            'backward', cfg.post_orange_reverse_mm,
+            cfg.post_orange_reverse_speed_mm_s)
+        return orange_lateral_mm
+
+    def _run_post_orange_route(self, orange_lateral_mm):
+        """Shared compensated exit and Task3/Task4 handoff for every Task2 variant."""
+        cfg = self.config
         print(f'[{self.TASK_LABEL}] Encoder-measured orange lateral displacement: '
               f'{orange_lateral_mm:+.0f} mm (right positive)')
 
@@ -480,10 +514,72 @@ class Task2_2Program(Task2Program):
         super().__init__(robot, config, context=context)
 
 
-# Old import names remain aliases; canonical variant IDs use -1/-2.
+class Task2_0Program(Task2Program):
+    """Collect the requested orange amount, then follow the common Task2 exit."""
+
+    TASK_LABEL = 'task2-0'
+
+    def __init__(self, robot,
+                 config: Task2_0Config = Task2_0Config(), *, context=None):
+        super().__init__(robot, config, context=context)
+        # These describe completed actions only; they do not assert payload count.
+        self.completed_grabs = 0
+        self.search_exhausted = False
+
+    def _run_collection_route(self):
+        cfg = self.config
+        self.completed_grabs = 0
+        self.search_exhausted = False
+        self.state = Task2State.INITIAL_MOVE
+        self._checked_move(
+            'backward', cfg.initial_distance_mm, cfg.initial_speed_mm_s,
+            accel_ms=cfg.long_distance_forward_accel_ms)
+        self.state = Task2State.TURN_TO_COLLECTION
+        self._turn_to_heading(cfg.delivery_heading_target_cw_deg)
+        self.state = Task2State.WALL_PREMOVE
+        self._checked_move(
+            'left', cfg.initial_lateral_left_mm, cfg.initial_lateral_speed_mm_s,
+            accel_ms=cfg.delivery_linear_accel_ms)
+        self._run_post_return_wall_approach()
+
+        set_profile = self._set_cube_profile
+        try:
+            if set_profile is not None:
+                set_profile('task2_orange')
+            self.robot.reset_vision_filter()
+            self._search_position_mm = 0.0
+            self._orange_recovery = OrangeSearchRecovery(
+                origin=self._capture_lateral_origin())
+            for index in range(cfg.orange_target_count):
+                self._check_active()
+                print(f'[{self.TASK_LABEL}] Orange pickup '
+                      f'{index + 1}/{cfg.orange_target_count}')
+                try:
+                    self._grab_task2_orange()
+                except SearchRangeExhausted:
+                    self._check_active()
+                    self.search_exhausted = True
+                    report_visual_fallback(
+                        self.robot, self.TASK_LABEL, 'orange collection',
+                        'search budget exhausted; continue the Task2 exit route')
+                    break
+                self._check_active()
+                self.completed_grabs += 1
+            print(f'[{self.TASK_LABEL}] Grap1 operations completed: '
+                  f'{self.completed_grabs}/{cfg.orange_target_count}')
+        finally:
+            if set_profile is not None:
+                set_profile('default')
+
+        orange_lateral_mm = self._reverse_after_orange(self._orange_recovery.origin)
+        self._run_post_orange_route(orange_lateral_mm)
+
+
+# Old import names remain aliases; canonical variant IDs use -0/-1/-2.
 Task2Round2Config = Task2_2Config
 Task2Round2Program = Task2_2Program
 
 __all__ = ['Task2Config', 'Task2Program', 'Task2State', 'Task2_2Config',
            'Task2_2Program', 'Task2DebugConfig', 'Task2DebugProgram',
+           'Task2_0Config', 'Task2_0Program',
            'Task2Round2Config', 'Task2Round2Program']

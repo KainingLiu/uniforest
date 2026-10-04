@@ -7,7 +7,7 @@
 /* Distances, tenths of degrees and dwell times migrated from Pi actions.py.
  * All waits run in the main loop; TIM7 and the communication watchdog stay live. */
 enum { END, HOME, HATCH, ANGLE, PUMP, RELEASE, WAIT, MOVE, DUAL, DUAL2, DUAL3,
-       DUAL3_ASYNC, WAIT_PROGRESS, JOIN, DUAL_ASYNC, CHASSIS_READY };
+       DUAL3_ASYNC, WAIT_PROGRESS, JOIN, DUAL_ASYNC, CHASSIS_READY, MOVE_ASYNC };
 typedef struct { uint8_t op; uint16_t p[11]; } ActionStep;
 #define H STEPPER_HORIZ
 #define V STEPPER_VERT
@@ -47,13 +47,13 @@ static const ActionStep grap3[] = {
     {WAIT_PROGRESS,{V,S(5),F}}, A(1,900), {JOIN,{0}},
     {HOME,{0}}, {END,{0}}
 };
-static const ActionStep build[] = {
+static const ActionStep build3[] = {
     /* Only pickup-pose and LIFT waits remain; no post-stepper settle. */
     {HOME,{0}}, {HATCH,{0}}, {PUMP,{0}}, M(H,F,3.5),
     A(1,1000), A(0,1022), W(500), A(0,952), LIFT(40),
     D(H,19,F,V,19,R,3), {RELEASE,{0}},
     D3(V,10,F,2,R,H,22.5,R,3,19.5),
-    {PUMP,{0}}, A(1,950), A(0,1022), W(500), A(0,972), LIFT(0),
+    {PUMP,{0}}, A(1,950), A(0,1022), W(500), LIFT(0), A(0,972),
     D2(H,23,F,V,2,F,4.5,R,21), {RELEASE,{0}},
     /* Third pickup: keep H retracting while V descends at H = 18 cm. */
     D3_OP(DUAL3_ASYNC,V,4.5,F,11.5,R,H,23,R,1,18),
@@ -65,6 +65,39 @@ static const ActionStep build[] = {
     LIFT(0), A(0,972), {JOIN,{0}}, {RELEASE,{0}},
     {CHASSIS_READY,{0}},
     D(V,4,F,H,23,R,0), A(1,900),
+    {HOME,{0}}, {END,{0}}
+};
+
+static const ActionStep build2[] = {
+    {HATCH,{0}}, {PUMP,{0}}, A(1,950), A(0,1022),
+    D(V,11,R,H,3.5,F,0), W(500),
+    /* Start the arm after V rises 1 cm; H waits for the full 2 cm rise.
+     * Release only after both axes and the arm/flip sequence finish. */
+    D3_OP(DUAL3_ASYNC,V,2,F,11,R,H,19.5,F,2,17.5),
+    {WAIT_PROGRESS,{V,S(1),F}},
+    LIFT(0), A(0,972), {JOIN,{0}}, {RELEASE,{0}},
+    /* Pick up the second cube while the remaining retraction/descent runs. */
+    D3_OP(DUAL3_ASYNC,V,11,F,11.5,R,H,23,R,7.5,18),
+    {WAIT_PROGRESS,{H,S(18),R}}, A(1,950), A(0,1022), {PUMP,{0}},
+    {JOIN,{0}},
+    /* V rises 11.5 cm; start H at 5 cm, descend after H reaches 21 cm. */
+    D3_OP(DUAL3_ASYNC,V,11.5,F,5,R,H,23,F,5,21),
+    LIFT(0), A(0,972), {JOIN,{0}}, {RELEASE,{0}},
+    {CHASSIS_READY,{0}},
+    /* Initial 3.5 cm extension was recovered before the second pickup. */
+    D(V,14,F,H,23,R,0), A(1,900),
+    {HOME,{0}}, {END,{0}}
+};
+
+static const ActionStep build1[] = {
+    {HOME,{0}}, {HATCH,{0}}, A(1,1000), A(0,1022), {PUMP,{0}},
+    D(H,3.5,F,V,20,R,0),
+    /* Start the arm at V = 15 cm, without interrupting the 20 cm rise.
+     * Finish both the rise and the arm sequence before extending to place. */
+    {MOVE_ASYNC,{V,F,S(20)}}, {WAIT_PROGRESS,{V,S(15),F}},
+    LIFT(40), {JOIN,{0}},
+    D(H,19,F,V,19,R,3), {RELEASE,{0}}, {CHASSIS_READY,{0}},
+    D(V,19,F,H,22.5,R,3), A(1,900),
     {HOME,{0}}, {END,{0}}
 };
 
@@ -95,14 +128,15 @@ void Actions_Abort(uint8_t state)
 
 uint8_t Actions_Start(uint32_t token, uint8_t id, uint8_t flags)
 {
-    if (token == 0 || id < ACTION_GRAP1 || id > ACTION_BUILD || flags > 1 ||
-        (id == ACTION_BUILD && flags)) return ACK_ERR_PARAM;
+    if (token == 0 || id < ACTION_GRAP1 || id > ACTION_BUILD1 || flags > 1 ||
+        ((id == ACTION_BUILD3 || id == ACTION_BUILD2 || id == ACTION_BUILD1) && flags))
+        return ACK_ERR_PARAM;
     /* A replay can report the previous outcome but cannot restart a motion. */
     if (token == status.token)
         return id == status.id ? ACK_OK : ACK_ERR_PARAM;
     if (Actions_IsBusy() || Stepper_IsBusy(H) || Stepper_IsBusy(V))
         return ACK_ERR_BUSY;
-    static const ActionStep *const sequences[] = {grap1, grap2, grap3, build};
+    static const ActionStep *const sequences[] = {grap1, grap2, grap3, build3, build2, build1};
     sequence = sequences[id - 1];
     status = (ActionStatus_t){token, id, ACTION_RUNNING, 0};
     waiting_move = waiting_time = move_parallel = 0;
@@ -179,7 +213,7 @@ void Actions_Update(void)
             move_origin[H] = Stepper_GetPosition(H);
             move_origin[V] = Stepper_GetPosition(V);
             switch (s->op) {
-            case MOVE:
+            case MOVE: case MOVE_ASYNC:
                 Stepper_StartMove(p[0], p[1], p[2], 400, 60, 400); break;
             case DUAL: case DUAL_ASYNC:
                 Stepper_StartMoveOverlap(p[0],p[1],p[2],p[3],p[4],p[5],p[6],
@@ -193,7 +227,7 @@ void Actions_Update(void)
             }
             __set_PRIMASK(irq);
             waiting_move = 1; move_started = now;
-            move_parallel = (s->op == DUAL_ASYNC || s->op == DUAL3_ASYNC);
+            move_parallel = (s->op == MOVE_ASYNC || s->op == DUAL_ASYNC || s->op == DUAL3_ASYNC);
             if (!move_parallel) return;
             break;
         }

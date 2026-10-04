@@ -24,7 +24,7 @@ def build_parser():
     group.add_argument("--snapshot", nargs="+", choices=("cube", "tag"))
     group.add_argument("--move", nargs=3, metavar=("DIRECTION", "DISTANCE_MM", "SPEED_MM_S"))
     group.add_argument("--rotate", nargs=2, metavar=("ANGLE_DEG", "SPEED_DEG_S"))
-    group.add_argument("--action", choices=("home", "hatch_open", "hatch_close", "grap1", "grap2", "grap3", "build"))
+    group.add_argument("--action", choices=("home", "hatch_open", "hatch_close", "grap1", "grap2", "grap3", "build3", "build2", "build1", "build"))
     group.add_argument("--grab-right-orange", action="store_true",
                        help="选择当前最右侧橙色方块，视觉对准后执行 Grap3")
     group.add_argument("--stop", action="store_true")

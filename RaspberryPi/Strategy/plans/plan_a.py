@@ -13,6 +13,8 @@ PLAN_A = StrategyPlan('PlanA', (TaskStep('task0-1'), *SET1, *SET2, *SET3),
 SUPPORT_PLANS = (
     StrategyPlan('set1', (TaskStep('task0-1'), *SET1), 'Task variant 1 sequence'),
     StrategyPlan('set2', (TaskStep('task0-1'), *SET2), 'Task variant 2 sequence'),
-    StrategyPlan('collect-build-1', SET1[1:], 'Task2-1 followed by Task3-1'),
-    StrategyPlan('collect-build-2', SET2[1:], 'Task2-2 followed by Task3-2'),
+    StrategyPlan('collect-build-1', (TaskStep('task0-2'), *SET1[1:]),
+                 'Task0-2 positioning followed by Task2-1 and Task3-1'),
+    StrategyPlan('collect-build-2', (TaskStep('task0-2'), *SET2[1:]),
+                 'Task0-2 positioning followed by Task2-2 and Task3-2'),
 )

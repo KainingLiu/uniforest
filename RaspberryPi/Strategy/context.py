@@ -9,13 +9,18 @@ from typing import Optional
 
 @dataclass(frozen=True)
 class BuildApproach:
-    """Task2 exit at 180 degrees; Task3/Task4 preserve its calibrated yaw zero."""
+    """Tag6 approach at 180 degrees after Task2 or the Task1-0 refill exit."""
     heading_zero_deg: float
     source_task: str
+    # None preserves the normal three-cube build; a refill exit may supply 0..3.
+    carried_cube_count: Optional[int] = None
 
     def __post_init__(self):
         if not math.isfinite(self.heading_zero_deg):
             raise ValueError('heading zero must be finite')
+        if (self.carried_cube_count is not None and
+                (type(self.carried_cube_count) is not int or self.carried_cube_count not in range(4))):
+            raise ValueError('handoff carried cube count must be None or an integer from 0 to 3')
 
 
 @dataclass
@@ -56,9 +61,10 @@ class TaskContext:
             raise RuntimeError('A-board restarted during strategy')
         self._last_uptime = telem.uptime_ms
 
-    def publish_build_approach(self, heading_zero_deg):
+    def publish_build_approach(self, heading_zero_deg, *, carried_cube_count=None):
         self.check_active()
-        self.build_approach = BuildApproach(heading_zero_deg, self.current_task)
+        self.build_approach = BuildApproach(heading_zero_deg, self.current_task,
+                                           carried_cube_count)
 
     def take_build_approach(self):
         self.check_active()

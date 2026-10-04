@@ -15,7 +15,7 @@
 - 通过 CAN1 接收 C620 反馈并累计多圈编码器；
 - 驱动四路舵机和双步进电机；
 - 采集 JY61P IMU 与 SBUS 数据；
-- 非阻塞执行 Grap1/2/3 和 Build 机械动作，回传动作状态；
+- 非阻塞执行 Grap1/2/3 和 Build1/2/3 机械动作，回传动作状态；
 - 回传统一遥测，并在通信失联时停止底盘、双步进和吸盘，取消后续动作。
 
 固件使用 STM32 HAL 和裸机超级循环，无 RTOS。舵机命令为即时设置，步进电机运动由 TIM7 中断非阻塞执行。
@@ -44,7 +44,7 @@ Uniforest_A/
 | `servo.c/.h` | TIM2/TIM5 四路舵机 PWM 与归位 |
 | `suction.c/.h` | PD12 气泵、PD13 电磁阀 PWM 电子开关控制；阀门释放定时 |
 | `stepper.c/.h` | 双步进电机梯形加减速、重叠动作和累计位置 |
-| `actions.c/.h` | Grap1/2/3、Build 动作表；等待、忙碌保护、超时与取消 |
+| `actions.c/.h` | Grap1/2/3、Build1/2/3 动作表；等待、忙碌保护、超时与取消 |
 | `imu.c/.h` | USART2 JY61P 数据解析与航向数据 |
 | `remote_control.c/.h` | USART1 SBUS 接收和备用遥控逻辑 |
 | `debug_telem.c/.h` | USART3 VOFA+ JustFloat 调试输出，正式入口默认不启用 |
@@ -91,8 +91,13 @@ SYNC(0xAA) | CMD | LEN | SEQ | DATA(N) | CRC16
 
 任何通过 CRC 校验的上位机帧都会刷新存活计时。超过 200 ms 未收到有效帧时停止底盘、双步进和吸盘，并取消整套动作；接收轮询前先检查失联，防止新心跳掩盖已发生的通信中断。恢复有效通信后可接受新请求，但不会续跑原动作，也不会自动启动 `Remote_Control()`。
 
-2026-09-07：Grap1/2/3、Build 已从 Python 原样迁移至 `actions.c`。动作 ID 为
-1/2/3/4；当前状态为 0 idle、1 running、2 done、3 cancelled、4 timeout、5 rejected、
+2026-09-07：Grap1/2/3、Build 已从 Python 原样迁移至 `actions.c`。
+2026-10-04：原 Build 改名 Build3，ID 仍为 4，旧 ACTION_BUILD / build 名称兼容；
+新增 Build2（两块）ID 5、Build1（一块）ID 6。Grap1/2/3 的 ID 仍为 1/2/3。
+schema v4 增加动作 ID 契约，v5 补充 Build1 ID 6；现有命令编号、载荷、遥测和失联保护保持。
+Build1 上升 20 cm 使用异步单轴动作，达到 15 cm 时开始抬臂至 4°；两者都完成后才水平伸出放置。
+该异步动作复用原步进驱动与等待/取消/超时机制，不改变其他动作的同步单轴调用。
+当前状态为 0 idle、1 running、2 done、3 cancelled、4 timeout、5 rejected、
 6 chassis_ready。状态 6 是 schema v3 新增：机构仍忙、仍占有舵机/步进/吸盘，
 仅允许配套上位机执行后续底盘路线，不能作为 DONE。
 状态字段依次为请求编号 uint32、ID uint8、状态 uint8、阶段 uint8、uptime uint32，
@@ -100,10 +105,10 @@ SYNC(0xAA) | CMD | LEN | SEQ | DATA(N) | CRC16
 重复最后一次请求编号只返回原状态，不重启动作；运行时拒绝其他机构修改指令，
 允许状态查询、底盘指令和急停；单轴停止会中止整套动作。每段步进 30 秒保护上限，
 整套 120 秒；完整机械等待与交叉触发见 [ACTIONS.md](ACTIONS.md)。
-测试模式 Grap 结束后额外等待 1000 ms，Build 不接受测试标志。
+测试模式 Grap 结束后额外等待 1000 ms，Build1/2/3 均不接受测试标志。
 
 动作参数适用两轮比赛和独立 `robot.py --action` 入口。独立测试等待整套完成；比赛中的
-Grap2 回程上升 5 cm、Build 最后释放节点允许并行路线。旧上位机遇状态 6 会急停，
+Grap2 回程上升 5 cm、Build1/2/3 最后释放节点允许并行路线。旧上位机遇状态 6 会急停，
 新客户端配旧固件则等待 DONE；需配套同步客户端、协议、底盘监督及策略。
 完整联动效果尚待现场复测，部署记录不等于实机通过。携带数量检查由上位机
 编排，使用既有命令，不新增 A 板动作 ID。

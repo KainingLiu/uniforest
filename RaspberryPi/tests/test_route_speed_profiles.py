@@ -43,8 +43,8 @@ class RouteSpeedProfileTests(unittest.TestCase):
 
     def test_purple_return_uses_actual_distance_and_preserves_short_reverse(self):
         for task_type, base_mm in ((Task2Program, 350), (Task2_2Program, 500)):
-            for distance, speed, accel in ((499.5, 400, 300), (500, 1000, 800),
-                                           (1000, 1000, 800)):
+            for distance, speed, accel in ((499.5, 400, 300), (500, 800, 800),
+                                           (1000, 800, 800)):
                 with self.subTest(task=task_type.TASK_LABEL, distance=distance):
                     robot, task = task_fixture(task_type)
                     task._measure_lateral_displacement_mm = Mock(return_value=base_mm-distance)
@@ -75,7 +75,7 @@ class RouteSpeedProfileTests(unittest.TestCase):
                                     move_call('forward', 250, 400, 300),
                                     move_call('backward', 100, 400, 300)]
                         if direction:
-                            speed, accel = (1000, 800) if distance >= 500 else (400, 300)
+                            speed, accel = (800, 800) if distance >= 500 else (400, 300)
                             expected.append(move_call(direction, distance, speed, accel))
                         expected.append(move_call('forward', 2750, 800, 800))
                         self.assertEqual(robot.move_chassis.call_args_list, expected)

@@ -1,6 +1,7 @@
 """Unified executor for named strategies and reusable task sequences."""
 
 import uuid
+from collections import deque
 
 from .context import BuildApproach, TaskContext
 from .plans import PLAN_IDS, PLANS, StrategyPlan, validate_plan
@@ -8,8 +9,8 @@ from .tasks import TASK_IDS, TASK_LIBRARY, TaskStep
 from .results import TaskResult
 
 
-# Old Task2 selectors retain the complete Task2 + Task3 scope.
-PLAN_ALIASES = {'classic': 'PlanA', 'plana': 'PlanA', 'planb': 'PlanB'}
+# Old Task2 selectors follow collect-build, including its Task0-2 positioning.
+PLAN_ALIASES = {'classic': 'PlanA', 'plana': 'PlanA', 'planb': 'PlanB', 'planc': 'PlanC'}
 LEGACY_SELECTIONS = {
     **PLAN_ALIASES,
     'all': 'PlanA', 'round1': 'set1', 'round2': 'set2', 'task0': 'task0-1',
@@ -20,6 +21,20 @@ LEGACY_SELECTIONS = {
 TASK_CHOICES = (*TASK_IDS, *LEGACY_SELECTIONS)
 STRATEGY_CHOICES = (*PLAN_IDS, *PLAN_ALIASES)
 SELECTION_CHOICES = (*TASK_IDS, *PLAN_IDS, *LEGACY_SELECTIONS)
+
+
+def refill_steps(task_id, missing):
+    """Only original collection tasks can insert a single, non-recursive detour."""
+    if task_id not in ('task1-1', 'task1-2', 'task2-1', 'task2-2'):
+        return ()
+    if type(missing) is not int or not 0 <= missing <= 3:
+        raise ValueError(f'invalid refill amount: {missing}')
+    if missing == 0:
+        return ()
+    if task_id in ('task1-1', 'task1-2'):
+        return (TaskStep('task2-0', {'orange_target_count': missing}),)
+    return (TaskStep('task0-3'),
+            TaskStep('task1-0', {'target_cube_count': missing}))
 
 
 def resolve_selection(selection='PlanA'):
@@ -55,7 +70,11 @@ def run_plan(robot, plan, *, context=None, heading_zero_deg=None,
         context.check_active(require_telemetry=False)
         if report is not None:
             report(flow_id=uuid.uuid4().hex, task=plan.name, phase='STARTUP')
-        for index, step in enumerate(plan.steps):
+        pending = deque(plan.steps)
+        resume_task1 = None
+        index = 0
+        while pending:
+            step = pending.popleft()
             context.check_active(require_telemetry=False)
             definition = task_library[step.task_id]
             if definition.requires is None:
@@ -67,7 +86,8 @@ def run_plan(robot, plan, *, context=None, heading_zero_deg=None,
             if diagnostics is not None:
                 diagnostics.write('task_start', task=step.task_id,
                                   selection=plan.name, step=index)
-            raw = definition.create(context, step).run()
+            program = definition.create(context, step)
+            raw = program.run()
             context.check_active()
             outcome = raw if isinstance(raw, TaskResult) else TaskResult.from_code(
                 int(raw), task=step.task_id)
@@ -86,6 +106,37 @@ def run_plan(robot, plan, *, context=None, heading_zero_deg=None,
                 diagnostics.write('task_complete', task=step.task_id,
                                   status=outcome.status.value)
             print(f'[Strategy {plan.name}] {step.task_id} complete')
+            if resume_task1 is not None:
+                source_id, source_program = resume_task1
+                if step.task_id != 'task2-0':
+                    raise RuntimeError('Task1 delivery must resume immediately after Task2-0')
+                context.check_active()
+                context.current_task = source_id
+                print(f'[Strategy {plan.name}] Resuming {source_id} at Tag6')
+                if diagnostics is not None:
+                    diagnostics.write('task_resume', task=source_id, phase='DELIVERY_TAG_ALIGN')
+                source_program.resume_delivery_after_refill()
+                context.check_active()
+                if diagnostics is not None:
+                    diagnostics.write('task_resume_complete', task=source_id)
+                resume_task1 = None
+            inserted = refill_steps(step.task_id, getattr(program, 'refill_missing_count', 0))
+            if inserted:
+                # Validate the detour plus the remaining handoff chain before
+                # any detour movement. Preserve every original following step.
+                validate_plan(StrategyPlan(plan.name, (*inserted, *pending)),
+                              task_library=task_library,
+                              initial_handoff=context.build_approach is not None)
+                pending.extendleft(reversed(inserted))
+                if step.task_id in ('task1-1', 'task1-2'):
+                    resume_task1 = (step.task_id, program)
+                print(f'[Strategy {plan.name}] Insert refill: '
+                      + ' -> '.join(s.task_id for s in inserted))
+                if diagnostics is not None:
+                    diagnostics.write('refill_inserted', source_task=step.task_id,
+                                      missing=program.refill_missing_count,
+                                      tasks=[s.task_id for s in inserted])
+            index += 1
         if report is not None:
             report(task=plan.name, phase='FINISHED')
         return 0

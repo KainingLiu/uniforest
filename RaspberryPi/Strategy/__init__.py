@@ -6,6 +6,8 @@ from .task0 import (Task0Config, Task0Program, Task0State, Task0_1Config,
 from .task1 import (
     Task1Config,
     Task1Program,
+    Task1_0Config,
+    Task1_0Program,
     Task1Round2Config,
     Task1Round2Program,
     Task1State,
@@ -24,6 +26,8 @@ from .task2 import (
     Task2State,
     Task2_2Config,
     Task2_2Program,
+    Task2_0Config,
+    Task2_0Program,
 )
 from .task3 import (Task3Config, Task3Program, Task3State, Task3_2Config, Task3_2Program,
                     Task3_3Config, Task3_3Program)
@@ -43,6 +47,8 @@ __all__ = [
     'Task0_3Config', 'Task0_3Program',
     'Task4Config', 'Task4Program', 'Task4State', 'Task4_2Config', 'Task4_2Program',
     'Task1_2Config', 'Task1_2Program', 'Task2_2Config', 'Task2_2Program',
+    'Task1_0Config', 'Task1_0Program',
+    'Task2_0Config', 'Task2_0Program',
     'Task1_3Config', 'Task1_3Program', 'Task3_3Config', 'Task3_3Program',
     'Task3Config', 'Task3Program', 'Task3State', 'Task3_2Config', 'Task3_2Program',
     'Task0Config',

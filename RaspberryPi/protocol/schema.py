@@ -19,9 +19,10 @@ def load_schema(path: str = SCHEMA_FILE) -> Mapping[str, Any]:
 def validate_python_constants(schema: Mapping[str, Any] | None = None) -> None:
     """Fail fast when Python protocol constants drift from the checked schema."""
     schema = load_schema() if schema is None else schema
-    for name, value in schema["action_states"].items():
-        if getattr(commands, name) != value:
-            raise AssertionError(f"{name} differs from schema")
+    for group in ("action_ids", "action_states"):
+        for name, value in schema[group].items():
+            if getattr(commands, name) != value:
+                raise AssertionError(f"{name} differs from schema")
     frame = schema["frame"]
     if frame["sync"] != commands.PROTO_SYNC:
         raise AssertionError("protocol sync byte differs from schema")
