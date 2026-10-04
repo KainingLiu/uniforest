@@ -8,7 +8,7 @@
     "role": "tag",
     "resolution": [640, 480],
     "fps": 30,
-    "exposure": 100,
+    "exposure": 150,
     "gain": 32,
     "height_m": 0.25,
     "forward_offset_m": 0.0,
