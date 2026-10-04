@@ -15,13 +15,15 @@ class InspectionVisionUnavailable(RuntimeError):
 
 
 def inspect_carried_cubes(robot, *, chassis_followup=None, allow_visual_failure=False,
-                         inspect_while_moving=False):
+                         inspect_while_moving=False, allow_idle=False):
     """Return 0..3/None and restore the arm before allowing another task.
 
     Default: stationary inspection, with optional chassis travel during restore
     for a full/unknown count. Exhausted-search mode: supervise the entire pose,
     capture and restore from the chassis control loop while its exit route runs,
     regardless of count. No background thread can outlive a fault or task.
+    ``allow_idle`` also permits a stationary observation before any grab has
+    completed; it preserves zero-speed, quiet-wheel and inactive-stepper checks.
     """
     if inspect_while_moving and chassis_followup is None:
         raise ValueError('moving inspection needs a chassis-only exit route')
@@ -64,7 +66,7 @@ def inspect_carried_cubes(robot, *, chassis_followup=None, allow_visual_failure=
             status = transport.get_action_status()
             if status is not None and status[1] >= probe_at:
                 if status[0].state not in ((ACTION_IDLE, ACTION_DONE)
-                                         if inspect_while_moving else (ACTION_DONE,)):
+                                         if inspect_while_moving or allow_idle else (ACTION_DONE,)):
                     raise RuntimeError(f'A-board action not complete before inspection: {status[0].state}')
                 break
             if time.monotonic() - probe_at > .15:

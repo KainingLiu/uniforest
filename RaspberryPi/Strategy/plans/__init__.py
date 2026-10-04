@@ -37,8 +37,9 @@ def validate_plan(plan, *, task_library=TASK_LIBRARY, initial_handoff=False):
 from .plan_a import PLAN_A, SUPPORT_PLANS
 from .plan_b import PLAN_B
 from .plan_c import PLAN_C
+from .plan_d import PLAN_D
 
-PLANS = {plan.name: plan for plan in (PLAN_A, PLAN_B, PLAN_C, *SUPPORT_PLANS)}
+PLANS = {plan.name: plan for plan in (PLAN_A, PLAN_B, PLAN_C, PLAN_D, *SUPPORT_PLANS)}
 
 PLAN_IDS = tuple(PLANS)
 

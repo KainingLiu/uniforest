@@ -6,6 +6,8 @@ import threading
 import time
 from typing import Optional
 
+from .plan_d_state import PlanDState
+
 
 @dataclass(frozen=True)
 class BuildApproach:
@@ -30,6 +32,7 @@ class TaskContext:
     build_approach: Optional[BuildApproach] = None
     current_task: str = ''
     closed: bool = False
+    plan_d: Optional[PlanDState] = None
     _last_uptime: Optional[int] = field(default=None, init=False)
     _link_generation: Optional[int] = field(default=None, init=False)
     _stop_generation: int = field(init=False)
@@ -75,4 +78,6 @@ class TaskContext:
 
     def close(self):
         self.build_approach = None
+        if self.plan_d is not None:
+            self.plan_d.close()
         self.closed = True

@@ -1,4 +1,4 @@
-"""Mechanical action client; Grap1/2/3 and Build1/2/3 execute on the A-board."""
+"""Mechanical action client; composite grab/build actions execute on the A-board."""
 
 import secrets
 import threading
@@ -6,6 +6,7 @@ import time
 
 from protocol.commands import (
     ACTION_GRAP1, ACTION_GRAP2, ACTION_GRAP3, ACTION_BUILD3, ACTION_BUILD2, ACTION_BUILD1,
+    ACTION_BUILD3_ON_BASE1, ACTION_BUILD3_ON_BASE2,
     ACTION_RUNNING, ACTION_DONE, ACTION_CANCELLED, ACTION_CHASSIS_READY,
 )
 from .servo import (
@@ -175,6 +176,21 @@ class Actions:
 
     def build1(self, *, chassis_followup=None):
         self._run_action(ACTION_BUILD1, chassis_followup=chassis_followup)
+
+    def build_on_base(self, base_height, *, chassis_followup=None):
+        """Place all three stored cubes above a confirmed 1/2/3-layer base.
+
+        Logical layers 2 and 3 use the layer-4 release pose. Unknown/empty
+        bases must be handled by the strategy before collecting stored cargo.
+        """
+        if type(base_height) is not int or base_height not in (1, 2, 3):
+            raise ValueError('base_height must be an integer from 1 to 3')
+        action_id = {
+            1: ACTION_BUILD3_ON_BASE1,
+            2: ACTION_BUILD3_ON_BASE2,
+            3: ACTION_BUILD3,
+        }[base_height]
+        self._run_action(action_id, chassis_followup=chassis_followup)
 
     def servo_home(self, settle_ms=300):
         self._check_cancelled()

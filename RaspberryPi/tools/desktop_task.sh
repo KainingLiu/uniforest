@@ -17,6 +17,7 @@ fi
 case "$selection" in
     all|classic|PlanA|plana) label='PlanA 原策略' ;;
     PlanB|planb) label='PlanB 采集投放策略' ;;
+    PlanD|pland) label='PlanD 按底座层数搭建' ;;
     round1|set1) label='set1 任务组合' ;;
     round2|set2) label='set2 任务组合' ;;
     collect-build-1|collect-build-2) label="$selection" ;;
@@ -32,7 +33,7 @@ if [[ ! -x .venv/bin/python || ! -f main.py ]]; then
 fi
 
 case "$selection" in
-    PlanA|PlanB|plana|planb|classic|set1|set2|collect-build-1|collect-build-2)
+    PlanA|PlanB|PlanD|plana|planb|pland|classic|set1|set2|collect-build-1|collect-build-2)
         command=(.venv/bin/python -u main.py --strategy "$selection") ;;
     *) command=(.venv/bin/python -u main.py --task "$selection") ;;
 esac

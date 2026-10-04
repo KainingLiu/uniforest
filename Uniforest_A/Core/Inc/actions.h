@@ -9,6 +9,8 @@
 #define ACTION_BUILD3 4u
 #define ACTION_BUILD2 5u
 #define ACTION_BUILD1 6u
+#define ACTION_BUILD3_ON_BASE1 7u
+#define ACTION_BUILD3_ON_BASE2 8u
 /* Keep existing three-cube callers wire-compatible. */
 #define ACTION_BUILD ACTION_BUILD3
 

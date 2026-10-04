@@ -14,7 +14,7 @@ typedef struct {
 } Axis;
 static Axis axis[2];
 static uint32_t now, lift_started, lift_finished;
-static unsigned pumps, releases, homes, stops, moves;
+static unsigned pumps, releases, homes, stops, moves, pickups;
 static uint16_t angles[4];
 static unsigned mode, lead, other, phase_axis, second_started, other_started;
 static uint32_t other_trigger, reverse_trigger, second_length;
@@ -29,6 +29,19 @@ void Suction_AllOff(void) { stops++; }
 void Servo_SetAngleTenth(uint8_t id, uint16_t angle) {
     if (id == 1 && angle == 500) {
         lift_started = now;
+        pickups++;
+        if (variant == 3 || variant == 7 || variant == 8) {
+            /* Observe stock pickup completion, including the third pickup
+             * whose suction starts before the retraction/descent completes. */
+            const int32_t pickup_h[] = {CM_TO_STEPS(3.5), 0, 0};
+            const int32_t pickup_v[] = {0, -(int32_t)CM_TO_STEPS(11),
+                                          -(int32_t)CM_TO_STEPS(20.5)};
+            assert(pickups <= 3 && pumps == pickups && releases == pickups - 1);
+            assert(axis[0].pos == pickup_h[pickups - 1]);
+            assert(axis[1].pos == pickup_v[pickups - 1]);
+            assert(angles[0] == (pickups == 1 ? 952 : 1022));
+            assert(angles[1] == (pickups == 1 ? 1000 : 950));
+        }
         if (variant == 1) {
             assert(axis[1].active && axis[1].dir == STEP_DIR_FORWARD);
             assert(axis[1].length == CM_TO_STEPS(20));
@@ -46,7 +59,8 @@ void Servo_SetAngleTenth(uint8_t id, uint16_t angle) {
         }
     }
     if (id == 1 && (angle == 0 || angle == 40)) lift_finished = now + 140;
-    if (variant == 2 && id == 0 && angle == 972) {
+    if ((variant == 2 || variant == 7 || variant == 8) && id == 0 &&
+            (angle == 972 || (angle == 952 && pickups > 1))) {
         assert(now >= lift_finished);
         assert(now - lift_started == 500);
     }
@@ -70,6 +84,16 @@ void Suction_PumpOn(void) {
         assert(axis[0].pos <= (int32_t)CM_TO_STEPS(5));
         assert(axis[0].busy || axis[1].busy); /* pickup overlaps retraction */
     }
+    if ((variant == 3 || variant == 7 || variant == 8) && pumps == 2) {
+        assert(!axis[0].busy && !axis[1].busy);
+        assert(axis[0].pos == 0 && axis[1].pos == -(int32_t)CM_TO_STEPS(11));
+    }
+    if ((variant == 3 || variant == 7 || variant == 8) && pumps == 3) {
+        assert(axis[0].pos <= (int32_t)CM_TO_STEPS(5));
+        assert(axis[0].pos >= (int32_t)CM_TO_STEPS(5) - (int32_t)pulse_rate);
+        assert(angles[0] == 1022 && angles[1] == 950);
+        assert(axis[0].busy || axis[1].busy);
+    }
 }
 void Suction_Release(void) {
     assert(!axis[0].busy && !axis[1].busy);
@@ -84,6 +108,18 @@ void Suction_Release(void) {
         assert(angles[1] == 0 && angles[0] == 972);
         assert(axis[0].pos == (int32_t)CM_TO_STEPS(23));
         assert(axis[1].pos == -(int32_t)CM_TO_STEPS(releases == 1 ? 20 : 14));
+    }
+    if (variant == 3 || variant == 7 || variant == 8) {
+        assert(releases <= 3 && releases == pickups && now >= lift_finished);
+        assert(Actions_GetStatus().state == ACTION_RUNNING);
+        unsigned level = variant == 3 ? releases + 3 :
+                         (variant == 8 && releases == 3 ? 5 : 4);
+        /* Compare with the original Build3 release poses independently of
+         * the relative moves that implement the new transition paths. */
+        assert(axis[0].pos == (int32_t)CM_TO_STEPS(level == 4 ? 22.5 : 23));
+        assert(axis[1].pos == -(int32_t)CM_TO_STEPS(level == 4 ? 19 : level == 5 ? 13.5 : 4));
+        assert(angles[1] == (level == 4 ? 40 : 0));
+        assert(angles[0] == (level == 4 ? 952 : 972));
     }
 }
 
@@ -176,20 +212,33 @@ int main(int argc, char **argv) {
     assert(argc >= 3);
     variant = (uint8_t)atoi(argv[1]);
     if (argc > 3) pulse_rate = (unsigned)atoi(argv[3]);
-    uint8_t id = variant == 1 ? ACTION_BUILD1 : variant == 2 ? ACTION_BUILD2 : ACTION_BUILD3;
+    uint8_t id = variant == 1 ? ACTION_BUILD1 : variant == 2 ? ACTION_BUILD2 :
+                 variant == 7 ? ACTION_BUILD3_ON_BASE1 :
+                 variant == 8 ? ACTION_BUILD3_ON_BASE2 : ACTION_BUILD3;
+    unsigned cargo_count = variant >= 7 ? 3 : variant;
     assert(ACTION_BUILD == ACTION_BUILD3 && ACTION_BUILD3 == 4 && ACTION_BUILD2 == 5 && ACTION_BUILD1 == 6);
     assert(Actions_Start(0, id, 0) == ACK_ERR_PARAM);
-    assert(Actions_Start(1, 7, 0) == ACK_ERR_PARAM);
+    assert(ACTION_BUILD3_ON_BASE1 == 7 && ACTION_BUILD3_ON_BASE2 == 8);
+    assert(Actions_Start(1, 9, 0) == ACK_ERR_PARAM);
     assert(Actions_Start(1, 255, 0) == ACK_ERR_PARAM);
     assert(Actions_Start(1, ACTION_BUILD2, 1) == ACK_ERR_PARAM);
     assert(Actions_Start(1, ACTION_BUILD3, 1) == ACK_ERR_PARAM);
     assert(Actions_Start(1, ACTION_BUILD1, 1) == ACK_ERR_PARAM);
+    assert(Actions_Start(1, ACTION_BUILD3_ON_BASE1, 1) == ACK_ERR_PARAM);
+    assert(Actions_Start(1, ACTION_BUILD3_ON_BASE2, 1) == ACK_ERR_PARAM);
     assert(Actions_Start(10, id, 0) == ACK_OK);
     int ready = 0, aborted = 0;
     for (now = 0; now < 119000 && Actions_IsBusy(); now++) {
         if (strcmp(argv[2], "timeout") &&
-            (strcmp(argv[2], "stall_lift") || moves != 2)) advance();
+            (strcmp(argv[2], "stall_lift") || moves != 2) &&
+            (strcmp(argv[2], "stall_final") || moves != 6)) advance();
         Actions_Update();
+        if (!strncmp(argv[2], "cancel_pickup", 13) && angles[1] == 500 &&
+                pickups == (unsigned)atoi(argv[2] + 13)) {
+            assert(variant == 7 || variant == 8);
+            assert(releases == pickups - 1);
+            Actions_Abort(ACTION_CANCELLED); aborted = 1;
+        }
         if (!strcmp(argv[2], "cancel_lift") && angles[1] == 500) {
             assert(variant == 1 && axis[1].busy && !releases);
             Actions_Abort(ACTION_CANCELLED); aborted = 1;
@@ -203,7 +252,7 @@ int main(int argc, char **argv) {
         }
         if (Actions_GetStatus().state == ACTION_CHASSIS_READY && !ready) {
             ready = 1;
-            assert(releases == variant && Actions_IsBusy());
+            assert(releases == cargo_count && Actions_IsBusy());
             assert(axis[0].busy && axis[1].busy); /* tail still in flight */
             assert(Actions_Start(11, id, 0) == ACK_ERR_BUSY);
             if (!strcmp(argv[2], "cancel")) {
@@ -214,11 +263,14 @@ int main(int argc, char **argv) {
     if (!strcmp(argv[2], "timeout") || !strcmp(argv[2], "stall_lift")) {
         assert(Actions_GetStatus().state == ACTION_TIMEOUT && stops == 1);
         assert(!releases && !ready);
+    } else if (!strcmp(argv[2], "stall_final")) {
+        assert(Actions_GetStatus().state == ACTION_TIMEOUT && stops == 1);
+        assert(releases == 2 && !ready);
     } else if (aborted) {
         assert(Actions_GetStatus().state == ACTION_CANCELLED && stops == 1);
     } else {
         assert(Actions_GetStatus().state == ACTION_DONE && ready);
-        assert(pumps == variant && releases == variant);
+        assert(pumps == cargo_count && releases == cargo_count);
         assert(axis[0].pos == 0 && axis[1].pos == 0);
         assert(homes == (variant == 2 ? 1u : 2u));
         assert(angles[0] == 972 && angles[1] == 900 && angles[2] == 630 && angles[3] == 1170);

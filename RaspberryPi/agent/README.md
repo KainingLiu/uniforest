@@ -118,6 +118,8 @@ python -m agent.cli --context-image /path/to/your/reference.png
 `PlanA`（默认，旧 classic）在原 7 个任务后追加 task1-3 → task2-2 → task3-3，共 10 个任务；`set1/2` 执行 task0-1 和相应的一套任务；
 `PlanB` 执行 task0-2 → task2-1 → task4-1 → task2-2 → task4-2 → task0-3 → task1-1 → task0-3 → task1-2 → task5，复用已有 Task2、Task1，末尾 Task5 执行两次建筑对准与 Build。
 `PlanC` 执行 task0-1 → task1-1 → task0-3 → task1-2 → task2-1 → task3-1 → task2-2 → task3-2 → task1-3 → task2-2 → task3-3，沿用统一补抓规则；可指定 `run_strategy(selection="PlanC")`，默认仍为 PlanA。Task1-1 后先通过 Task0-3 转场，再执行 Task1-2；现场验证状态见 Strategy/README.md。
+
+`PlanD` 可通过 `run_strategy(selection="PlanD")` 选择，与 PlanB 共用路线。第 3/4 轮在补抓结束后复检，投放完成后分别保存 A/B 底座数量，Task5 按已有 1/2/3 层调用 4/4/4、4/4/5、4/5/6 层释放序列。0/未知数量和缺失低层标定会在加载暂存矿前跳过该点；建筑对准失败中止。需要配套 ID 7/8 固件及 `Strategy/building_profiles.json` 中对应层标定。首次现场使用与标定方法见 [PlanD 实现说明](../Strategy/PLAND_DESIGN.md)；默认策略仍为 PlanA。
 原 task0 命名为 task0-1；task0-2 以 1000 mm/s 前进 900 mm、右移 2700 mm，再转到 180°。
 task0-3 从 180°进入，转到 0°，以 1000 mm/s 左移 2600 mm，再以 300 mm/s 向左顶墙；独立运行也需按 180°摆车。
 task5 从 Task1-2 结束位置以 180°进入，执行两次开舱顶墙、建筑对准和 Build。开舱各等 200 ms、关舱各等 400 ms、各后退 250 mm；每次第三块释放后先以 400 mm/s 后退 100 mm，再执行原左移路线，与机构收尾并行，机构与路线均结束才完成。
