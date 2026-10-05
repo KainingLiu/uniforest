@@ -8,8 +8,6 @@ import unittest
 from types import SimpleNamespace
 from unittest.mock import Mock
 
-from agent.direct import build_parser
-from agent.tools import tool_definitions
 from control.actions import Actions
 from protocol import commands
 from robot import Robot
@@ -38,10 +36,6 @@ class BuildInterfacesTests(unittest.TestCase):
                 actions._run_action.assert_called_with(ident, chassis_followup=callback)
                 robot.run_action(name)
                 actions._run_action.assert_called_with(ident, chassis_followup=None)
-                self.assertEqual(build_parser().parse_args(['--action', name]).action, name)
-        arm = next(t for t in tool_definitions() if t['name'] == 'execute_arm_action')
-        names = arm['parameters']['properties']['action']['enum']
-        self.assertTrue({'build', 'build1', 'build2', 'build3'}.issubset(names))
 
 
 class FirmwareBuildTests(unittest.TestCase):

@@ -335,7 +335,7 @@ class WorkflowIntegrationTests(unittest.TestCase):
         self.assertEqual(CompetitionProgram(SimpleNamespace()).state,
                          CompetitionState.STARTUP)
 
-    def test_agent_repeated_workflows_get_distinct_flow_ids(self):
+    def test_repeated_workflows_get_distinct_flow_ids(self):
         from Strategy.runner import run_tasks
         from tests.test_strategy_composition import robot_fixture
         reporter = Mock()

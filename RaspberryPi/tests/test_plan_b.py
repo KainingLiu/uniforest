@@ -34,8 +34,6 @@ class PlanBTests(unittest.TestCase):
         self.assertIs(TASK_LIBRARY['task2-2'].program_type, Task2_2Program)
         self.assertIs(TASK_LIBRARY['task0-3'].program_type, Task0_3Program)
         self.assertIs(TASK_LIBRARY['task5'].program_type, Task5Program)
-        from agent.tools import RobotToolExecutor
-        self.assertEqual(RobotToolExecutor(dry_run=True).run_strategy('PlanB').value['tasks'], expected)
 
     def test_task0_routes_use_requested_distances_speed_and_acceleration(self):
         for task_type, legs in ((Task0_1Program, [('forward', 1150)]),

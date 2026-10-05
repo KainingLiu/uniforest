@@ -66,8 +66,6 @@ class CompositionTests(unittest.TestCase):
                   'task1-3', 'task2-2', 'task3-3']
         for selection in ('PlanC', 'planc'):
             self.assertEqual([s.task_id for s in resolve_selection(selection).steps], plan_c)
-        from agent.tools import RobotToolExecutor
-        self.assertEqual(RobotToolExecutor(dry_run=True).run_strategy('PlanC').value['tasks'], plan_c)
         for plan in PLANS.values():
             validate_plan(plan)
         for selection in ('all', 'classic', 'PlanA', 'plana'):
@@ -325,21 +323,6 @@ class CompositionTests(unittest.TestCase):
              patch.object(Task3Program, '_run_mission', build):
             self.assertEqual(run_plan(self.robot, PLANS['collect-build-1']), 0)
         self.assertEqual(received, [(37.0, 'task3-1')])
-
-    def test_agent_catalog_and_dry_run_use_the_same_library(self):
-        from agent.tools import RobotToolExecutor, tool_definitions
-        from Strategy.runner import SELECTION_CHOICES
-        schema = next(t for t in tool_definitions() if t['name'] == 'run_strategy')
-        self.assertEqual(schema['parameters']['properties']['selection']['enum'], list(SELECTION_CHOICES))
-        agent = RobotToolExecutor(dry_run=True)
-        self.assertEqual(agent.run_strategy('collect-build-2').value['tasks'],
-                         ['task0-2', 'task2-2', 'task3-2'])
-        self.assertEqual(agent.run_strategy('task2-1').value['tasks'], ['task2-1'])
-        for task_id in ('task3-1', 'task3-4', 'task3-5'):
-            with self.subTest(task=task_id):
-                with self.assertRaises(ValueError):
-                    agent.run_strategy(task_id)
-                self.assertEqual(agent.run_strategy(task_id, heading_zero_deg=37).value['tasks'], [task_id])
 
     def test_readonly_cli_and_missing_handoff_never_construct_robot(self):
         import main

@@ -41,7 +41,3 @@ cmake --build build/Debug
 最新步进参数与 Grap3 行程已完成无硬件编译；板上固件版本、负载下失步和整套动作
 仍需现场确认。烧录后先核对机构起始位置，再做单动作小范围测试，最后进入完整任务。
 通信失联、取消或急停不会自动续跑；协议兼容与超时说明见 [PROJECT.md](PROJECT.md)。
-
-## 赛后清理
-
-实验性 `game/` 与旧 verify/codex-position 构建目录已退出交接；Core、Drivers、CMake、CubeMX、链接脚本和 OpenOCD 配置保留。`build/Debug` 为当前可重新生成的构建产物，默认不提交 GitHub。

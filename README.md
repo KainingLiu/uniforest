@@ -7,9 +7,8 @@ Uniforest 队机器人电控、算法与视觉项目。队伍已获得本届比�
 
 | 目录 | 用途 |
 | --- | --- |
-| `RaspberryPi/` | Raspberry Pi 5 8GB 上位机：视觉、策略、底盘位置外环、自然语言入口和通信 |
+| `RaspberryPi/` | Raspberry Pi 5 8GB 上位机：视觉、策略、底盘位置外环和通信 |
 | `Uniforest_A/` | RoboMaster A 板 STM32F427 下位机：四轮速度环、机械动作、IMU、遥测与失联保护 |
-| 已清理的 `game/` | 上下位机实验目录不纳入最终交接；清理前归档保存在本地 `.diagnostics/`，不提交仓库 |
 | `备份/` | 本地历史快照，默认只读且不上传 |
 
 当前实现以主目录的实际入口和构建配置为准。
@@ -28,7 +27,6 @@ Uniforest 队机器人电控、算法与视觉项目。队伍已获得本届比�
 | [下位机入口](Uniforest_A/README.md) / [技术说明](Uniforest_A/PROJECT.md) | 构建、CLion 烧录、实时控制、硬件接口与协议 |
 | [机械动作](Uniforest_A/ACTIONS.md) | Grap1/2/3、Build1/2/3 的完整动作表 |
 | [数量检查](RaspberryPi/tools/carried_cube_count_test.md) / [前臂调零](RaspberryPi/tools/arm_zero_adjust.md) | 独立调试和标定方法 |
-| [自然语言 Agent](RaspberryPi/agent/README.md) | 配置、交互、直控与中转 |
 | [YOLO 与数据采集](RaspberryPi/vision/yolo/README.md) | 已有离线实验、训练报告与采集说明 |
 | [变更与验证记录](RaspberryPi/CHANGELOG.md) | 历次调参、回退、同步和验证；历史值不是当前值 |
 | [协作约定](AGENTS.md) | 开发范围、备份、协议核对与实机规范 |
@@ -61,5 +59,5 @@ cd /home/uniforest/Uniforest/RaspberryPi
 - 协议为 [schema v5](RaspberryPi/protocol/schema.json)。状态 6 允许底盘与机构收尾并行，仍须等待最终完成。200 ms 通信失联会停止底盘、步进及吸盘并取消动作，重连不续跑。
 - 视觉失效按任务预算和超时降级继续；通信、遥测陈旧、急停及机构故障仍终止。
 - GitHub `main` 本轮以本地可提交文件树为准；密码、密钥、私有配置、虚拟环境、构建产物、采集数据和本地备份不属于上传内容。
-- 树莓派既有自动运行日志封装与本地略有差异；GitHub 与本地一致不代表树莓派所有文件一致。树莓派暂不在线，设备上的实验目录尚未清理；本轮未重新部署主程序或烧录固件。
+- 树莓派既有自动运行日志封装与本地略有差异；GitHub 与本地一致不代表树莓派所有文件一致。设备部署版本以实际同步记录为准。
 - 规则手册、队伍计划书和 A 板硬件 PDF 不在当前检出中；规则引用与硬件设计论证需补原始资料，不能用过往对话替代正式依据。

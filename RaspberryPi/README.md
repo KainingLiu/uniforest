@@ -11,7 +11,6 @@
 | 底盘速度、到位和顶墙 | [control/README.md](control/README.md) |
 | 相机、识别、对准与视觉降级 | [vision/opencv/README.md](vision/opencv/README.md) |
 | Grap/Build 动作表 | [下位机 ACTIONS.md](../Uniforest_A/ACTIONS.md) |
-| 自然语言和本地直控 | [agent/README.md](agent/README.md) |
 | 数据采集与离线实验 | [vision/yolo/README.md](vision/yolo/README.md) |
 | 历史参数与验证记录 | [CHANGELOG.md](CHANGELOG.md) |
 
@@ -28,11 +27,10 @@
 | `protocol/` | 帧编解码、传输与 schema v5 |
 | `vision/opencv/` | 当前比赛视觉与标定；旧模块路径保留兼容导入 |
 | `vision/yolo/` | 原图采集和离线训练；比赛推理集成尚未完成 |
-| `agent/` | 自然语言、本地直控与 API 中转 |
 | `tools/`、`tests/` | 诊断、采集、桌面入口与无硬件检查 |
 | `sensors/`、`utils/` | 传感器封装及辅助代码 |
 
-调用关系为 `main.py → Strategy → robot → control / protocol / vision`。执行器负责编排，设备启动及最终关闭由 main 或 Agent 负责。
+调用关系为 `main.py → Strategy → robot → control / protocol / vision`。执行器负责编排，设备启动及最终关闭由入口程序负责。
 
 ## 安装
 
@@ -56,7 +54,6 @@ py -3 -m venv .venv
 ```
 
 requirements 记录版本下限，不是精确锁定环境；复现时另存实际 Python、OpenCV、NumPy、系统和固件版本。
-API 密钥通过 Agent 私有配置或环境变量加载，本地直控不调用模型 API。
 
 ## 检查与启动
 

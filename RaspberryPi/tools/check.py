@@ -29,7 +29,7 @@ def main():
     args = parser.parse_args()
     results = {}
     files = sorted(ROOT.glob('*.py'))
-    for directory in ('control', 'protocol', 'Strategy', 'vision', 'sensors', 'utils', 'tools', 'tests', 'agent'):
+    for directory in ('control', 'protocol', 'Strategy', 'vision', 'sensors', 'utils', 'tools', 'tests'):
         files.extend(sorted((ROOT / directory).rglob('*.py')))
     results['syntax'] = True
     for path in files:
