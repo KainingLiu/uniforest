@@ -17,10 +17,11 @@ fi
 case "$selection" in
     all|classic|PlanA|plana) label='PlanA 原策略' ;;
     PlanB|planb) label='PlanB 采集投放策略' ;;
+    PlanC|planc) label='PlanC 策略' ;;
     round1|set1) label='set1 任务组合' ;;
     round2|set2) label='set2 任务组合' ;;
     collect-build-1|collect-build-2) label="$selection" ;;
-    task0|task0-1|task0-2|task0-3|task1-1|task1-2|task1-3|task2-1|task2-2|task3-1|task3-2|task3-3|task4-1|task4-2|task5) label="$selection" ;;
+    task0|task0-1|task0-2|task0-3|task1-1|task1-2|task1-3|task2-1|task2-2|task3-1|task3-2|task3-3|task3-4|task3-5|task4-1|task4-2|task5) label="$selection" ;;
     *) printf '无效任务：%s\n' "$selection"; finish 2 ;;
 esac
 
@@ -32,7 +33,7 @@ if [[ ! -x .venv/bin/python || ! -f main.py ]]; then
 fi
 
 case "$selection" in
-    PlanA|PlanB|plana|planb|classic|set1|set2|collect-build-1|collect-build-2)
+    PlanA|PlanB|PlanC|plana|planb|planc|classic|set1|set2|collect-build-1|collect-build-2)
         command=(.venv/bin/python -u main.py --strategy "$selection") ;;
     *) command=(.venv/bin/python -u main.py --task "$selection") ;;
 esac
@@ -48,7 +49,7 @@ if ! flock -n 9; then
 fi
 
 case "$selection" in
-    task3-1|task3-2|task3-3|task4-1|task4-2)
+    task3-1|task3-2|task3-3|task3-4|task3-5|task4-1|task4-2)
         printf '独立 Task3/Task4 要求停在 Task2 结束位置，初始航向 180°。\n'
         printf 'Task3 需准备好搭建方块；Task4 需准备好舱内投放方块。\n'
         printf '请填写之前标定的航向零点（度），不能直接填当前航向；留空取消：'

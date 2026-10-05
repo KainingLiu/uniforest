@@ -16,7 +16,8 @@ from Strategy.runner import resolve_selection, run_plan
 from Strategy.tasks import TASK_LIBRARY, TaskDefinition, TaskStep
 from Strategy.task1 import Task1Program, Task1_2Program, Task1_3Program
 from Strategy.task2 import Task2Program, Task2_2Program
-from Strategy.task3 import Task3Program, Task3_2Program, Task3_3Program
+from Strategy.task3 import (Task3Program, Task3_2Program, Task3_3Program,
+                            Task3_4Program, Task3_5Program)
 
 
 def robot_fixture():
@@ -61,7 +62,7 @@ class CompositionTests(unittest.TestCase):
                     'task1-3', 'task2-2', 'task3-3']
         self.assertEqual([s.task_id for s in PLANS['PlanA'].steps], expected)
         plan_c = ['task0-1', 'task1-1', 'task0-3', 'task1-2',
-                  'task2-1', 'task3-1', 'task2-2', 'task3-2',
+                  'task2-1', 'task3-4', 'task2-2', 'task3-2',
                   'task1-3', 'task2-2', 'task3-3']
         for selection in ('PlanC', 'planc'):
             self.assertEqual([s.task_id for s in resolve_selection(selection).steps], plan_c)
@@ -248,10 +249,15 @@ class CompositionTests(unittest.TestCase):
                         task._align_delivery_tag.assert_not_called()
 
     def test_task3_consumes_heading_and_keeps_build_overlap_for_all_variants(self):
-        for task_type, direction, lateral, return_mm in (
-                (Task3Program, 'right', 100, 2500),
-                (Task3_2Program, 'right', 400, 2200),
-                (Task3_3Program, 'left', 500, 3000)):
+        for task_type, direction, lateral, exit_route in (
+                (Task3Program, 'right', 100,
+                 [('turn', 180), ('left', 2500, 1000), ('wall', 'left')]),
+                (Task3_2Program, 'right', 400,
+                 [('turn', 180), ('left', 2200, 1000), ('wall', 'left')]),
+                (Task3_3Program, 'left', 500,
+                 [('turn', 180), ('left', 3000, 1000), ('wall', 'left')]),
+                (Task3_4Program, 'right', 100, [('left', 100, 400)]),
+                (Task3_5Program, 'right', 400, [('left', 400, 400)])):
             with self.subTest(task=task_type.__name__):
                 robot = robot_fixture()
                 context = TaskContext(robot, build_approach=BuildApproach(37.0, 'task2'))
@@ -279,8 +285,8 @@ class CompositionTests(unittest.TestCase):
                 self.assertEqual(task._heading_zero_deg, 37.0)
                 self.assertIsNone(context.build_approach)
                 self.assertEqual(events, ['tag6', (direction, lateral, 400), 'build_release',
-                    'monitor_enter', 'action_check', ('backward', 200, 400), ('turn', 180),
-                    ('left', return_mm, 1000), ('wall', 'left'), 'action_check', 'monitor_exit', 'build_done'])
+                    'monitor_enter', 'action_check', ('backward', 200, 400)] + exit_route
+                    + ['action_check', 'monitor_exit', 'build_done'])
                 self.assertNotIn('translation_only_completion', task._align_delivery_tag.call_args.kwargs)
                 self.assertTrue(task._align_delivery_tag.call_args.kwargs['independent_heading'])
                 self.assertEqual(task._align_delivery_tag.call_args.kwargs['tag_id'], 6)
@@ -329,21 +335,26 @@ class CompositionTests(unittest.TestCase):
         self.assertEqual(agent.run_strategy('collect-build-2').value['tasks'],
                          ['task0-2', 'task2-2', 'task3-2'])
         self.assertEqual(agent.run_strategy('task2-1').value['tasks'], ['task2-1'])
-        with self.assertRaises(ValueError):
-            agent.run_strategy('task3-1')
-        self.assertEqual(agent.run_strategy('task3-1', heading_zero_deg=37).value['tasks'], ['task3-1'])
+        for task_id in ('task3-1', 'task3-4', 'task3-5'):
+            with self.subTest(task=task_id):
+                with self.assertRaises(ValueError):
+                    agent.run_strategy(task_id)
+                self.assertEqual(agent.run_strategy(task_id, heading_zero_deg=37).value['tasks'], [task_id])
 
     def test_readonly_cli_and_missing_handoff_never_construct_robot(self):
         import main
         for args in (['--list-tasks'], ['--strategy', 'classic', '--show-plan'],
                      ['--task', 'task3-2', '--show-plan'],
                      ['--task', 'task1-3', '--show-plan'],
-                     ['--task', 'task3-3', '--show-plan']):
+                     ['--task', 'task3-3', '--show-plan'],
+                     ['--task', 'task3-4', '--show-plan'],
+                     ['--task', 'task3-5', '--show-plan']):
             with self.subTest(args=args), patch('sys.argv', ['main.py', *args]), \
                  patch('main.Robot') as robot:
                 self.assertEqual(main.main(), 0)
                 robot.assert_not_called()
         for args in (['--task', 'task3-1'], ['--task', 'task3-3'],
+                     ['--task', 'task3-4'], ['--task', 'task3-5'],
                      ['--task', 'task3-2', '--heading-zero-deg', 'nan']):
             with self.subTest(args=args), patch('sys.argv', ['main.py', *args]), \
                  patch('main.Robot') as robot, contextlib.redirect_stderr(io.StringIO()):

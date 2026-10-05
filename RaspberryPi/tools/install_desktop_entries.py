@@ -10,6 +10,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ENTRIES = {
     'uniforest-all.desktop': ('PlanA', 'Uniforest PlanA 原策略'),
     'uniforest-planb.desktop': ('PlanB', 'Uniforest PlanB 采集投放策略'),
+    'uniforest-planc.desktop': ('PlanC', 'Uniforest PlanC 策略'),
     'uniforest-set1.desktop': ('set1', 'Uniforest set1 任务组合'),
     'uniforest-set2.desktop': ('set2', 'Uniforest set2 任务组合'),
     'uniforest-collect-build-1.desktop': ('collect-build-1', 'Uniforest collect-build-1 采集搭建'),

@@ -30,7 +30,8 @@ from .task2 import (
     Task2_0Program,
 )
 from .task3 import (Task3Config, Task3Program, Task3State, Task3_2Config, Task3_2Program,
-                    Task3_3Config, Task3_3Program)
+                    Task3_3Config, Task3_3Program, Task3_4Config, Task3_4Program,
+                    Task3_5Config, Task3_5Program)
 from .task4 import Task4Config, Task4Program, Task4State, Task4_2Config, Task4_2Program
 from .task5 import Task5Config, Task5Program, Task5State
 from .context import TaskContext, BuildApproach
@@ -51,6 +52,7 @@ __all__ = [
     'Task2_0Config', 'Task2_0Program',
     'Task1_3Config', 'Task1_3Program', 'Task3_3Config', 'Task3_3Program',
     'Task3Config', 'Task3Program', 'Task3State', 'Task3_2Config', 'Task3_2Program',
+    'Task3_4Config', 'Task3_4Program', 'Task3_5Config', 'Task3_5Program',
     'Task0Config',
     'Task0Program',
     'Task0State',

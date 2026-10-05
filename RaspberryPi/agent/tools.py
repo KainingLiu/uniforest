@@ -168,7 +168,7 @@ def tool_definitions() -> list[dict]:
                 "type": "object",
                 "properties": {
                     "selection": {"type": "string", "enum": list(SELECTION_CHOICES)},
-                    "heading_zero_deg": {"type": ["number", "null"], "description": "独立执行 task3-1/task3-2/task3-3/task4-1/task4-2 时，必须由用户提供已知陀螺仪航向零点，并确认已在 Task2 结束位置、初始航向180°；其他情况填 null，不得猜测。"},
+                    "heading_zero_deg": {"type": ["number", "null"], "description": "独立执行 Task3 的 task3-1 至 task3-5 或 task4-1/task4-2 时，必须由用户提供已知陀螺仪航向零点，并确认已在 Task2 结束位置、初始航向180°；其他情况填 null，不得猜测。"},
                 },
                 "required": ["selection", "heading_zero_deg"], "additionalProperties": False,
             },

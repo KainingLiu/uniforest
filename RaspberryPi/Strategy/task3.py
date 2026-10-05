@@ -124,6 +124,7 @@ class Task3Config(FirstTaskConfig):
     post_build_turn_cw_deg: float = 180.0
     post_build_route_distance_mm: float = 2500.0
     post_build_route_speed_mm_s: float = LONG_DISTANCE_MOVE_SPEED_MM_S
+    post_build_left_wall_enabled: bool = True
 
 @dataclass(frozen=True)
 class Task3_2Config(Task3Config):
@@ -136,6 +137,22 @@ class Task3_3Config(Task3Config):
     post_tag6_lateral_right_mm: float = 500.0
     post_tag6_lateral_direction: str = 'left'
     post_build_route_distance_mm: float = 3000.0
+
+
+@dataclass(frozen=True)
+class Task3_4Config(Task3Config):
+    post_build_turn_cw_deg: float = 0.0
+    post_build_route_distance_mm: float = 100.0
+    post_build_route_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
+    post_build_left_wall_enabled: bool = False
+
+
+@dataclass(frozen=True)
+class Task3_5Config(Task3_2Config):
+    post_build_turn_cw_deg: float = 0.0
+    post_build_route_distance_mm: float = 400.0
+    post_build_route_speed_mm_s: float = NORMAL_DISTANCE_MOVE_SPEED_MM_S
+    post_build_left_wall_enabled: bool = False
 
 
 class Task3Program(TaskControl):
@@ -516,13 +533,14 @@ class Task3Program(TaskControl):
             'backward', cfg.post_build_reverse_mm,
             cfg.post_build_reverse_speed_mm_s)
 
-        self.state = Task3State.POST_BUILD_TURN
-        self._check_active()
-        # Use a relative CW turn: a shortest-path absolute-heading command
-        # can choose CCW near the 180-degree boundary after building alignment.
-        self.robot.chassis.turn(
-            cfg.post_build_turn_cw_deg, cfg.delivery_turn_speed_deg_s,
-            hold_ms=0, settle_cycles=1)
+        if cfg.post_build_turn_cw_deg != 0.0:
+            self.state = Task3State.POST_BUILD_TURN
+            self._check_active()
+            # Use a relative CW turn: a shortest-path absolute-heading command
+            # can choose CCW near the 180-degree boundary after building alignment.
+            self.robot.chassis.turn(
+                cfg.post_build_turn_cw_deg, cfg.delivery_turn_speed_deg_s,
+                hold_ms=0, settle_cycles=1)
 
         self.state = Task3State.POST_BUILD_ROUTE
         print(f'[{self.TASK_LABEL}] Left {cfg.post_build_route_distance_mm:.0f} mm '
@@ -531,13 +549,14 @@ class Task3Program(TaskControl):
             'left', cfg.post_build_route_distance_mm,
             cfg.post_build_route_speed_mm_s)
 
-        self.state = Task3State.POST_BUILD_LEFT_WALL
-        self._drive_until_wall(
-            timeout_s=cfg.far_wall_timeout_s,
-            speed_mm_s=cfg.far_wall_speed_mm_s,
-            direction='left',
-            context='Post-build left wall contact',
-        )
+        if cfg.post_build_left_wall_enabled:
+            self.state = Task3State.POST_BUILD_LEFT_WALL
+            self._drive_until_wall(
+                timeout_s=cfg.far_wall_timeout_s,
+                speed_mm_s=cfg.far_wall_speed_mm_s,
+                direction='left',
+                context='Post-build left wall contact',
+            )
 
     def run(self) -> int:
         try:
@@ -566,5 +585,20 @@ class Task3_3Program(Task3Program):
         super().__init__(robot, config, context=context)
 
 
+class Task3_4Program(Task3Program):
+    TASK_LABEL = 'task3-4'
+
+    def __init__(self, robot, config: Task3_4Config = Task3_4Config(), *, context=None):
+        super().__init__(robot, config, context=context)
+
+
+class Task3_5Program(Task3Program):
+    TASK_LABEL = 'task3-5'
+
+    def __init__(self, robot, config: Task3_5Config = Task3_5Config(), *, context=None):
+        super().__init__(robot, config, context=context)
+
+
 __all__ = ['Task3Config', 'Task3Program', 'Task3State', 'Task3_2Config', 'Task3_2Program',
-           'Task3_3Config', 'Task3_3Program']
+           'Task3_3Config', 'Task3_3Program', 'Task3_4Config', 'Task3_4Program',
+           'Task3_5Config', 'Task3_5Program']

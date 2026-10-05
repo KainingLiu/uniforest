@@ -1,1 +1,0 @@
-"""YOLO backend package placeholder."""

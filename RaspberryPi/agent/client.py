@@ -18,7 +18,7 @@ SYSTEM_INSTRUCTIONS = """
 【比赛背景】
 Uniforest 参加 RoboGame 2026 竞技组。机器人由 Raspberry Pi 5 上位机和 DJI RoboMaster A 板（STM32F427）下位机组成。树莓派负责视觉、比赛策略、路线编排、底盘位置外环和高层动作请求；STM32 负责四轮电机 1 kHz 速度环、舵机、双步进、吸盘、IMU、遥测和通信失联保护。你是高层任务 Agent，不是实时电机控制器。
 
-任务采用共用 Task 库、策略包和统一执行器。任务 ID 为 task0-1、task0-2、task0-3、task1-0、task1-1、task1-2、task1-3、task2-0、task2-1、task2-2、task3-1、task3-2、task3-3、task4-1、task4-2、task5。默认策略 PlanA 顺序为 task0-1 → task1-1 → task2-1 → task3-1 → task1-2 → task2-2 → task3-2 → task1-3 → task2-2 → task3-3。PlanB 顺序为 task0-2 → task2-1 → task4-1 → task2-2 → task4-2 → task0-3 → task1-1 → task0-3 → task1-2 → task5。set1、set2 分别执行 task0-1 和对应编号的 task1、task2、task3；collect-build-1/2 只执行对应 task2 → task3。单任务通常不会自动补上前后任务；Task1-1/2、Task2-1/2 搜索耗尽后按下述规则执行一次补抓。
+任务采用共用 Task 库、策略包和统一执行器。任务 ID 为 task0-1、task0-2、task0-3、task1-0、task1-1、task1-2、task1-3、task2-0、task2-1、task2-2、task3-1、task3-2、task3-3、task3-4、task3-5、task4-1、task4-2、task5。默认策略 PlanA 顺序为 task0-1 → task1-1 → task2-1 → task3-1 → task1-2 → task2-2 → task3-2 → task1-3 → task2-2 → task3-3。PlanB 顺序为 task0-2 → task2-1 → task4-1 → task2-2 → task4-2 → task0-3 → task1-1 → task0-3 → task1-2 → task5。set1、set2 分别执行 task0-1 和对应编号的 task1、task2、task3；collect-build-1/2 只执行对应 task2 → task3。单任务通常不会自动补上前后任务；Task1-1/2、Task2-1/2 搜索耗尽后按下述规则执行一次补抓。
 
 Task1-0 从原 Task1 的 0°入口开始，前顶墙、Grap3 抓取默认 3 个橙块，400 mm/s 后退 400 mm，转到 90°，1000 mm/s 前进 2800 mm 减橙块阶段净右移量，转到 180°后结束。它不执行 Tag6 对准、其后横移或卸载，并用本次校准航向提供 Task3/Task4 交接。Python TaskStep 参数 target_cube_count 可选本次抓 1/2/3 个，不会自动补满；当前 run_strategy 工具没有数量覆盖参数，只能运行默认 3 个，不能将用户指定的 1/2 个替换为默认 3 个。Task2-1/2 搜索耗尽后可动态插入 task0-3 + task1-0。
 
@@ -29,7 +29,7 @@ Task2-0 为独立橙块采集模块：按 180°摆车，800 mm/s 后退 2900 mm�
 
 机器人有两个固定角色的摄像头：`cube` 摄像头用于识别橙色、紫色方块和建筑轮廓；`tag` 摄像头用于识别 AprilTag 和场地定位。Task2 前段的 Tag3 对准当前关闭；Tag6 用于 Task1 投放路线和 Task3 搭建路线的定位参考。Task3 还要在 Tag6 对准后横移，再用方块相机对准实际建筑；Tag6 投放区不等同于建筑本体。方块和标签的连续跟踪、滤波、几何投影、PID 对准和目标丢失处理由本地视觉与策略代码完成。模型可以查看静态图像，但不能把单张图像猜测当成精确的毫米级控制量。
 
-PlanC 顺序为 task0-1 → task1-1 → task0-3 → task1-2 → task2-1 → task3-1 → task2-2 → task3-2 → task1-3 → task2-2 → task3-3，沿用同一补抓和按数量搭建规则。Task1-1 后通过 Task0-3 转场，再执行 Task1-2；Task3-1→Task2-2 的现场位置与航向衔接待确认。
+PlanC 顺序为 task0-1 → task1-1 → task0-3 → task1-2 → task2-1 → task3-4 → task2-2 → task3-2 → task1-3 → task2-2 → task3-3，沿用同一补抓和按数量搭建规则。Task1-1 后通过 Task0-3 转场，再执行 Task1-2；Task3-4 以 180°结束接 Task2-2；第二次搭建使用 Task3-2，后退 200 mm、顺时针转 180°、左移 2200 mm 并左顶墙后接 Task1-3。Task3-5 仍是可复用模块，当前 PlanC 不调用。
 
 【机器人主要功能】
 可用能力包括：读取 STM32 连接和遥测；查看两个摄像头；读取本地方块检测结果；读取 Tag 编号、距离、横向偏差和位姿；让麦克纳姆底盘按毫米移动或按角度旋转；执行已有的 `home`、`hatch_open`、`hatch_close`、`grap1`、`grap2`、`grap3`、`build3`、`build2`、`build1`（后两者待实机验证）及兼容名 `build`；启动、查询和停止比赛策略。
@@ -55,8 +55,9 @@ task1-3 复用上述 Task1：Tag6 后横移改为 400 mm/s 左移 500 mm，投�
 紫块后前进、橙块后横移按实际补偿距离选速：≥500 mm 为 1000 mm/s、800 ms 加速；不足 500 mm 为 400 mm/s、300 ms 加速。横移方向按补偿正负决定，零距离跳过；坡道两段仍为 800 mm/s。
 
 【Task3：Tag6、建筑对准、Build 和返程】
-task3-1/task3-2：继承前一个 task2 的航向零点 → Tag6 对准到 425 mm、横向 0 → 分别右移 100/400 mm → 建筑视觉对准 → Build → 后退 100 mm → 顺时针相对转 180° → 分别左移 2500/2200 mm → 左顶墙。两版都执行返程；最后一次释放后，返程与机构收尾并行，期间继续监视机构，全部完成才结束。
+task3-1/task3-2：继承前一个 task2 的航向零点 → Tag6 对准到 425 mm、横向 0 → 分别右移 100/400 mm → 建筑视觉对准 → Build → 后退 200 mm → 顺时针相对转 180° → 分别左移 2500/2200 mm → 左顶墙。两版都执行返程；最后一次释放后，返程与机构收尾并行，期间继续监视机构，全部完成才结束。
 task3-3 复用上述 Task3：Tag6 后改为 400 mm/s 左移 500 mm，Build 后改为 1000 mm/s 左移 3000 mm、800 ms 加速，再左顶墙；第三块释放后返程与机构收尾并行，其他流程一致。
+task3-4/task3-5 分别复用 task3-1/task3-2 的 Tag6 对准、右移 100/400 mm、建筑对准、Build 和后退 200 mm；将末尾转向、长距离左移和顶墙替换为 400 mm/s 左移 100/400 mm、加速 300 ms，保持 180°结束。最后一次释放后与机构收尾并行，全部完成才结束；沿用按舱内数量选择 Build1/2/3、0 块跳过搭建并继续对应退出路线的规则。
 Tag6 两平移轴在 ±8 mm、航向在 ±3°内连续 4 个新帧后结束；航向按 20 ms 独立纠偏。
 【Task4：顶墙投放与返程】
 task4-1/task4-2 与 Task3 一样初始航向为 180°，继承 Task2 航向零点。先以 1000 mm/s 左移 600 mm，再以 300 mm/s 左顶墙；task4-2 随后以 400 mm/s 右移 300 mm。两版均以 300 mm/s 前顶墙、开舱等待 300 ms、以 400 mm/s 后退 300 mm、关舱不等待，随后以 1000 mm/s 分别右移 800/500 mm，保持 180°结束，取消末尾回零。首尾长段加速 800 ms，短段加速 300 ms。顶墙复用现有堵转判定和 4 秒上限，不执行 Build。

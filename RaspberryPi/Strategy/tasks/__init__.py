@@ -12,7 +12,8 @@ from ..task1 import (Task1Config, Task1Program, Task1_0Config, Task1_0Program,
 from ..task2 import (Task2Config, Task2Program, Task2_2Config, Task2_2Program,
                      Task2_0Config, Task2_0Program)
 from ..task3 import (Task3Config, Task3Program, Task3_2Config, Task3_2Program,
-                     Task3_3Config, Task3_3Program)
+                     Task3_3Config, Task3_3Program, Task3_4Config, Task3_4Program,
+                     Task3_5Config, Task3_5Program)
 from ..task4 import Task4Config, Task4Program, Task4_2Config, Task4_2Program
 from ..task5 import Task5Config, Task5Program
 
@@ -55,6 +56,8 @@ TASK_LIBRARY = {
     'task3-1': TaskDefinition(Task3Program, Task3Config, requires='build_approach'),
     'task3-2': TaskDefinition(Task3_2Program, Task3_2Config, requires='build_approach'),
     'task3-3': TaskDefinition(Task3_3Program, Task3_3Config, requires='build_approach'),
+    'task3-4': TaskDefinition(Task3_4Program, Task3_4Config, requires='build_approach'),
+    'task3-5': TaskDefinition(Task3_5Program, Task3_5Config, requires='build_approach'),
     'task4-1': TaskDefinition(Task4Program, Task4Config, requires='build_approach'),
     'task4-2': TaskDefinition(Task4_2Program, Task4_2Config, requires='build_approach'),
     'task5': TaskDefinition(Task5Program, Task5Config),

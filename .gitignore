@@ -19,3 +19,6 @@
 RaspberryPi/vision/debug/
 RaspberryPi/.diagnostics/
 RaspberryPi/.venv/
+# Retired experiments are archived outside the published source tree.
+/RaspberryPi/game/
+/Uniforest_A/game/

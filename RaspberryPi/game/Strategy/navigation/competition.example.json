@@ -1,8 +1,0 @@
-{
-  "version": 1,
-  "verified": false,
-  "record": "Nominal published CAD only; field, current robot envelope and Tag camera require measurement before live use.",
-  "capture_delay_s": 0.0,
-  "field_file": "../../simulation/field_model.json",
-  "robot_file": "../../simulation/robot_model.json"
-}

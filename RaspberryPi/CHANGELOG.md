@@ -3,7 +3,53 @@
 当前操作方法与参数以 [README.md](README.md) 和源码为准。本文件保留变更日期、
 适用范围及当时验证结果；历史通过记录不代表当前全量测试通过。
 
+## 2026-10-05
+
+### 夺冠后文档归并与最终交接清理
+
+队伍确认已获得本届比赛冠军。最终比赛用策略、固件烧录版本和性能数据待队内技术总结补充，不以软件检查替代实测证据。
+
+| 变化 | 范围 | 验证/交接 |
+| --- | --- | --- |
+| 总览与运行说明去除旧两轮路线和过期部署表 | 根 README、RaspberryPi/README | 当前策略以注册表和源码为准 |
+| 路线合并至 Strategy 文档；底盘、视觉分别设专题 | Strategy/README、control/README、vision/opencv/README | 顶墙 240/120 RPM、2.5/1 s，方块减速 120 mm，前臂偏置 +12.3°与源码核对 |
+| 测试命令收编为可提交文档 | TEST_COMMANDS.md | 策略包置前，PlanC 与七个桌面入口更新 |
+| 下位机/Agent 去除重复路线与动作说明 | 下位机 README/PROJECT/ACTIONS、Agent README、调零说明 | 不改运行参数或动作逻辑 |
+| 删除上下位机实验 game 目录及三处旧验证构建缓存 | RaspberryPi/game、Uniforest_A/game；build/verify、codex-position-verify、codex-position | 删除前完整归档并逐文件哈希校验；保留正式 Core/Drivers/CMake、IDE 和当前 Debug 产物 |
+
+清理归档在本地 `.diagnostics/closeout-20261005/`，不上传 GitHub；忽略规则防止实验目录重新混入交接。
+本地和 GitHub 主分支以当前可提交文件树为准，不引入远端已撤回的 PlanD 实验。
+树莓派 192.168.137.50 连接超时；用户确认暂时离线，先完成本地/GitHub。设备上的 game 尚未清除，未部署主程序、烧录或运行实机动作。
+协议未变：schema v5、命令编号、载荷、字段大端/CRC 小端、80 B 遥测、11 B 动作状态和 200 ms 失联急停保持；依赖未变。
+本轮保留此前 Task3-4/5、PlanC 恢复 Task3-2 与七个桌面入口的本地改动，一并上传。
+验证：113 个 Python 文件语法检查、模块导入、193 项全量无硬件测试及协议/路线检查通过；下位机 Debug 清理后全量编译通过。修改文档的本地链接检查通过，待提交文本未检出私钥或访问令牌特征。
+本地清除 407 个已跟踪实验文件（上位机 272、下位机 135），另清除实验缓存及旧验证构建目录；GitHub 上传后按完整文件树核对，不保留远端独有文件。
+
 ## 2026-10-04
+
+### PlanC 恢复 Task3-2 并增加桌面入口
+
+行为变化 → PlanC 的 Task3-5 换回 Task3-2，保留 Task3-4，共 11 个固定模块。第二次搭建恢复后退 200 mm、顺时针转 180°、1000 mm/s 左移 2200 mm（加速 800 ms）、300 mm/s 左顶墙后衔接 Task1-3；沿用 Task3-2 原实现，Task3-5 仍可独立复用。
+受影响模块 → `Strategy/plans/plan_c.py`、`tools/desktop_task.sh`、`tools/install_desktop_entries.py`；新增 `uniforest-planc.desktop`（Uniforest PlanC 策略），使用现有虚拟环境、互斥锁和自动日志入口。
+检查/文档 → 更新策略组合及桌面入口断言，核对补抓插入、CLI/Agent 预览和桌面脚本预览；维护 README、Strategy/README 与 Agent 说明。
+协议未变：双方命令编号、载荷长度、大端字段/CRC 小端、80 B 遥测、11 B 动作状态及 200 ms 通信失联急停保持；无下位机、视觉或依赖修改。
+入口 `python main.py --strategy PlanC` 或桌面 PlanC；`bash tools/desktop_task.sh PlanC --show-plan` 只预览。
+本地验证：193 项无硬件测试、模块导入、PlanC 预览及 Debug 配置/编译通过。
+PlanC 中 Task3-5→Task3-2 的替换和 PlanC 桌面入口已于 2026-10-04 同步树莓派；模块导入、186 项主程序无硬件测试（跳过 3 项需本地下位机源码的检查）、策略及桌面启动脚本只读预览、文件哈希和入口可执行权限检查通过。现有六个策略入口保留，共七个；串口/相机路径及标定文件正常。协议未变，未烧录或执行实机动作。
+
+### 新增 Task3-4/5 并调整 PlanC
+
+| 行为变化 | 受影响模块 | 检查/文档 |
+| --- | --- | --- |
+| Task3-4/5 分别复用 Task3-1/2 的前五步，将第 6～8 步替换为 400 mm/s 左移 100/400 mm，加速 300 ms | `Strategy/task3.py` 的配置及共用退出路线；后退 200 mm、Build 释放后并行和数量选择保持 | 五个变体的实际调用顺序、0/1/2/3/未知计数退出检查；README、Strategy/README |
+| PlanC 中 Task3-1/2 分别替换为 Task3-4/5，共 11 个固定模块 | `Strategy/plans/plan_c.py`、任务注册/导出、Agent 说明和桌面任务脚本的单任务选择 | 策略展开、CLI/Agent 入口、全套补抓回放；Agent 文档 |
+
+新变体不转向、不左顶墙，保持 180°结束；PlanA、PlanB、set1/2、collect-build-1/2 保留原 Task3。
+Task3-4→Task2-2 保持 180°航向。Task3-5→Task1-3 按指定顺序直接衔接，但后者以入口当前朝向建立 0°；实际场地位置和转场尚未验证，未添加额外动作。
+协议未变：核对双方命令编号、载荷长度、大端字段/CRC 小端、80 B 遥测、11 B 动作状态及 A 板 200 ms 通信失联急停；无下位机或依赖修改。
+入口 `python main.py --strategy PlanC`；独立 `--task task3-4` / `--task task3-5` 须提供 `--heading-zero-deg`，只读预览使用 `--show-plan`。
+验证：193 项全量无硬件测试、模块导入、PlanC 与新任务只读预览通过；Debug 配置/编译通过。原 Task3-1/2/3 路线、Build 释放后并行及补抓数量交接检查通过。
+Task3-4/5 和 PlanC 替换已于 2026-10-04 同步树莓派；模块导入、186 项主程序无硬件测试（跳过 3 项需本地下位机源码的检查）、PlanC/planc 与新任务只读预览、桌面脚本语法及文件哈希检查通过。串口、相机角色路径及标定文件检查通过。原自动运行日志、六个桌面入口和 game 快照保留；协议未变。未烧录或执行实机动作，Task3-5→Task1-3 的现场转场待确认。
 
 ### GitHub 上传前核对当前源码
 

@@ -334,21 +334,24 @@ class SingleRefillTests(unittest.TestCase):
                                  + (s.task_id in ('task2-1', 'task2-2')) for s in PLANS[name].steps))
 
     def test_task3_uses_latest_refill_inspection_instead_of_initial_count_or_grabs(self):
-        for count in (0, 1, 2, 3, None):
-            with self.subTest(count=count):
+        for task_id, left_mm, count in (
+                (task_id, left_mm, count)
+                for task_id, left_mm in (('task3-2', 2200), ('task3-4', 100), ('task3-5', 400))
+                for count in (0, 1, 2, 3, None)):
+            with self.subTest(task=task_id, count=count):
                 robot, starts, events = self.run_routes(
-                    StrategyPlan('measured refill', (TaskStep('task2-1'), TaskStep('task3-2'))),
+                    StrategyPlan('measured refill', (TaskStep('task2-1'), TaskStep(task_id))),
                     0, refill_grabs=1, refill_count=count)
-                self.assertEqual(starts, ['task2-1', 'task0-3', 'task1-0', 'task3-2'])
+                self.assertEqual(starts, ['task2-1', 'task0-3', 'task1-0', task_id])
                 self.assertEqual(events.count(('refill_grab',)), 1)
                 self.assertEqual(robot.check_carried_cube_count.call_count, 2)
                 selected = 2 if count is None else count
                 self.assertEqual([e for e in events if e[0] == 'build'],
                                  [('build', selected)] if selected else [])
-                self.assertIn(('task3-2', 'backward', 200), events)
-                self.assertIn(('task3-2', 'left', 2200), events)
+                self.assertIn((task_id, 'backward', 200), events)
+                self.assertIn((task_id, 'left', left_mm), events)
                 self.assertLess(events.index(('count_end', 'task1-0')),
-                                events.index(('start', 'task3-2')))
+                                events.index(('start', task_id)))
                 self.assertEqual(events.count(('task1-0', 'backward', 400)), 1)
 
     def test_completed_task1_refill_keeps_three_cube_build_without_extra_inspection(self):

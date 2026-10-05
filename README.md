@@ -1,48 +1,65 @@
-# Uniforest — RoboGame 2026
+# Uniforest · RoboGame 2026
 
-Raspberry Pi 5 上位机负责视觉、比赛策略和底盘位置外环；DJI RoboMaster A 板
-（STM32F427）负责电机速度环、机械动作、传感器和通信失联保护。
-文档整理于 2026-09-26，具体行为以源码与构建配置为准。
+Uniforest 队机器人电控、算法与视觉项目。队伍已获得本届比赛冠军（队内确认）；赛后整理日期为 **2026-10-05**。
+本仓库保存整理时的本地源码。决赛使用的策略、固件烧录版本、成绩和视频证据应在赛后技术总结中补充。
 
-## 文档导航
+## 项目结构
 
-| 文档 | 内容 |
+| 目录 | 用途 |
 | --- | --- |
-| [上位机说明](RaspberryPi/README.md) | 安装、设备预检、比赛入口、两轮路线、底盘与视觉参数、当前部署状态 |
-| [下位机说明](Uniforest_A/README.md) | 固件入口、构建与 CLion 烧录 |
-| [机械动作流程](Uniforest_A/ACTIONS.md) | Grap1/2/3、Build 的角度、距离、等待和并行节点 |
-| [下位机技术说明](Uniforest_A/PROJECT.md) | 实时控制、步进参数、通信协议与硬件排障 |
-| [数量检查与标定](RaspberryPi/tools/carried_cube_count_test.md) | 检查时序、宽度判别、紫色规则、实拍采样和补抓 |
-| [自然语言 Agent](RaspberryPi/agent/README.md) | 自然语言、本地直控及 API 中转 |
-| [自动原图采集](RaspberryPi/vision/yolo/docs/DATA_COLLECTION.md) | 数据目录、采样与存储上限、独立补拍 |
-| [前臂零点调整](RaspberryPi/tools/arm_zero_adjust.md) | 调零入口、逻辑角度与 +12° 固定偏置 |
-| [变更与验证记录](RaspberryPi/CHANGELOG.md) | 日期、历史参数、部署备份、检查及现场验证结果 |
-| [协作约定](AGENTS.md) | 修改范围、协议核对、实机操作与备份规则 |
+| `RaspberryPi/` | Raspberry Pi 5 8GB 上位机：视觉、策略、底盘位置外环、自然语言入口和通信 |
+| `Uniforest_A/` | RoboMaster A 板 STM32F427 下位机：四轮速度环、机械动作、IMU、遥测与失联保护 |
+| 已清理的 `game/` | 上下位机实验目录不纳入最终交接；清理前归档保存在本地 `.diagnostics/`，不提交仓库 |
+| `备份/` | 本地历史快照，默认只读且不上传 |
 
-## 启动与检查
+当前实现以主目录的实际入口和构建配置为准。
 
-树莓派开发地址 `192.168.137.50`，用户名 `uniforest`。密码由管理员提供，不写入仓库。
-完成[环境安装与设备预检](RaspberryPi/README.md)后，在树莓派终端一键启动完整比赛：
+## 文档入口
 
-```bash
-cd /home/uniforest/Uniforest/RaspberryPi && .venv/bin/python -u main.py --task all
+同一项事实只在负责该主题的文档维护，其他文档提供链接。
+
+| 文档 | 负责内容 |
+| --- | --- |
+| [上位机运行说明](RaspberryPi/README.md) | 安装、启动、设备预检与部署边界 |
+| [机器人测试命令](RaspberryPi/TEST_COMMANDS.md) | 策略包、单 Task、机械动作及只读检查的可复制命令 |
+| [策略与 Task 库](RaspberryPi/Strategy/README.md) | PlanA/B/C、任务路线、补抓、数量交接与扩展 |
+| [底盘控制](RaspberryPi/control/README.md) | 速度/加速、提前减速、到位与顶墙 |
+| [视觉与标定](RaspberryPi/vision/opencv/README.md) | 相机、识别、对准与视觉降级 |
+| [下位机入口](Uniforest_A/README.md) / [技术说明](Uniforest_A/PROJECT.md) | 构建、CLion 烧录、实时控制、硬件接口与协议 |
+| [机械动作](Uniforest_A/ACTIONS.md) | Grap1/2/3、Build1/2/3 的完整动作表 |
+| [数量检查](RaspberryPi/tools/carried_cube_count_test.md) / [前臂调零](RaspberryPi/tools/arm_zero_adjust.md) | 独立调试和标定方法 |
+| [自然语言 Agent](RaspberryPi/agent/README.md) | 配置、交互、直控与中转 |
+| [YOLO 与数据采集](RaspberryPi/vision/yolo/README.md) | 已有离线实验、训练报告与采集说明 |
+| [变更与验证记录](RaspberryPi/CHANGELOG.md) | 历次调参、回退、同步和验证；历史值不是当前值 |
+| [协作约定](AGENTS.md) | 开发范围、备份、协议核对与实机规范 |
+
+## 当前策略与启动
+
+默认策略为 **PlanA**。PlanB、PlanC 及 set1/set2、collect-build-1/2 共用同一 Task 库和执行器。
+最新 PlanC 为：
+
+```text
+Task0-1 → Task1-1 → Task0-3 → Task1-2
+→ Task2-1 → Task3-4 → Task2-2 → Task3-2
+→ Task1-3 → Task2-2 → Task3-3
 ```
 
-顺序为 Task0 → Task1-R1 → Task2-R1 → Task1-R2 → Task2-R2，Task0 只运行一次。
-`--task round1`、`round2` 各自也先运行 Task0；`task1-r1`、`task2-r1`、
-`task1-r2`、`task2-r2` 只运行指定任务。程序会驱动整车，按 Ctrl+C 停止。
+在树莓派上只读查看流程：
 
-无硬件检查在 `RaspberryPi/` 执行 `python tools/check.py`；开发机加 `--firmware`
-可同时配置、编译 A 板，不烧录。检查包含协议和数据采集功能。固件烧录统一使用 CLion 的 OpenOCD + DAPLink。
-通过软件检查不代表动作、视觉或场地参数已经实机验证。
+```bash
+cd /home/uniforest/Uniforest/RaspberryPi
+.venv/bin/python main.py --strategy PlanC --show-plan
+```
 
-## 源码与部署边界
+去掉 `--show-plan` 会执行机器人动作。完整命令及起点要求见测试命令文档。
+上次已确认的树莓派同步为 2026-10-04，桌面有 PlanA、PlanB、PlanC、set1、set2、collect-build-1、collect-build-2 七个策略入口。
 
-- `RaspberryPi/`、`Uniforest_A/` 是当前正式实现；参数分别集中在上面的专业文档。
-- `备份/` 为本地快照，默认不提交 GitHub。用户指定维护的遥控副本也不代表正式固件入口。
-- 上传上位机、烧录 A 板、实机验证是三个不同状态。树莓派采用定向同步，仍有旧搜索实现、步进调试默认值和兼容接口差异；详情见[部署表](RaspberryPi/README.md#仓库与树莓派部署状态)。
-- 动作协议为 schema v3；状态 6 表示机构仍忙、允许底盘继续。A 板通信失联 200 ms 后停止底盘、双步进和吸盘并取消动作，重连不续跑。
-- 不提交密码、密钥、虚拟环境、构建产物、IDE 缓存、现场诊断图片或本地备份。
+## 复现与归档边界
 
-规则手册、队伍计划书和 A 板硬件 PDF 不在当前检出中，需要时另行查阅原资料。
-每天结束由用户另存工作快照，不覆盖已有备份。
+- 上位机无硬件检查：在 `RaspberryPi/` 执行 `python tools/check.py` 与 `python -m unittest discover -s tests -q`。
+- 下位机无硬件编译：在 `Uniforest_A/` 执行 `cmake --preset Debug`、`cmake --build build/Debug`。烧录统一使用 CLion 的 OpenOCD + DAPLink。
+- 协议为 [schema v5](RaspberryPi/protocol/schema.json)。状态 6 允许底盘与机构收尾并行，仍须等待最终完成。200 ms 通信失联会停止底盘、步进及吸盘并取消动作，重连不续跑。
+- 视觉失效按任务预算和超时降级继续；通信、遥测陈旧、急停及机构故障仍终止。
+- GitHub `main` 本轮以本地可提交文件树为准；密码、密钥、私有配置、虚拟环境、构建产物、采集数据和本地备份不属于上传内容。
+- 树莓派既有自动运行日志封装与本地略有差异；GitHub 与本地一致不代表树莓派所有文件一致。树莓派暂不在线，设备上的实验目录尚未清理；本轮未重新部署主程序或烧录固件。
+- 规则手册、队伍计划书和 A 板硬件 PDF 不在当前检出中；规则引用与硬件设计论证需补原始资料，不能用过往对话替代正式依据。

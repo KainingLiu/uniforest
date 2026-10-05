@@ -1,1 +1,0 @@
-"""Automated upper-computer tests."""

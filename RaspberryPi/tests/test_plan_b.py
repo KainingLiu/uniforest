@@ -259,9 +259,10 @@ class PlanBTests(unittest.TestCase):
                 robot.assert_not_called()
         from tools.install_desktop_entries import ENTRIES, LEGACY_ENTRIES
         self.assertEqual({selection for selection, _ in ENTRIES.values()},
-                         {"PlanA", "PlanB", "set1", "set2", "collect-build-1", "collect-build-2"})
+                         {"PlanA", "PlanB", "PlanC", "set1", "set2", "collect-build-1", "collect-build-2"})
         self.assertFalse(set(ENTRIES).intersection(LEGACY_ENTRIES))
         self.assertEqual(ENTRIES['uniforest-all.desktop'][0], 'PlanA')
+        self.assertEqual(ENTRIES['uniforest-planc.desktop'][0], 'PlanC')
         self.assertNotIn('uniforest-task0.desktop', ENTRIES)
         self.assertIn('PlanB', [selection for selection, _ in ENTRIES.values()])
 
